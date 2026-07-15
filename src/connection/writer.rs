@@ -25,6 +25,7 @@ pub fn handle_send(
         ConnCommand::Close => false,
         // SetLogger 的处理在 reader_loop 中完成（需修改 log_tx），此处不处理。
         ConnCommand::SetLogger(_) => true,
+        ConnCommand::SetDisplay(_) => true,
     }
 }
 

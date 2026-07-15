@@ -2,6 +2,7 @@ use crossbeam_channel::{bounded, Sender};
 
 use crate::config::settings::{DataBits, FlowControl, Parity, StopBits};
 use crate::connection::handle::{ConnCommand, ConnEvent, ConnectionHandle};
+use crate::util::log_format::DisplayConfig;
 
 pub mod handle;
 pub mod line_assembler;
@@ -9,7 +10,8 @@ pub mod reader;
 pub mod writer;
 
 /// 打开串口并 spawn 读线程。成功返回 ConnectionHandle。
-/// log_tx 可选：Some 时读线程把原始字节直接 send 给存盘线程（设计 §4.1）。
+/// log_tx 可选：Some 时读线程把格式化文本行 send 给存盘线程。
+/// display 为初始显示配置，运行中可由 SetDisplay 动态更新。
 pub fn spawn_connection(
     port_name: &str,
     baud: u32,
@@ -19,7 +21,8 @@ pub fn spawn_connection(
     flow_control: FlowControl,
     error_keywords: Vec<String>,
     event_tx: Sender<ConnEvent>,
-    log_tx: Option<Sender<Vec<u8>>>,
+    log_tx: Option<Sender<String>>,
+    display: DisplayConfig,
 ) -> std::io::Result<ConnectionHandle> {
     let port = serialport::new(port_name, baud)
         .data_bits(map_data_bits(data_bits))
@@ -34,7 +37,7 @@ pub fn spawn_connection(
     std::thread::Builder::new()
         .name(format!("neoserial-reader-{}", port_name))
         .spawn(move || {
-            reader::reader_loop(port, cmd_rx, event_tx, error_keywords, log_tx);
+            reader::reader_loop(port, cmd_rx, event_tx, error_keywords, log_tx, display);
         })?;
 
     Ok(ConnectionHandle { cmd_tx })
