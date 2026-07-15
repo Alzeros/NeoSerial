@@ -1,10 +1,25 @@
 export global Theme {
     out property <color> bg: #1e2227;
     out property <color> panel: #262b33;
+    out property <color> panel-light: #2f353f;
+
+    // 日志区：白底黑字
+    out property <color> log-bg: #ffffff;
+    out property <color> log-rx: #1f2328;      // 接收：近黑
+    out property <color> log-tx: #1a7f37;      // 发送：深绿（白底可辨）
+    out property <color> log-error: #cf222e;   // 错误：红
+    out property <color> log-muted: #6e7681;   // 时间戳/tag：灰
+
     out property <color> text-rx: #c8d3e0;
     out property <color> text-tx: #7ee787;
     out property <color> text-error: #ff7b72;
     out property <color> text-muted: #7d8590;
     out property <color> accent: #58a6ff;
+
+    // 工程风格按钮色
+    out property <color> btn-primary: #2f6fd6;  // 蓝：Connect/Send/Run
+    out property <color> btn-danger: #c93b3b;   // 红：Disconnect/Stop/Delete
+    out property <color> btn-neutral: #3a4049;  // 灰：普通功能
+
     out property <length> font-mono-size: 12px;
 }
