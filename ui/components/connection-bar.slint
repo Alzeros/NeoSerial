@@ -1,7 +1,6 @@
 import { Button, ComboBox } from "std-widgets.slint";
 import { Theme } from "../styles/theme.slint";
 
-// 单行 LogLine 数据，供 ListView 使用
 export struct LogLine {
     ts: string,
     text: string,
@@ -12,12 +11,12 @@ export struct LogLine {
 export struct QuickCmd {
     label: string,
     content: string,
-    mode: int,    // 0=Ascii 1=Hex
-    ending: int,  // 0=Cr 1=Lf 2=Crlf 3=None
+    mode: int,
+    ending: int,
 }
 
 export component ConnectionBar inherits Rectangle {
-    height: 48px;
+    height: 40px;
     background: Theme.panel;
 
     in property <string> status-text;
@@ -27,35 +26,81 @@ export component ConnectionBar inherits Rectangle {
     in property <int> baud-rate;
     in property <bool> connected;
 
+    in-out property <int> data-bits: 8;
+    in-out property <string> parity: "None";
+    in-out property <string> stop-bits: "One";
+    in-out property <string> flow-control: "None";
+
     callback port-selected(string);
     callback baud-changed(int);
+    callback data-bits-changed(int);
+    callback parity-changed(string);
+    callback stop-bits-changed(string);
+    callback flow-control-changed(string);
     callback open-clicked();
     callback close-clicked();
 
     HorizontalLayout {
-        spacing: 8px;
-        padding: 8px;
+        spacing: 6px;
+        padding: 6px;
 
+        // COM
+        Text { text: "COM"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
         ComboBox {
             model: root.ports;
             current-value: root.port-name;
+            width: 110px;
             selected => { root.port-selected(self.current-value); }
         }
+        // Baud
+        Text { text: "Baud"; color: Theme.text-muted; vertical-alignment: center; width: 34px; }
         ComboBox {
             model: ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"];
             current-value: "\{root.baud-rate}";
-            selected => {
-                root.baud-changed(Math.round(self.current-value.to-float()));
-            }
+            width: 90px;
+            selected => { root.baud-changed(Math.round(self.current-value.to-float())); }
+        }
+        // 数据位
+        Text { text: "数据"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        ComboBox {
+            model: ["5", "6", "7", "8"];
+            current-value: "\{root.data-bits}";
+            width: 60px;
+            selected => { root.data-bits-changed(self.current-value.to-float()); }
+        }
+        // 校验
+        Text { text: "校验"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        ComboBox {
+            model: ["None", "Odd", "Even"];
+            current-value: root.parity;
+            width: 80px;
+            selected => { root.parity-changed(self.current-value); }
+        }
+        // 停止位
+        Text { text: "停止"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        ComboBox {
+            model: ["One", "Two"];
+            current-value: root.stop-bits;
+            width: 70px;
+            selected => { root.stop-bits-changed(self.current-value); }
+        }
+        // 流控
+        Text { text: "流控"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        ComboBox {
+            model: ["None", "Software", "Hardware"];
+            current-value: root.flow-control;
+            width: 100px;
+            selected => { root.flow-control-changed(self.current-value); }
         }
 
-        Button { text: "打开"; clicked => { root.open-clicked(); } enabled: !root.connected; }
-        Button { text: "关闭"; clicked => { root.close-clicked(); } enabled: root.connected; }
+        Button { text: "Connect"; clicked => { root.open-clicked(); } enabled: !root.connected; primary: true; }
+        Button { text: "Disconnect"; clicked => { root.close-clicked(); } enabled: root.connected; }
 
         Text {
             text: root.status-text;
             color: root.status-color;
             vertical-alignment: center;
+            horizontal-stretch: 1;
         }
     }
 }
