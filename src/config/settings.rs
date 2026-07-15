@@ -3,7 +3,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use crate::util::codec::LineEnding;
+pub use crate::util::codec::LineEnding;
 
 const CONFIG_VERSION: u32 = 1;
 
