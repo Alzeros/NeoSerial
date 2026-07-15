@@ -4,28 +4,29 @@ use std::io::{BufWriter, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-/// 存盘句柄。log() 是纳秒级的 channel send，绝不阻塞调用方（读线程）。
-/// 实际磁盘 I/O 隔离在存盘线程内。
+/// 存盘句柄。每条记录是一行文本（不含末尾换行符），存盘线程写入时补 \n。
+/// channel send 纳秒级，绝不阻塞调用方（读线程）。
 pub struct FileLogger {
-    tx: Sender<Vec<u8>>,
-    /// 存盘文件路径。用 Mutex<Option> 包裹，便于 current_path() 在 stop() 之前读取。
+    tx: Sender<String>,
     path: Mutex<Option<PathBuf>>,
 }
 
 impl FileLogger {
-    /// 打开文件并启动存盘线程。
-    /// error_tx 用于存盘线程出错时通知 UI（设计 §7.2：存盘失败→通知 UI→关闭存盘开关+红字提示）。
     pub fn start(path: PathBuf, error_tx: Sender<String>) -> std::io::Result<Self> {
         let file = File::create(&path)?;
-        let (tx, rx) = unbounded::<Vec<u8>>();
+        let (tx, rx) = unbounded::<String>();
 
         std::thread::Builder::new()
             .name("neoserial-file-logger".into())
             .spawn(move || {
                 let mut writer = BufWriter::new(file);
                 let mut error_msg: Option<String> = None;
-                for chunk in rx.iter() {
-                    if let Err(e) = writer.write_all(&chunk) {
+                for line in rx.iter() {
+                    if let Err(e) = writer.write_all(line.as_bytes()) {
+                        error_msg = Some(format!("存盘失败: {}", e));
+                        break;
+                    }
+                    if let Err(e) = writer.write_all(b"\n") {
                         error_msg = Some(format!("存盘失败: {}", e));
                         break;
                     }
@@ -46,13 +47,17 @@ impl FileLogger {
         })
     }
 
-    /// 返回 tx 的 clone，供读线程直接 send 原始字节。
-    /// 读线程持有此 clone，存盘路径与 UI 显示路径彻底解耦。
-    pub fn log_sender(&self) -> Sender<Vec<u8>> {
+    /// 返回 tx 的 clone，供读线程直接 send 行文本。
+    pub fn line_sender(&self) -> Sender<String> {
         self.tx.clone()
     }
 
-    /// 当前存盘文件路径（用于在资源管理器中定位）。stop 之后返回 None。
+    /// 记录一行文本（非阻塞）。传入的字符串不应含末尾换行符。
+    pub fn log_line(&self, line: String) {
+        let _ = self.tx.send(line);
+    }
+
+    /// 当前存盘文件路径。stop 之后返回 None。
     pub fn current_path(&self) -> Option<String> {
         self.path
             .lock()
@@ -60,7 +65,6 @@ impl FileLogger {
             .and_then(|guard| guard.as_ref().map(|p| p.to_string_lossy().to_string()))
     }
 
-    /// 停止存盘：drop 发送端，存盘线程写完队列后退出。
     pub fn stop(self) {
         drop(self.tx);
     }
@@ -72,24 +76,33 @@ mod tests {
     use std::io::Read;
 
     #[test]
-    fn test_file_logger_writes_all() {
+    fn test_file_logger_writes_lines() {
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("neoserial_test_{}.bin", std::process::id()));
+        let path = dir.join(format!("neoserial_test_{}.log", std::process::id()));
         let (error_tx, error_rx) = crossbeam_channel::unbounded::<String>();
         let logger = FileLogger::start(path.clone(), error_tx).unwrap();
-        let tx = logger.log_sender();
-        let _ = tx.send(b"hello ".to_vec());
-        let _ = tx.send(b"world".to_vec());
+        let tx = logger.line_sender();
+        let _ = tx.send("08:00:01.000 [发送] AT".to_string());
+        let _ = tx.send("08:00:01.123 [接收] OK".to_string());
         logger.stop();
 
-        // 等待文件写完
         std::thread::sleep(std::time::Duration::from_millis(100));
         let mut f = File::open(&path).unwrap();
         let mut s = String::new();
         f.read_to_string(&mut s).unwrap();
-        assert_eq!(s, "hello world");
-        // 不应有错误
+        assert_eq!(s, "08:00:01.000 [发送] AT\n08:00:01.123 [接收] OK\n");
         assert!(error_rx.try_recv().is_err());
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn test_current_path() {
+        let dir = std::env::temp_dir();
+        let path = dir.join(format!("neoserial_test_path_{}.log", std::process::id()));
+        let (error_tx, _) = crossbeam_channel::unbounded::<String>();
+        let logger = FileLogger::start(path.clone(), error_tx).unwrap();
+        assert_eq!(logger.current_path(), Some(path.to_string_lossy().to_string()));
+        logger.stop();
         let _ = std::fs::remove_file(&path);
     }
 }
