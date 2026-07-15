@@ -3,6 +3,8 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
+use crate::config::command_group::CommandGroup;
+
 pub use crate::util::codec::LineEnding;
 
 const CONFIG_VERSION: u32 = 1;
@@ -69,6 +71,8 @@ pub struct UiSettings {
     pub line_ending: LineEnding,
     pub auto_scroll: bool,
     pub ring_buffer_capacity: usize,
+    pub show_timestamp: bool,
+    pub log_send: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -86,7 +90,7 @@ pub struct Settings {
     pub serial_defaults: SerialDefaults,
     pub last_port: String,
     pub ui: UiSettings,
-    pub quick_commands: Vec<QuickCommand>,
+    pub command_groups: Vec<CommandGroup>,
     pub error_keywords: Vec<String>,
 }
 
@@ -108,33 +112,10 @@ impl Settings {
                 line_ending: LineEnding::Crlf,
                 auto_scroll: true,
                 ring_buffer_capacity: 5000,
+                show_timestamp: true,
+                log_send: true,
             },
-            quick_commands: vec![
-                QuickCommand {
-                    label: "AT".into(),
-                    content: "AT".into(),
-                    mode: DisplayMode::Ascii,
-                    line_ending: LineEnding::Crlf,
-                },
-                QuickCommand {
-                    label: "CSQ".into(),
-                    content: "AT+CSQ".into(),
-                    mode: DisplayMode::Ascii,
-                    line_ending: LineEnding::Crlf,
-                },
-                QuickCommand {
-                    label: "Reset".into(),
-                    content: "AT+CFUN=1,1".into(),
-                    mode: DisplayMode::Ascii,
-                    line_ending: LineEnding::Crlf,
-                },
-                QuickCommand {
-                    label: "HEX5A".into(),
-                    content: "5A A5 01 02".into(),
-                    mode: DisplayMode::Hex,
-                    line_ending: LineEnding::None,
-                },
-            ],
+            command_groups: vec![CommandGroup::default_group()],
             error_keywords: vec![
                 "ERROR".into(),
                 "FAIL".into(),
@@ -160,16 +141,21 @@ impl Settings {
     /// 从指定路径加载配置。文件不存在 → 默认；损坏 → 备份为 `.bad` + 默认。
     /// 测试用（传入 temp 路径隔离，不依赖 APPDATA 环境变量）。
     pub(crate) fn load_from(path: &Path) -> Self {
-        match fs::read_to_string(path) {
-            Ok(text) => match serde_json::from_str::<Settings>(&text) {
-                Ok(s) => s,
-                Err(_) => {
-                    let _ = fs::rename(path, path.with_extension("json.bad"));
-                    Self::default_settings()
-                }
-            },
-            Err(_) => Self::default_settings(),
+        let text = match fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(_) => return Self::default_settings(),
+        };
+        // 先尝试新格式
+        if let Ok(s) = serde_json::from_str::<Settings>(&text) {
+            return s;
         }
+        // 再尝试旧格式迁移（quick_commands → command_groups）
+        if let Ok(legacy) = serde_json::from_str::<LegacySettings>(&text) {
+            return legacy.migrate();
+        }
+        // 都失败：备份 + 默认
+        let _ = fs::rename(path, path.with_extension("json.bad"));
+        Self::default_settings()
     }
 
     /// 保存配置。目录不存在会创建。
@@ -189,6 +175,57 @@ impl Settings {
     }
 }
 
+/// 旧版配置（quick_commands）。用于向后兼容迁移。
+#[derive(Deserialize)]
+struct LegacySettings {
+    version: u32,
+    window: WindowSettings,
+    serial_defaults: SerialDefaults,
+    last_port: String,
+    ui: LegacyUi,
+    quick_commands: Vec<QuickCommand>,
+    error_keywords: Vec<String>,
+}
+
+#[derive(Deserialize)]
+struct LegacyUi {
+    display_mode: DisplayMode,
+    line_ending: LineEnding,
+    auto_scroll: bool,
+    ring_buffer_capacity: usize,
+}
+
+impl LegacySettings {
+    fn migrate(self) -> Settings {
+        let def = Settings::default_settings();
+        Settings {
+            version: self.version,
+            window: self.window,
+            serial_defaults: self.serial_defaults,
+            last_port: self.last_port,
+            ui: UiSettings {
+                display_mode: self.ui.display_mode,
+                line_ending: self.ui.line_ending,
+                auto_scroll: self.ui.auto_scroll,
+                ring_buffer_capacity: self.ui.ring_buffer_capacity,
+                show_timestamp: def.ui.show_timestamp,
+                log_send: def.ui.log_send,
+            },
+            command_groups: vec![CommandGroup {
+                name: "默认".into(),
+                items: self.quick_commands.into_iter().map(|q| crate::config::command_group::CommandItem {
+                    label: q.label,
+                    content: q.content,
+                    mode: q.mode,
+                    line_ending: q.line_ending,
+                    enabled: true,
+                }).collect(),
+            }],
+            error_keywords: self.error_keywords,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,8 +241,8 @@ mod tests {
     #[test]
     fn test_default_quick_commands() {
         let s = Settings::default_settings();
-        assert!(!s.quick_commands.is_empty());
-        assert_eq!(s.quick_commands[0].label, "AT");
+        assert!(!s.command_groups.is_empty());
+        assert_eq!(s.command_groups[0].items[0].label, "AT");
     }
 
     #[test]
@@ -215,7 +252,7 @@ mod tests {
         let back: Settings = serde_json::from_str(&json).unwrap();
         assert_eq!(back.version, s.version);
         assert_eq!(back.serial_defaults.baud_rate, s.serial_defaults.baud_rate);
-        assert_eq!(back.quick_commands.len(), s.quick_commands.len());
+        assert_eq!(back.command_groups.len(), s.command_groups.len());
     }
 
     #[test]
@@ -243,7 +280,7 @@ mod tests {
         let def = Settings::default_settings();
         assert_eq!(loaded.version, def.version);
         assert_eq!(loaded.serial_defaults.baud_rate, def.serial_defaults.baud_rate);
-        assert_eq!(loaded.quick_commands.len(), def.quick_commands.len());
+        assert_eq!(loaded.command_groups.len(), def.command_groups.len());
     }
 
     #[test]
@@ -312,6 +349,53 @@ mod tests {
         assert_eq!(loaded.error_keywords, vec!["MYERR".to_string()]);
 
         // 清理
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn test_default_has_display_switches() {
+        let s = Settings::default_settings();
+        assert!(s.ui.show_timestamp);
+        assert!(s.ui.log_send);
+    }
+
+    #[test]
+    fn test_default_has_command_groups() {
+        let s = Settings::default_settings();
+        assert_eq!(s.command_groups.len(), 1);
+        assert_eq!(s.command_groups[0].name, "默认");
+        assert!(!s.command_groups[0].items.is_empty());
+    }
+
+    #[test]
+    fn test_migrate_legacy_quick_commands() {
+        let dir = std::env::temp_dir().join(format!(
+            "neoserial_test_{}_legacy", std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("settings.json");
+        // 旧格式：含 quick_commands，无 command_groups
+        let legacy = r#"{
+            "version": 1,
+            "window": {"width": 1100, "height": 720, "x": 100, "y": 80},
+            "serial_defaults": {"baud_rate": 115200, "data_bits": "Eight", "parity": "None", "stop_bits": "One", "flow_control": "None"},
+            "last_port": "",
+            "ui": {"display_mode": "Ascii", "line_ending": "Crlf", "auto_scroll": true, "ring_buffer_capacity": 5000},
+            "quick_commands": [{"label": "AT", "content": "AT", "mode": "Ascii", "line_ending": "Crlf"}],
+            "error_keywords": ["ERROR"]
+        }"#;
+        std::fs::write(&path, legacy).unwrap();
+
+        let loaded = Settings::load_from(&path);
+        // 旧 quick_commands 应迁移为 command_groups
+        assert_eq!(loaded.command_groups.len(), 1);
+        assert_eq!(loaded.command_groups[0].items.len(), 1);
+        assert_eq!(loaded.command_groups[0].items[0].label, "AT");
+        // 开关字段缺失应取默认
+        assert!(loaded.ui.show_timestamp);
+        assert!(loaded.ui.log_send);
+
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

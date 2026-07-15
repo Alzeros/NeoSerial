@@ -70,10 +70,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
     app.set_is_hex(matches!(settings.ui.display_mode, DisplayMode::Hex));
     app.set_auto_scroll(settings.ui.auto_scroll);
 
-    // 快捷命令
+    // 快捷命令（取第一个命令组的项填充 UI 列表）
     let qc_model: VecModel<crate::QuickCmd> = VecModel::from(
         settings
-            .quick_commands
+            .command_groups
+            .first()
+            .map(|g| g.items.as_slice())
+            .unwrap_or(&[])
             .iter()
             .map(|q| crate::QuickCmd {
                 label: q.label.clone().into(),
