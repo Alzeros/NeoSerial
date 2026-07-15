@@ -15,6 +15,7 @@ export component Toolbar inherits Rectangle {
     callback pause-toggled();
     callback clear-clicked();
     callback logging-toggled();
+    callback logging-reveal();          // 在资源管理器中定位存盘文件
     callback auto-scroll-toggled();
 
     HorizontalLayout {
@@ -33,8 +34,18 @@ export component Toolbar inherits Rectangle {
             clicked => { root.pause-toggled(); }
         }
         Button { text: "🗑 清屏"; clicked => { root.clear-clicked(); } }
-        Button {
-            text: root.logging ? "📁 存盘: 关" : "📁 存盘: 开";
+        // 存盘：默认关，未开时点「开始存盘」触发选择文件对话框；
+        // 已开时显示「📂 所在文件夹」（定位文件）+「⏹ 停止存盘」。
+        if !root.logging : Button {
+            text: "📁 开始存盘";
+            clicked => { root.logging-toggled(); }
+        }
+        if root.logging : Button {
+            text: "📂 所在文件夹";
+            clicked => { root.logging-reveal(); }
+        }
+        if root.logging : Button {
+            text: "⏹ 停止存盘";
             clicked => { root.logging-toggled(); }
         }
         Button {

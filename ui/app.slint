@@ -41,6 +41,7 @@ export component App inherits Window {
     callback pause-toggled();
     callback clear-clicked();
     callback logging-toggled();
+    callback logging-reveal();
     callback auto-scroll-toggled();
     callback send(string, int, int);
     callback add-quick-cmd();
@@ -70,6 +71,7 @@ export component App inherits Window {
             pause-toggled => { root.paused = !root.paused; root.pause-toggled(); }
             clear-clicked => { root.clear-clicked(); }
             logging-toggled => { root.logging-toggled(); }
+            logging-reveal => { root.logging-reveal(); }
             auto-scroll-toggled => { root.auto-scroll = !root.auto-scroll; root.auto-scroll-toggled(); }
         }
         LogView {

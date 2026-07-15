@@ -227,7 +227,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // 存盘开关（MVP：用固定路径）
+    // 存盘开关：未开时弹「另存为」让用户选位置，确认后才开（取消则不开）；
+    // 已开时点「停止存盘」关闭。
     {
         let weak = weak.clone();
         let state = state.clone();
@@ -235,7 +236,18 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let app = weak.unwrap();
             let mut st = state.lock().unwrap();
             if st.file_logger.is_none() {
-                let path = std::env::temp_dir().join("neoserial_capture.bin");
+                // 默认关：必须由用户指定位置才开存盘
+                let now = crate::util::time_fmt::now_local_compact();
+                let default_name = format!("neoserial_{}.bin", now);
+                let dialog = rfd::FileDialog::new()
+                    .set_file_name(&default_name)
+                    .add_filter("串口数据 (*.bin)", &["bin"])
+                    .add_filter("所有文件", &["*"])
+                    .save_file();
+                let path = match dialog {
+                    Some(p) => p,
+                    None => return, // 用户取消 → 不开存盘
+                };
                 let (error_tx, error_rx) = crossbeam_channel::unbounded::<String>();
                 match FileLogger::start(path.clone(), error_tx) {
                     Ok(fl) => {
@@ -264,6 +276,23 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 st.log_error_rx = None;
                 app.set_logging(false);
                 app.set_log_file_name("".into());
+            }
+        });
+    }
+
+    // 在资源管理器中定位当前存盘文件
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_logging_reveal(move || {
+            let st = state.lock().unwrap();
+            if let Some(fl) = &st.file_logger {
+                if let Some(path_str) = fl.current_path() {
+                    // explorer /select,<path> 在资源管理器中选中该文件
+                    let _ = std::process::Command::new("explorer")
+                        .arg(format!("/select,{}", path_str))
+                        .spawn();
+                }
             }
         });
     }

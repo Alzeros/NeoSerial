@@ -2,11 +2,14 @@ use crossbeam_channel::{Sender, unbounded};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 /// 存盘句柄。log() 是纳秒级的 channel send，绝不阻塞调用方（读线程）。
 /// 实际磁盘 I/O 隔离在存盘线程内。
 pub struct FileLogger {
     tx: Sender<Vec<u8>>,
+    /// 存盘文件路径。用 Mutex<Option> 包裹，便于 current_path() 在 stop() 之前读取。
+    path: Mutex<Option<PathBuf>>,
 }
 
 impl FileLogger {
@@ -37,7 +40,10 @@ impl FileLogger {
                 }
             })?;
 
-        Ok(FileLogger { tx })
+        Ok(FileLogger {
+            tx,
+            path: Mutex::new(Some(path)),
+        })
     }
 
     /// 返回 tx 的 clone，供读线程直接 send 原始字节。
@@ -46,9 +52,12 @@ impl FileLogger {
         self.tx.clone()
     }
 
-    /// 记录一段原始字节（非阻塞）。
-    pub fn log(&self, chunk: Vec<u8>) {
-        let _ = self.tx.send(chunk);
+    /// 当前存盘文件路径（用于在资源管理器中定位）。stop 之后返回 None。
+    pub fn current_path(&self) -> Option<String> {
+        self.path
+            .lock()
+            .ok()
+            .and_then(|guard| guard.as_ref().map(|p| p.to_string_lossy().to_string()))
     }
 
     /// 停止存盘：drop 发送端，存盘线程写完队列后退出。
@@ -68,8 +77,9 @@ mod tests {
         let path = dir.join(format!("neoserial_test_{}.bin", std::process::id()));
         let (error_tx, error_rx) = crossbeam_channel::unbounded::<String>();
         let logger = FileLogger::start(path.clone(), error_tx).unwrap();
-        logger.log(b"hello ".to_vec());
-        logger.log(b"world".to_vec());
+        let tx = logger.log_sender();
+        let _ = tx.send(b"hello ".to_vec());
+        let _ = tx.send(b"world".to_vec());
         logger.stop();
 
         // 等待文件写完
