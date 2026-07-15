@@ -1,0 +1,48 @@
+import { ListView } from "std-widgets.slint";
+import { Theme } from "../styles/theme.slint";
+import { LogLine } from "connection-bar.slint";
+
+export component LogView inherits Rectangle {
+    background: Theme.bg;
+
+    in property <[LogLine]> log-model;
+    in property <bool> paused;
+
+    callback scrolled-to-bottom(bool);
+
+    log-list := ListView {
+        y: 0;
+        height: 100%;
+        width: 100%;
+
+        for line[i] in root.log-model: Rectangle {
+            height: 18px;
+            width: 100%;
+            background: transparent;
+            HorizontalLayout {
+                padding-left: 8px;
+                spacing: 8px;
+                Text {
+                    text: line.ts;
+                    color: Theme.text-muted;
+                    font-size: Theme.font-mono-size;
+                    font-family: "Consolas";
+                }
+                Text {
+                    text: line.text;
+                    color: line.color;
+                    font-size: Theme.font-mono-size;
+                    font-family: "Consolas";
+                    overflow: elide;
+                    horizontal-stretch: 1;
+                }
+            }
+        }
+    }
+
+    if root.paused: Text {
+        x: 16px; y: 8px;
+        text: "⏸ 已暂停（后台继续接收）";
+        color: Theme.accent;
+    }
+}

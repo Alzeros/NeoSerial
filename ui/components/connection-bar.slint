@@ -1,0 +1,61 @@
+import { Button, ComboBox } from "std-widgets.slint";
+import { Theme } from "../styles/theme.slint";
+
+// 单行 LogLine 数据，供 ListView 使用
+export struct LogLine {
+    ts: string,
+    text: string,
+    color: color,
+    dir: int,
+}
+
+export struct QuickCmd {
+    label: string,
+    content: string,
+    mode: int,    // 0=Ascii 1=Hex
+    ending: int,  // 0=Cr 1=Lf 2=Crlf 3=None
+}
+
+export component ConnectionBar inherits Rectangle {
+    height: 48px;
+    background: Theme.panel;
+
+    in property <string> status-text;
+    in property <color> status-color;
+    in property <[string]> ports;
+    in property <string> port-name;
+    in property <int> baud-rate;
+    in property <bool> connected;
+
+    callback port-selected(string);
+    callback baud-changed(int);
+    callback open-clicked();
+    callback close-clicked();
+
+    HorizontalLayout {
+        spacing: 8px;
+        padding: 8px;
+
+        ComboBox {
+            model: root.ports;
+            current-value: root.port-name;
+            selected => { root.port-selected(self.current-value); }
+        }
+        ComboBox {
+            model: ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"];
+            current-value: "\{root.baud-rate}";
+            selected => {
+                root.baud-changed(Math.round(self.current-value.to-float()));
+            }
+        }
+
+        Button { text: "打开"; clicked => { root.open-clicked(); } enabled: !root.connected; }
+        Button { text: "关闭"; clicked => { root.close-clicked(); } enabled: root.connected; }
+
+        Text {
+            text: root.status-text;
+            color: root.status-color;
+            vertical-alignment: center;
+        }
+    }
+}

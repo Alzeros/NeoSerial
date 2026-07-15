@@ -1,0 +1,45 @@
+import { Button, ComboBox } from "std-widgets.slint";
+import { Theme } from "../styles/theme.slint";
+
+export component Toolbar inherits Rectangle {
+    height: 32px;
+    background: Theme.panel;
+
+    in property <bool> is-hex;          // true=Hex false=Ascii
+    in property <bool> paused;
+    in property <bool> logging;         // 存盘开关
+    in property <string> log-file-name;
+    in property <bool> auto-scroll;
+
+    callback mode-changed(bool);        // true=Hex
+    callback pause-toggled();
+    callback clear-clicked();
+    callback logging-toggled();
+    callback auto-scroll-toggled();
+
+    HorizontalLayout {
+        spacing: 8px;
+        padding-left: 8px;
+        padding-right: 8px;
+        alignment: start;
+
+        ComboBox {
+            model: ["ASCII", "HEX"];
+            current-value: root.is-hex ? "HEX" : "ASCII";
+            selected => { root.mode-changed(self.current-value == "HEX"); }
+        }
+        Button {
+            text: root.paused ? "▶ 继续" : "⏸ 暂停";
+            clicked => { root.pause-toggled(); }
+        }
+        Button { text: "🗑 清屏"; clicked => { root.clear-clicked(); } }
+        Button {
+            text: root.logging ? "📁 存盘: 关" : "📁 存盘: 开";
+            clicked => { root.logging-toggled(); }
+        }
+        Button {
+            text: root.auto-scroll ? "↓ 自动滚动: 开" : "↓ 自动滚动: 关";
+            clicked => { root.auto-scroll-toggled(); }
+        }
+    }
+}

@@ -1,0 +1,91 @@
+import { VerticalBox } from "std-widgets.slint";
+
+import { Theme } from "styles/theme.slint";
+import { ConnectionBar, LogLine, QuickCmd } from "components/connection-bar.slint";
+import { Toolbar } from "components/toolbar.slint";
+import { LogView } from "components/log-view.slint";
+import { SendBar } from "components/send-bar.slint";
+
+export { LogLine, QuickCmd }
+
+export component App inherits Window {
+    title: "NeoSerial";
+    min-width: 800px;
+    min-height: 500px;
+    background: Theme.bg;
+
+    in-out property <[string]> ports: [];
+    in-out property <string> port-name;
+    in-out property <int> baud-rate: 115200;
+    in-out property <string> status-text: "未连接";
+    in-out property <color> status-color: #ff7b72;
+    in-out property <bool> connected: false;
+
+    in-out property <[LogLine]> log-model: [];
+    in-out property <bool> is-hex: false;
+    in-out property <bool> paused: false;
+    in-out property <bool> logging: false;
+    in-out property <string> log-file-name: "";
+    in-out property <bool> auto-scroll: true;
+
+    in-out property <[QuickCmd]> quick-commands: [];
+    in-out property <string> input-text: "";
+    in-out property <int> ending-index: 2;
+    in-out property <string> error-hint: "";
+
+    callback open-clicked();
+    callback close-clicked();
+    callback port-selected(string);
+    callback baud-changed(int);
+    callback mode-changed(bool);
+    callback pause-toggled();
+    callback clear-clicked();
+    callback logging-toggled();
+    callback auto-scroll-toggled();
+    callback send(string, int, int);
+    callback add-quick-cmd();
+    callback history-prev();
+    callback history-next();
+
+    VerticalBox {
+        ConnectionBar {
+            ports: root.ports;
+            port-name: root.port-name;
+            baud-rate: root.baud-rate;
+            status-text: root.status-text;
+            status-color: root.status-color;
+            connected: root.connected;
+            port-selected(port) => { root.port-selected(port); }
+            baud-changed(b) => { root.baud-changed(b); }
+            open-clicked => { root.open-clicked(); }
+            close-clicked => { root.close-clicked(); }
+        }
+        Toolbar {
+            is-hex: root.is-hex;
+            paused: root.paused;
+            logging: root.logging;
+            log-file-name: root.log-file-name;
+            auto-scroll: root.auto-scroll;
+            mode-changed(h) => { root.is-hex = h; root.mode-changed(h); }
+            pause-toggled => { root.paused = !root.paused; root.pause-toggled(); }
+            clear-clicked => { root.clear-clicked(); }
+            logging-toggled => { root.logging-toggled(); }
+            auto-scroll-toggled => { root.auto-scroll = !root.auto-scroll; root.auto-scroll-toggled(); }
+        }
+        LogView {
+            log-model: root.log-model;
+            paused: root.paused;
+            vertical-stretch: 1;
+        }
+        SendBar {
+            quick-commands: root.quick-commands;
+            error-hint: root.error-hint;
+            input-text <=> root.input-text;
+            ending-index <=> root.ending-index;
+            send(t, m, e) => { root.send(t, m, e); }
+            add-quick-cmd => { root.add-quick-cmd(); }
+            history-prev => { root.history-prev(); }
+            history-next => { root.history-next(); }
+        }
+    }
+}

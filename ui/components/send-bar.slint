@@ -1,0 +1,80 @@
+import { Button, ComboBox, LineEdit } from "std-widgets.slint";
+import { Theme } from "../styles/theme.slint";
+import { QuickCmd } from "connection-bar.slint";
+
+export component SendBar inherits FocusScope {
+    height: 80px;
+    forward-focus: input;
+
+    in property <[QuickCmd]> quick-commands;
+    in property <string> error-hint;
+
+    callback send(string, int, int);  // text, mode(0/1), ending(0..3)
+    callback add-quick-cmd();
+    callback history-prev();
+    callback history-next();
+
+    in-out property <string> input-text;
+    in-out property <int> ending-index;  // 0=Cr 1=Lf 2=Crlf 3=None
+
+    Rectangle {
+        background: Theme.panel;
+
+        VerticalLayout {
+            spacing: 4px;
+            padding: 8px;
+
+            HorizontalLayout {
+                spacing: 8px;
+                input := LineEdit {
+                    placeholder-text: "输入命令，回车发送（↑↓ 调历史）";
+                    text <=> root.input-text;
+                    horizontal-stretch: 1;
+                    accepted => {
+                        root.send(root.input-text, 0, root.ending-index);
+                    }
+                }
+                ComboBox {
+                    model: ["CR", "LF", "CRLF", "无"];
+                    current-index: root.ending-index;
+                    selected => { root.ending-index = self.current-index; }
+                }
+                Button {
+                    text: "发送";
+                    clicked => {
+                        root.send(root.input-text, 0, root.ending-index);
+                    }
+                }
+            }
+
+            HorizontalLayout {
+                spacing: 4px;
+                for cmd in root.quick-commands: Button {
+                    text: cmd.label;
+                    clicked => {
+                        root.send(cmd.content, cmd.mode, cmd.ending);
+                    }
+                }
+                Button { text: "+"; clicked => { root.add-quick-cmd(); } }
+            }
+
+            if root.error-hint != "": Text {
+                text: root.error-hint;
+                color: Theme.text-error;
+                font-size: 11px;
+            }
+        }
+    }
+
+    key-pressed(e) => {
+        if e.text == Key.UpArrow {
+            root.history-prev();
+            accept
+        } else if e.text == Key.DownArrow {
+            root.history-next();
+            accept
+        } else {
+            reject
+        }
+    }
+}
