@@ -9,7 +9,8 @@ export component SegButton inherits Rectangle {
     HorizontalLayout {
         spacing: 0px;
         for opt[i] in root.options : Rectangle {
-            width: self.preferred-width;
+            min-width: 40px;
+            horizontal-stretch: 1;
             background: i == root.current ? Theme.accent : Theme.btn-neutral;
             border-width: 1px;
             border-color: Theme.bg;
