@@ -39,6 +39,7 @@ export component App inherits Window {
 
     in-out property <int> tx-bytes: 0;
     in-out property <int> rx-bytes: 0;
+    in-out property <string> last-error: "None";
 
     in-out property <[CommandGroupSlint]> command-groups: [];
     in-out property <int> current-group: 0;
@@ -149,6 +150,10 @@ export component App inherits Window {
             baud-rate: root.baud-rate;
             tx-bytes: root.tx-bytes;
             rx-bytes: root.rx-bytes;
+            data-bits: root.data-bits;
+            parity: root.parity;
+            stop-bits: root.stop-bits;
+            last-error: root.last-error;
         }
     }
 }

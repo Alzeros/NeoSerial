@@ -14,26 +14,30 @@ export component LogView inherits Rectangle {
         width: 100%;
 
         for line[i] in root.log-model: Rectangle {
-            height: 18px;
+            height: 20px;
             width: 100%;
             background: transparent;
             HorizontalLayout {
                 padding-left: 8px;
+                padding-right: 8px;
                 spacing: 8px;
                 Text {
                     text: line.ts;
                     color: Theme.log-muted;
                     font-size: Theme.font-mono-size;
                     font-family: "Consolas";
-                    // ts 为空时不占宽
-                    width: line.ts == "" ? 0px : self.preferred-width;
+                    // 固定宽容下 HH:MM:SS.mmm；为空时不占宽
+                    width: line.ts == "" ? 0px : 96px;
+                    vertical-alignment: center;
                 }
                 Text {
                     text: line.tag;
                     color: line.color;
                     font-size: Theme.font-mono-size;
                     font-family: "Consolas";
-                    width: self.preferred-width;
+                    // 固定宽对齐（[发送]/[接收] 等宽对齐）
+                    width: 52px;
+                    vertical-alignment: center;
                 }
                 Text {
                     text: line.text;
@@ -42,6 +46,7 @@ export component LogView inherits Rectangle {
                     font-family: "Consolas";
                     overflow: elide;
                     horizontal-stretch: 1;
+                    vertical-alignment: center;
                 }
             }
         }

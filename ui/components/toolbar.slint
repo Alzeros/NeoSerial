@@ -2,7 +2,7 @@ import { Button, ComboBox } from "std-widgets.slint";
 import { Theme } from "../styles/theme.slint";
 
 export component Toolbar inherits Rectangle {
-    height: 32px;
+    height: Theme.toolbar-height;
     background: Theme.panel;
 
     in property <bool> is-hex;
@@ -24,43 +24,56 @@ export component Toolbar inherits Rectangle {
 
     HorizontalLayout {
         spacing: 6px;
-        padding-left: 8px;
-        padding-right: 8px;
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 0px;
+        padding-bottom: 0px;
         alignment: start;
 
+        // —— 显示格式组 ——
         ComboBox {
             model: ["ASCII", "HEX"];
             current-value: root.is-hex ? "HEX" : "ASCII";
             selected => { root.mode-changed(self.current-value == "HEX"); }
         }
         Button {
-            text: root.show-timestamp ? "时间 ✓" : "时间";
+            text: root.show-timestamp ? "✓ 时间" : "时间";
             clicked => { root.timestamp-toggled(); }
         }
         Button {
-            text: root.log-send ? "记发送 ✓" : "记发送";
+            text: root.log-send ? "✓ 记发送" : "记发送";
             clicked => { root.log-send-toggled(); }
         }
+        Button {
+            text: root.auto-scroll ? "✓ 自动滚动" : "自动滚动";
+            clicked => { root.auto-scroll-toggled(); }
+        }
+
+        // —— 竖分隔线 ——
+        Rectangle {
+            width: 1px;
+            height: 20px;
+            y: (parent.height - self.height) / 2;
+            background: Theme.divider;
+        }
+
+        // —— 日志操作组 ——
         Button {
             text: root.paused ? "▶ 继续" : "⏸ 暂停";
             clicked => { root.pause-toggled(); }
         }
-        Button { text: "🗑 清屏"; clicked => { root.clear-clicked(); } }
+        Button { text: "清空"; clicked => { root.clear-clicked(); } }
         if !root.logging : Button {
-            text: "📁 开始存盘";
+            text: "保存日志";
             clicked => { root.logging-toggled(); }
         }
         if root.logging : Button {
-            text: "📂 所在文件夹";
+            text: "📂 定位";
             clicked => { root.logging-reveal(); }
         }
         if root.logging : Button {
-            text: "⏹ 停止存盘";
+            text: "⏹ 停止";
             clicked => { root.logging-toggled(); }
-        }
-        Button {
-            text: root.auto-scroll ? "↓ 自动滚动 ✓" : "↓ 自动滚动";
-            clicked => { root.auto-scroll-toggled(); }
         }
     }
 }

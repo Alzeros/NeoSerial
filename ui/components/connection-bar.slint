@@ -17,8 +17,10 @@ export struct QuickCmd {
 }
 
 export component ConnectionBar inherits Rectangle {
-    height: 40px;
+    height: Theme.toolbar-height;
     background: Theme.panel;
+    border-color: Theme.border;
+    border-width: 0px;
 
     in property <string> status-text;
     in property <color> status-color;
@@ -42,11 +44,14 @@ export component ConnectionBar inherits Rectangle {
     callback close-clicked();
 
     HorizontalLayout {
-        spacing: 6px;
-        padding: 6px;
+        spacing: 4px;
+        padding-left: 6px;
+        padding-right: 6px;
+        padding-top: 0px;
+        padding-bottom: 0px;
 
         // COM
-        Text { text: "COM"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        Text { text: "COM"; color: Theme.text-muted; vertical-alignment: center; width: 28px; font-size: Theme.font-ui-size; }
         ComboBox {
             model: root.ports;
             current-value: root.port-name;
@@ -54,54 +59,67 @@ export component ConnectionBar inherits Rectangle {
             selected => { root.port-selected(self.current-value); }
         }
         // Baud
-        Text { text: "Baud"; color: Theme.text-muted; vertical-alignment: center; width: 34px; }
+        Text { text: "Baud"; color: Theme.text-muted; vertical-alignment: center; width: 30px; font-size: Theme.font-ui-size; }
         ComboBox {
             model: ["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"];
             current-value: "\{root.baud-rate}";
-            width: 90px;
+            width: 88px;
             selected => { root.baud-changed(Math.round(self.current-value.to-float())); }
         }
         // 数据位
-        Text { text: "数据"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        Text { text: "数据"; color: Theme.text-muted; vertical-alignment: center; width: 28px; font-size: Theme.font-ui-size; }
         ComboBox {
             model: ["5", "6", "7", "8"];
             current-value: "\{root.data-bits}";
-            width: 60px;
+            width: 52px;
             selected => { root.data-bits-changed(self.current-value.to-float()); }
         }
         // 校验
-        Text { text: "校验"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        Text { text: "校验"; color: Theme.text-muted; vertical-alignment: center; width: 28px; font-size: Theme.font-ui-size; }
         ComboBox {
             model: ["None", "Odd", "Even"];
             current-value: root.parity;
-            width: 80px;
+            width: 78px;
             selected => { root.parity-changed(self.current-value); }
         }
         // 停止位
-        Text { text: "停止"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        Text { text: "停止"; color: Theme.text-muted; vertical-alignment: center; width: 28px; font-size: Theme.font-ui-size; }
         ComboBox {
             model: ["One", "Two"];
             current-value: root.stop-bits;
-            width: 70px;
+            width: 64px;
             selected => { root.stop-bits-changed(self.current-value); }
         }
         // 流控
-        Text { text: "流控"; color: Theme.text-muted; vertical-alignment: center; width: 30px; }
+        Text { text: "流控"; color: Theme.text-muted; vertical-alignment: center; width: 28px; font-size: Theme.font-ui-size; }
         ComboBox {
             model: ["None", "Software", "Hardware"];
             current-value: root.flow-control;
-            width: 100px;
+            width: 96px;
             selected => { root.flow-control-changed(self.current-value); }
         }
 
-        Button { text: "Connect"; clicked => { root.open-clicked(); } enabled: !root.connected; primary: true; }
-        Button { text: "Disconnect"; clicked => { root.close-clicked(); } enabled: root.connected; }
+        // Connect / Disconnect：互斥，只突出当前可用动作
+        Button { text: "打开"; clicked => { root.open-clicked(); } enabled: !root.connected; primary: true; }
+        Button { text: "关闭"; clicked => { root.close-clicked(); } enabled: root.connected; }
 
-        Text {
-            text: root.status-text;
-            color: root.status-color;
-            vertical-alignment: center;
+        // 状态：圆点 + 文字
+        HorizontalLayout {
+            spacing: 4px;
+            padding-left: 8px;
             horizontal-stretch: 1;
+            Text {
+                text: root.connected ? "●" : "○";
+                color: root.connected ? Theme.status-on : Theme.status-off;
+                vertical-alignment: center;
+                font-size: Theme.font-ui-size;
+            }
+            Text {
+                text: root.status-text;
+                color: root.connected ? Theme.status-on : Theme.status-off;
+                vertical-alignment: center;
+                font-size: Theme.font-ui-size;
+            }
         }
     }
 }

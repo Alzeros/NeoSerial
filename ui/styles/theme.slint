@@ -2,6 +2,8 @@ export global Theme {
     out property <color> bg: #1e2227;
     out property <color> panel: #262b33;
     out property <color> panel-light: #2f353f;
+    out property <color> border: #3a4049;       // 细边框
+    out property <color> divider: #3a4049;      // 工具栏分组竖分隔线
 
     // 日志区：白底黑字
     out property <color> log-bg: #ffffff;
@@ -15,11 +17,18 @@ export global Theme {
     out property <color> text-error: #ff7b72;
     out property <color> text-muted: #7d8590;
     out property <color> accent: #58a6ff;
+    out property <color> status-on: #3fb950;   // 状态点：连接绿
+    out property <color> status-off: #6e7681;  // 状态点：断开灰
 
     // 工程风格按钮色
     out property <color> btn-primary: #2f6fd6;  // 蓝：Connect/Send/Run
     out property <color> btn-danger: #c93b3b;   // 红：Disconnect/Stop/Delete
     out property <color> btn-neutral: #3a4049;  // 灰：普通功能
+    out property <color> btn-neutral-hover: #454c57;
 
-    out property <length> font-mono-size: 12px;
+    out property <length> font-mono-size: 13px;
+    out property <length> font-ui-size: 12px;
+    out property <length> control-height: 30px;
+    out property <length> toolbar-height: 32px;
+    out property <length> radius: 0px;          // 工业风：无圆角
 }

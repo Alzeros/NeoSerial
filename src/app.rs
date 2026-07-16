@@ -193,10 +193,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     app.set_connected(true);
                     app.set_status_text("已连接".into());
                     app.set_status_color(slint::Color::from_rgb_u8(0x7e, 0xe7, 0x87).into());
+                    app.set_last_error("None".into());
                 }
                 Err(e) => {
-                    app.set_status_text(format!("打开失败: {}", e).into());
+                    let msg = format!("打开失败: {}", e);
+                    app.set_status_text(msg.clone().into());
                     app.set_status_color(slint::Color::from_rgb_u8(0xff, 0x7b, 0x72).into());
+                    app.set_last_error(msg.into());
                 }
             }
         });
@@ -337,8 +340,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         app.set_log_file_name(path.to_string_lossy().to_string().into());
                     }
                     Err(e) => {
-                        app.set_status_text(format!("存盘失败: {}", e).into());
+                        let msg = format!("存盘失败: {}", e);
+                        app.set_status_text(msg.clone().into());
                         app.set_status_color(slint::Color::from_rgb_u8(0xff, 0x7b, 0x72).into());
+                        app.set_last_error(msg.into());
                     }
                 }
             } else {
@@ -641,8 +646,9 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     }
                     app.set_logging(false);
                     app.set_log_file_name("".into());
-                    app.set_status_text(msg.into());
+                    app.set_status_text(msg.clone().into());
                     app.set_status_color(slint::Color::from_rgb_u8(0xff, 0x7b, 0x72).into());
+                    app.set_last_error(msg.into());
                 } else {
                     // 无错误，把 rx 放回
                     st.log_error_rx = Some(rx);
@@ -673,11 +679,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if let Some(msg) = disconnected {
                 st.handle = None;
                 app.set_connected(false);
-                app.set_status_text(msg.into());
+                app.set_status_text(msg.clone().into());
                 app.set_status_color(slint::Color::from_rgb_u8(0xff, 0x7b, 0x72).into());
+                app.set_last_error(msg.into());
             }
             if let Some(msg) = send_failed {
-                app.set_error_hint(msg.into());
+                app.set_error_hint(msg.clone().into());
+                app.set_last_error(msg.into());
             }
             if let Some(t) = stats_tx {
                 st.tx_bytes = t;

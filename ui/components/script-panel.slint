@@ -29,27 +29,42 @@ export component ScriptPanel inherits Rectangle {
     VerticalLayout {
         spacing: 0px;
 
+        // 标题栏
+        Rectangle {
+            height: 26px;
+            background: Theme.panel-light;
+            border-color: Theme.border;
+            border-width: 1px;
+            Text {
+                text: "命令脚本";
+                color: Theme.text-muted;
+                x: 8px;
+                vertical-alignment: center;
+                font-size: Theme.font-ui-size;
+            }
+        }
+
         // Tab 栏（多 Group 预留，本轮单 Tab 也渲染）
         HorizontalLayout {
             spacing: 0px;
             for g[i] in root.groups : Rectangle {
-                width: 70px;
+                width: 64px;
                 height: 26px;
-                background: i == root.current-group ? Theme.bg : Theme.panel-light;
+                background: i == root.current-group ? Theme.bg : Theme.panel;
                 border-width: 1px;
-                border-color: Theme.bg;
+                border-color: Theme.border;
                 Text {
                     text: g.name;
                     color: i == root.current-group ? #ffffff : Theme.text-muted;
                     horizontal-alignment: center;
                     vertical-alignment: center;
-                    font-size: 11px;
+                    font-size: Theme.font-ui-size;
                 }
                 TouchArea {
                     clicked => { root.current-group = i; }
                 }
             }
-            Rectangle { horizontal-stretch: 1; background: Theme.panel-light; }
+            Rectangle { horizontal-stretch: 1; background: Theme.panel; border-width: 1px; border-color: Theme.border; }
         }
 
         // 命令列表
@@ -60,11 +75,11 @@ export component ScriptPanel inherits Rectangle {
                     for item[ii] in g.items : Rectangle {
                         height: 28px;
                         width: 100%;
-                        border-width: 0.5px;
-                        border-color: Theme.bg;
+                        border-width: 1px;
+                        border-color: Theme.border;
                         background: Theme.panel;
                         HorizontalLayout {
-                            padding-left: 6px;
+                            padding-left: 4px;
                             padding-right: 4px;
                             spacing: 4px;
                             Button {
@@ -90,10 +105,15 @@ export component ScriptPanel inherits Rectangle {
 
         // 底部新增
         Rectangle {
-            height: 32px;
+            height: 30px;
             background: Theme.panel-light;
+            border-color: Theme.border;
+            border-width: 1px;
             HorizontalLayout {
-                padding: 4px;
+                padding-left: 4px;
+                padding-right: 4px;
+                padding-top: 2px;
+                padding-bottom: 2px;
                 alignment: center;
                 Button {
                     text: "+ 新增命令";

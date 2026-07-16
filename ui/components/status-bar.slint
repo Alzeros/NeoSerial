@@ -3,12 +3,25 @@ import { Theme } from "../styles/theme.slint";
 export component StatusBar inherits Rectangle {
     height: 22px;
     background: Theme.panel;
+    border-color: Theme.border;
+    border-width: 1px;
 
     in property <bool> connected;
     in property <string> port-name;
     in property <int> baud-rate;
     in property <int> tx-bytes;
     in property <int> rx-bytes;
+    in property <int> data-bits: 8;
+    in property <string> parity: "None";
+    in property <string> stop-bits: "One";
+    in property <string> last-error: "None";
+
+    // 8N1：数据位 + 校验首字母 + 停止位
+    property <string> parity-code:
+        root.parity == "Odd" ? "O" : (root.parity == "Even" ? "E" : "N");
+    property <string> stop-code:
+        root.stop-bits == "Two" ? "2" : "1";
+    property <string> frame-format: "\{root.data-bits}\{root.parity-code}\{root.stop-code}";
 
     HorizontalLayout {
         spacing: 16px;
@@ -19,41 +32,55 @@ export component StatusBar inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             Text {
-                text: "●";
-                color: root.connected ? Theme.text-tx : Theme.text-error;
+                text: root.connected ? "●" : "○";
+                color: root.connected ? Theme.status-on : Theme.status-off;
                 vertical-alignment: center;
-                font-size: 11px;
+                font-size: Theme.font-ui-size;
             }
             Text {
                 text: root.connected ? "Connected" : "Disconnected";
-                color: root.connected ? Theme.text-tx : Theme.text-error;
+                color: root.connected ? Theme.status-on : Theme.status-off;
                 vertical-alignment: center;
-                font-size: 11px;
+                font-size: Theme.font-ui-size;
             }
         }
         Text {
             text: root.port-name == "" ? "COM -" : root.port-name;
             color: Theme.text-muted;
             vertical-alignment: center;
-            font-size: 11px;
+            font-size: Theme.font-ui-size;
         }
         Text {
             text: "\{root.baud-rate}";
             color: Theme.text-muted;
             vertical-alignment: center;
-            font-size: 11px;
+            font-size: Theme.font-ui-size;
         }
         Text {
-            text: "TX: \{root.tx-bytes} B";
+            text: root.frame-format;
             color: Theme.text-muted;
             vertical-alignment: center;
-            font-size: 11px;
+            font-size: Theme.font-ui-size;
         }
         Text {
-            text: "RX: \{root.rx-bytes} B";
+            text: "TX: \{root.tx-bytes} Bytes";
             color: Theme.text-muted;
             vertical-alignment: center;
-            font-size: 11px;
+            font-size: Theme.font-ui-size;
+        }
+        Text {
+            text: "RX: \{root.rx-bytes} Bytes";
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            font-size: Theme.font-ui-size;
+        }
+        // 占位推开 Last Error 到右侧
+        Rectangle { horizontal-stretch: 1; }
+        Text {
+            text: "Last Error: \{root.last-error}";
+            color: root.last-error == "None" ? Theme.text-muted : Theme.text-error;
+            vertical-alignment: center;
+            font-size: Theme.font-ui-size;
         }
     }
 }

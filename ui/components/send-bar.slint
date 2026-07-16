@@ -3,7 +3,7 @@ import { Theme } from "../styles/theme.slint";
 import { SegButton } from "seg-button.slint";
 
 export component SendBar inherits FocusScope {
-    height: 56px;
+    height: 44px;
     forward-focus: input;
 
     in property <string> error-hint;
@@ -17,15 +17,20 @@ export component SendBar inherits FocusScope {
 
     Rectangle {
         background: Theme.panel;
+        border-color: Theme.border;
+        border-width: 1px;
 
         VerticalLayout {
-            spacing: 4px;
-            padding: 6px;
+            spacing: 2px;
+            padding-left: 6px;
+            padding-right: 6px;
+            padding-top: 4px;
+            padding-bottom: 4px;
 
             HorizontalLayout {
-                spacing: 8px;
+                spacing: 6px;
                 input := LineEdit {
-                    placeholder-text: "输入命令，回车发送（↑↓ 调历史）";
+                    placeholder-text: "输入命令，Enter 发送（↑↓ 调历史）";
                     text <=> root.input-text;
                     horizontal-stretch: 1;
                     accepted => {
