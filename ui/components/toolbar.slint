@@ -5,21 +5,25 @@ export component Toolbar inherits Rectangle {
     height: 32px;
     background: Theme.panel;
 
-    in property <bool> is-hex;          // true=Hex false=Ascii
+    in property <bool> is-hex;
     in property <bool> paused;
-    in property <bool> logging;         // 存盘开关
+    in property <bool> logging;
     in property <string> log-file-name;
     in property <bool> auto-scroll;
+    in property <bool> show-timestamp;
+    in property <bool> log-send;
 
-    callback mode-changed(bool);        // true=Hex
+    callback mode-changed(bool);
     callback pause-toggled();
     callback clear-clicked();
     callback logging-toggled();
-    callback logging-reveal();          // 在资源管理器中定位存盘文件
+    callback logging-reveal();
     callback auto-scroll-toggled();
+    callback timestamp-toggled();
+    callback log-send-toggled();
 
     HorizontalLayout {
-        spacing: 8px;
+        spacing: 6px;
         padding-left: 8px;
         padding-right: 8px;
         alignment: start;
@@ -30,12 +34,18 @@ export component Toolbar inherits Rectangle {
             selected => { root.mode-changed(self.current-value == "HEX"); }
         }
         Button {
+            text: root.show-timestamp ? "时间 ✓" : "时间";
+            clicked => { root.timestamp-toggled(); }
+        }
+        Button {
+            text: root.log-send ? "记发送 ✓" : "记发送";
+            clicked => { root.log-send-toggled(); }
+        }
+        Button {
             text: root.paused ? "▶ 继续" : "⏸ 暂停";
             clicked => { root.pause-toggled(); }
         }
         Button { text: "🗑 清屏"; clicked => { root.clear-clicked(); } }
-        // 存盘：默认关，未开时点「开始存盘」触发选择文件对话框；
-        // 已开时显示「📂 所在文件夹」（定位文件）+「⏹ 停止存盘」。
         if !root.logging : Button {
             text: "📁 开始存盘";
             clicked => { root.logging-toggled(); }
@@ -49,7 +59,7 @@ export component Toolbar inherits Rectangle {
             clicked => { root.logging-toggled(); }
         }
         Button {
-            text: root.auto-scroll ? "↓ 自动滚动: 开" : "↓ 自动滚动: 关";
+            text: root.auto-scroll ? "↓ 自动滚动 ✓" : "↓ 自动滚动";
             clicked => { root.auto-scroll-toggled(); }
         }
     }
