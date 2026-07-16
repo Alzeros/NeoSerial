@@ -1,0 +1,105 @@
+import { ListView, Button } from "std-widgets.slint";
+import { Theme } from "../styles/theme.slint";
+
+export struct CommandItemSlint {
+    label: string,
+    content: string,
+    mode: int,
+    ending: int,
+    enabled: bool,
+}
+
+export struct CommandGroupSlint {
+    name: string,
+    items: [CommandItemSlint],
+}
+
+export component ScriptPanel inherits Rectangle {
+    background: Theme.panel;
+    min-width: 200px;
+
+    in-out property <[CommandGroupSlint]> groups;
+    in-out property <int> current-group: 0;
+
+    callback send-command(int, int);   // group 索引, item 索引
+    callback add-command();
+    callback edit-command(int, int);
+    callback delete-command(int, int);
+
+    VerticalLayout {
+        spacing: 0px;
+
+        // Tab 栏（多 Group 预留，本轮单 Tab 也渲染）
+        HorizontalLayout {
+            spacing: 0px;
+            for g[i] in root.groups : Rectangle {
+                width: 70px;
+                height: 26px;
+                background: i == root.current-group ? Theme.bg : Theme.panel-light;
+                border-width: 1px;
+                border-color: Theme.bg;
+                Text {
+                    text: g.name;
+                    color: i == root.current-group ? #ffffff : Theme.text-muted;
+                    horizontal-alignment: center;
+                    vertical-alignment: center;
+                    font-size: 11px;
+                }
+                TouchArea {
+                    clicked => { root.current-group = i; }
+                }
+            }
+            Rectangle { horizontal-stretch: 1; background: Theme.panel-light; }
+        }
+
+        // 命令列表
+        ListView {
+            vertical-stretch: 1;
+            for g[gi] in root.groups : Rectangle {
+                if gi == root.current-group : Rectangle {
+                    for item[ii] in g.items : Rectangle {
+                        height: 28px;
+                        width: 100%;
+                        border-width: 0.5px;
+                        border-color: Theme.bg;
+                        background: Theme.panel;
+                        HorizontalLayout {
+                            padding-left: 6px;
+                            padding-right: 4px;
+                            spacing: 4px;
+                            Button {
+                                text: item.label;
+                                horizontal-stretch: 1;
+                                clicked => { root.send-command(gi, ii); }
+                            }
+                            Button {
+                                text: "✎";
+                                width: 30px;
+                                clicked => { root.edit-command(gi, ii); }
+                            }
+                            Button {
+                                text: "✕";
+                                width: 30px;
+                                clicked => { root.delete-command(gi, ii); }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 底部新增
+        Rectangle {
+            height: 32px;
+            background: Theme.panel-light;
+            HorizontalLayout {
+                padding: 4px;
+                alignment: center;
+                Button {
+                    text: "+ 新增命令";
+                    clicked => { root.add-command(); }
+                }
+            }
+        }
+    }
+}
