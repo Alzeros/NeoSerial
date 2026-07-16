@@ -4,11 +4,15 @@ use std::sync::{Arc, Mutex};
 
 use crate::buffer::log_line::{Dir, LogLine};
 use crate::buffer::ring_buffer::RingBuffer;
-use crate::config::settings::{DisplayMode, Settings};
+use crate::config::command_group::{CommandGroup, CommandItem};
+use crate::config::settings::{
+    DataBits, DisplayMode, FlowControl, Parity, Settings, StopBits,
+};
 use crate::connection::handle::{ConnCommand, ConnEvent, ConnectionHandle};
 use crate::connection::spawn_connection;
 use crate::logging::file_logger::FileLogger;
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
+use crate::util::log_format::DisplayConfig;
 
 use crate::App;
 
@@ -24,7 +28,25 @@ struct AppState {
     is_hex: bool,
     paused: bool,
     auto_scroll: bool,
+    /// 显示开关：时间戳前缀。
+    show_timestamp: bool,
+    /// 显示开关：是否记录发送行（false 时读线程不发 TX 行到 UI/存盘）。
+    log_send: bool,
+    /// 累计收发字节统计（由 ConnEvent::Stats 周期更新）。
+    tx_bytes: u64,
+    rx_bytes: u64,
+    /// 脚本命令组（侧边栏可增删改）。
+    command_groups: Vec<CommandGroup>,
+    current_group: usize,
     send_history: Vec<String>,
+}
+
+/// 由 AppState 构造当前显示配置（时间戳/记录发送开关）。
+fn display_config(st: &AppState) -> DisplayConfig {
+    DisplayConfig {
+        show_timestamp: st.show_timestamp,
+        log_send: st.log_send,
+    }
 }
 
 /// 后台事件 → UI 线程的中转 channel。
@@ -69,29 +91,39 @@ pub fn run() -> Result<(), slint::PlatformError> {
     });
     app.set_is_hex(matches!(settings.ui.display_mode, DisplayMode::Hex));
     app.set_auto_scroll(settings.ui.auto_scroll);
-
-    // 快捷命令（取第一个命令组的项填充 UI 列表）
-    let qc_model: VecModel<crate::QuickCmd> = VecModel::from(
-        settings
-            .command_groups
-            .first()
-            .map(|g| g.items.as_slice())
-            .unwrap_or(&[])
-            .iter()
-            .map(|q| crate::QuickCmd {
-                label: q.label.clone().into(),
-                content: q.content.clone().into(),
-                mode: if matches!(q.mode, DisplayMode::Hex) { 1 } else { 0 },
-                ending: match q.line_ending {
-                    LineEnding::Cr => 0,
-                    LineEnding::Lf => 1,
-                    LineEnding::Crlf => 2,
-                    LineEnding::None => 3,
-                },
-            })
-            .collect::<Vec<_>>(),
+    // 显示开关
+    app.set_show_timestamp(settings.ui.show_timestamp);
+    app.set_log_send(settings.ui.log_send);
+    // 串口参数（下次打开生效，UI 回显当前值）
+    app.set_data_bits(match settings.serial_defaults.data_bits {
+        DataBits::Five => 5,
+        DataBits::Six => 6,
+        DataBits::Seven => 7,
+        DataBits::Eight => 8,
+    });
+    app.set_parity(
+        match settings.serial_defaults.parity {
+            Parity::None => "None",
+            Parity::Odd => "Odd",
+            Parity::Even => "Even",
+        }
+        .into(),
     );
-    app.set_quick_commands(ModelRc::new(qc_model));
+    app.set_stop_bits(
+        match settings.serial_defaults.stop_bits {
+            StopBits::One => "One",
+            StopBits::Two => "Two",
+        }
+        .into(),
+    );
+    app.set_flow_control(
+        match settings.serial_defaults.flow_control {
+            FlowControl::None => "None",
+            FlowControl::Software => "Software",
+            FlowControl::Hardware => "Hardware",
+        }
+        .into(),
+    );
 
     let serial_defaults = settings.serial_defaults.clone();
     let state: Arc<Mutex<AppState>> = Arc::new(Mutex::new(AppState {
@@ -104,8 +136,20 @@ pub fn run() -> Result<(), slint::PlatformError> {
         is_hex: matches!(settings.ui.display_mode, DisplayMode::Hex),
         paused: false,
         auto_scroll: settings.ui.auto_scroll,
+        show_timestamp: settings.ui.show_timestamp,
+        log_send: settings.ui.log_send,
+        tx_bytes: 0,
+        rx_bytes: 0,
+        command_groups: settings.command_groups.clone(),
+        current_group: 0,
         send_history: Vec::new(),
     }));
+
+    // 初始命令组模型同步到 UI
+    {
+        let st = state.lock().unwrap();
+        sync_script_model(&app, &st);
+    }
 
     // 事件 channel：后台 → UI
     let (_event_tx, event_rx): (Sender<ConnEvent>, Receiver<ConnEvent>) =
@@ -132,7 +176,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
             let kws = st.error_keywords.clone();
             let sd = st.serial_defaults.clone();
             // 若存盘已开启，把 log sender clone 传入读线程（连接打开时快照）
-            let log_tx = st.file_logger.as_ref().map(|fl| fl.log_sender());
+            let log_tx = st.file_logger.as_ref().map(|fl| fl.line_sender());
+            let display = display_config(&st);
             match spawn_connection(
                 &port_name,
                 baud,
@@ -143,6 +188,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                 kws,
                 event_tx.clone(),
                 log_tx,
+                display,
             ) {
                 Ok(h) => {
                     st.handle = Some(h);
@@ -206,7 +252,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // 显示模式
+    // 显示模式（全局 hex/ascii）
     {
         let weak = weak.clone();
         let state = state.clone();
@@ -230,8 +276,37 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
+    // 时间戳开关
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_timestamp_toggled(move || {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.show_timestamp = app.get_show_timestamp();
+            if let Some(h) = &st.handle {
+                h.send_command(ConnCommand::SetDisplay(display_config(&st)));
+            }
+            refresh_model(&app, &st);
+        });
+    }
+
+    // 记录发送开关
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_log_send_toggled(move || {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.log_send = app.get_log_send();
+            if let Some(h) = &st.handle {
+                h.send_command(ConnCommand::SetDisplay(display_config(&st)));
+            }
+        });
+    }
+
     // 存盘开关：未开时弹「另存为」让用户选位置，确认后才开（取消则不开）；
-    // 已开时点「停止存盘」关闭。
+    // 已开时点「停止存盘」关闭。存盘为文本行格式（每行一条记录）。
     {
         let weak = weak.clone();
         let state = state.clone();
@@ -241,10 +316,10 @@ pub fn run() -> Result<(), slint::PlatformError> {
             if st.file_logger.is_none() {
                 // 默认关：必须由用户指定位置才开存盘
                 let now = crate::util::time_fmt::now_local_compact();
-                let default_name = format!("neoserial_{}.bin", now);
+                let default_name = format!("neoserial_{}.log", now);
                 let dialog = rfd::FileDialog::new()
                     .set_file_name(&default_name)
-                    .add_filter("串口数据 (*.bin)", &["bin"])
+                    .add_filter("日志文件 (*.log)", &["log"])
                     .add_filter("所有文件", &["*"])
                     .save_file();
                 let path = match dialog {
@@ -256,7 +331,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     Ok(fl) => {
                         // 连接已打开时，通过 SetLogger 把 sender 传给读线程（动态启停存盘）
                         if let Some(h) = &st.handle {
-                            h.send_command(ConnCommand::SetLogger(Some(fl.log_sender())));
+                            h.send_command(ConnCommand::SetLogger(Some(fl.line_sender())));
                         }
                         st.log_error_rx = Some(error_rx);
                         st.file_logger = Some(fl);
@@ -285,7 +360,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
     // 在资源管理器中定位当前存盘文件
     {
-        let weak = weak.clone();
         let state = state.clone();
         app.on_logging_reveal(move || {
             let st = state.lock().unwrap();
@@ -300,7 +374,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // 发送
+    // 发送（底部输入框）
     {
         let weak = weak.clone();
         let state = state.clone();
@@ -348,7 +422,7 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // port-selected / baud-changed / add-quick-cmd：MVP 暂留空实现（端口刷新靠重启）
+    // port-selected / baud-changed：MVP 暂留空实现（端口刷新靠重启）
     {
         let weak = weak.clone();
         app.on_port_selected(move |p| {
@@ -363,11 +437,152 @@ pub fn run() -> Result<(), slint::PlatformError> {
             app.set_baud_rate(b);
         });
     }
+
+    // 串口参数 callback（记入 serial_defaults，下次打开生效）
     {
         let weak = weak.clone();
-        app.on_add_quick_cmd(move || {
-            let _app = weak.unwrap();
-            // MVP：快捷命令编辑留 v2，此处仅占位
+        let state = state.clone();
+        app.on_data_bits_changed(move |d| {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.serial_defaults.data_bits = match d {
+                5 => DataBits::Five,
+                6 => DataBits::Six,
+                7 => DataBits::Seven,
+                _ => DataBits::Eight,
+            };
+            app.set_data_bits(d);
+        });
+    }
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_parity_changed(move |p| {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.serial_defaults.parity = match p.to_string().as_str() {
+                "Odd" => Parity::Odd,
+                "Even" => Parity::Even,
+                _ => Parity::None,
+            };
+            app.set_parity(p);
+        });
+    }
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_stop_bits_changed(move |s| {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.serial_defaults.stop_bits = match s.to_string().as_str() {
+                "Two" => StopBits::Two,
+                _ => StopBits::One,
+            };
+            app.set_stop_bits(s);
+        });
+    }
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_flow_control_changed(move |f| {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            st.serial_defaults.flow_control = match f.to_string().as_str() {
+                "Software" => FlowControl::Software,
+                "Hardware" => FlowControl::Hardware,
+                _ => FlowControl::None,
+            };
+            app.set_flow_control(f);
+        });
+    }
+
+    // 脚本：发送指定命令
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_script_send(move |g, i| {
+            let app = weak.unwrap();
+            let st = state.lock().unwrap();
+            if let Some(grp) = st.command_groups.get(g as usize) {
+                if let Some(item) = grp.items.get(i as usize) {
+                    let bytes_result = if matches!(item.mode, DisplayMode::Hex) {
+                        hex_to_bytes(&item.content)
+                    } else {
+                        Ok(ascii_to_bytes(&item.content))
+                    };
+                    if let Ok(mut bytes) = bytes_result {
+                        item.line_ending.append_bytes(&mut bytes);
+                        if let Some(h) = &st.handle {
+                            h.send_command(ConnCommand::Send(bytes));
+                        } else {
+                            drop(st);
+                            app.set_error_hint("未连接".into());
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    // 脚本：新增占位命令
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_script_add(move || {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            let cg = st.current_group;
+            if let Some(grp) = st.command_groups.get_mut(cg) {
+                grp.items.push(CommandItem {
+                    label: "新命令".into(),
+                    content: "".into(),
+                    mode: DisplayMode::Ascii,
+                    line_ending: LineEnding::Crlf,
+                    enabled: true,
+                });
+            }
+            sync_script_model(&app, &st);
+            save_command_groups(&st);
+        });
+    }
+
+    // 脚本：编辑（MVP——载入到输入框供修改/重发，完整编辑面板留 v2）
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_script_edit(move |g, i| {
+            let app = weak.unwrap();
+            let st = state.lock().unwrap();
+            if let Some(grp) = st.command_groups.get(g as usize) {
+                if let Some(item) = grp.items.get(i as usize) {
+                    app.set_input_text(item.content.clone().into());
+                    app.set_ending_index(match item.line_ending {
+                        LineEnding::Cr => 0,
+                        LineEnding::Lf => 1,
+                        LineEnding::Crlf => 2,
+                        LineEnding::None => 3,
+                    });
+                    app.set_is_hex_send(matches!(item.mode, DisplayMode::Hex));
+                }
+            }
+        });
+    }
+
+    // 脚本：删除
+    {
+        let weak = weak.clone();
+        let state = state.clone();
+        app.on_script_delete(move |g, i| {
+            let app = weak.unwrap();
+            let mut st = state.lock().unwrap();
+            if let Some(grp) = st.command_groups.get_mut(g as usize) {
+                let idx = i as usize;
+                if idx < grp.items.len() {
+                    grp.items.remove(idx);
+                }
+            }
+            sync_script_model(&app, &st);
+            save_command_groups(&st);
         });
     }
 
@@ -430,16 +645,22 @@ pub fn run() -> Result<(), slint::PlatformError> {
             // 暂停 = 只冻结屏幕，后台照收照丢旧（设计 §4.3）：
             //   - Lines 照常 push 进环形缓冲（不论是否 paused），照常丢旧；
             //   - 仅在非 paused 时 refresh_model 刷屏——恢复后能看到暂停期间进缓冲的数据。
-            //   - Disconnected/SendFailed 仍照常处理（断开/发送失败需立即通知用户）。
+            //   - Disconnected/SendFailed/Stats 仍照常处理。
             let mut new_lines: Vec<LogLine> = Vec::new();
             let mut disconnected: Option<String> = None;
             let mut send_failed: Option<String> = None;
+            let mut stats_tx: Option<u64> = None;
+            let mut stats_rx: Option<u64> = None;
             while let Ok(ev) = event_rx.try_recv() {
                 match ev {
                     // 不论是否 paused 都收集：后台照收，环形缓冲照常丢旧
                     ConnEvent::Lines(lines) => new_lines.extend(lines),
                     ConnEvent::Disconnected(msg) => disconnected = Some(msg),
                     ConnEvent::SendFailed(msg) => send_failed = Some(msg),
+                    ConnEvent::Stats { tx_bytes, rx_bytes } => {
+                        stats_tx = Some(tx_bytes);
+                        stats_rx = Some(rx_bytes);
+                    }
                 }
             }
             if let Some(msg) = disconnected {
@@ -450,6 +671,14 @@ pub fn run() -> Result<(), slint::PlatformError> {
             }
             if let Some(msg) = send_failed {
                 app.set_error_hint(msg.into());
+            }
+            if let Some(t) = stats_tx {
+                st.tx_bytes = t;
+                app.set_tx_bytes(t as i32);
+            }
+            if let Some(r) = stats_rx {
+                st.rx_bytes = r;
+                app.set_rx_bytes(r as i32);
             }
             if !new_lines.is_empty() {
                 // 照常进缓冲（后台照收，照常丢旧）—— 不论是否 paused
@@ -504,6 +733,13 @@ pub fn run() -> Result<(), slint::PlatformError> {
             };
             settings.ui.display_mode = if st.is_hex { DisplayMode::Hex } else { DisplayMode::Ascii };
             settings.ui.auto_scroll = st.auto_scroll;
+            settings.ui.show_timestamp = st.show_timestamp;
+            settings.ui.log_send = st.log_send;
+            settings.command_groups = st.command_groups.clone();
+            settings.serial_defaults.data_bits = st.serial_defaults.data_bits;
+            settings.serial_defaults.parity = st.serial_defaults.parity;
+            settings.serial_defaults.stop_bits = st.serial_defaults.stop_bits;
+            settings.serial_defaults.flow_control = st.serial_defaults.flow_control;
             // 保存窗口尺寸与位置（物理像素）
             let size = app.window().size();
             let pos = app.window().position();
@@ -531,6 +767,42 @@ pub fn run() -> Result<(), slint::PlatformError> {
     app.run()
 }
 
+/// 把 command_groups 同步到 UI 的 CommandGroupSlint model。
+fn sync_script_model(app: &App, st: &AppState) {
+    let groups: Vec<crate::CommandGroupSlint> = st
+        .command_groups
+        .iter()
+        .map(|g| crate::CommandGroupSlint {
+            name: g.name.clone().into(),
+            items: ModelRc::new(VecModel::from(
+                g.items
+                    .iter()
+                    .map(|it| crate::CommandItemSlint {
+                        label: it.label.clone().into(),
+                        content: it.content.clone().into(),
+                        mode: if matches!(it.mode, DisplayMode::Hex) { 1 } else { 0 },
+                        ending: match it.line_ending {
+                            LineEnding::Cr => 0,
+                            LineEnding::Lf => 1,
+                            LineEnding::Crlf => 2,
+                            LineEnding::None => 3,
+                        },
+                        enabled: it.enabled,
+                    })
+                    .collect::<Vec<_>>(),
+            )),
+        })
+        .collect();
+    app.set_command_groups(ModelRc::new(VecModel::from(groups)));
+}
+
+/// 把当前 command_groups 写回配置文件（增删改后持久化）。
+fn save_command_groups(st: &AppState) {
+    let mut settings = Settings::load();
+    settings.command_groups = st.command_groups.clone();
+    let _ = settings.save();
+}
+
 /// 根据环形缓冲 + 当前显示模式，全量重建 UI model。
 /// 5000 行全量重建在 20ms 内可接受；后续可优化为增量。
 fn refresh_model(app: &App, st: &AppState) {
@@ -539,16 +811,30 @@ fn refresh_model(app: &App, st: &AppState) {
         .iter()
         .map(|l| {
             let text = if st.is_hex { &l.hex } else { &l.ascii };
+            // 白底配色：TX 绿、RX 深灰、ERROR 红
             let color = if l.is_error {
-                slint::Color::from_rgb_u8(0xff, 0x7b, 0x72)
+                slint::Color::from_rgb_u8(0xcf, 0x22, 0x2e)
             } else {
                 match l.dir {
-                    Dir::Tx => slint::Color::from_rgb_u8(0x7e, 0xe7, 0x87),
-                    Dir::Rx => slint::Color::from_rgb_u8(0xc8, 0xd3, 0xe0),
+                    Dir::Tx => slint::Color::from_rgb_u8(0x1a, 0x7f, 0x37),
+                    Dir::Rx => slint::Color::from_rgb_u8(0x1f, 0x23, 0x28),
                 }
             };
+            // ts：关闭时间戳时填空串（UI 不渲染该列）
+            let ts = if st.show_timestamp {
+                l.ts.clone()
+            } else {
+                String::new()
+            };
+            // tag：按方向标注
+            let tag = if matches!(l.dir, Dir::Tx) {
+                "[发送]".to_string()
+            } else {
+                "[接收]".to_string()
+            };
             crate::LogLine {
-                ts: l.ts.clone().into(),
+                ts: ts.into(),
+                tag: tag.into(),
                 text: text.clone().into(),
                 color: color.into(),
                 dir: if matches!(l.dir, Dir::Tx) { 1 } else { 0 },
