@@ -12,8 +12,8 @@ export { LogLine, QuickCmd, CommandGroupSlint }
 
 export component App inherits Window {
     title: "NeoSerial";
-    min-width: 900px;
-    min-height: 560px;
+    min-width: 1100px;
+    min-height: 600px;
     background: Theme.bg;
 
     in-out property <[string]> ports: [];
@@ -122,12 +122,12 @@ export component App inherits Window {
             LogView {
                 log-model: root.log-model;
                 paused: root.paused;
-                horizontal-stretch: 7;
+                horizontal-stretch: 1;
             }
             ScriptPanel {
                 groups: root.command-groups;
                 current-group <=> root.current-group;
-                horizontal-stretch: 3;
+                width: 340px;
                 send-command(g, i) => { root.script-send(g, i); }
                 add-command => { root.script-add(); }
                 edit-command(g, i) => { root.script-edit(g, i); }

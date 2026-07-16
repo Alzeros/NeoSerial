@@ -23,28 +23,32 @@ export component Toolbar inherits Rectangle {
     callback log-send-toggled();
 
     HorizontalLayout {
-        spacing: 6px;
-        padding-left: 6px;
-        padding-right: 6px;
-        padding-top: 0px;
-        padding-bottom: 0px;
+        spacing: 8px;
+        padding-left: 8px;
+        padding-right: 8px;
+        padding-top: 1px;
+        padding-bottom: 1px;
         alignment: start;
 
         // —— 显示格式组 ——
         ComboBox {
+            height: Theme.control-height;
             model: ["ASCII", "HEX"];
             current-value: root.is-hex ? "HEX" : "ASCII";
             selected => { root.mode-changed(self.current-value == "HEX"); }
         }
         Button {
+            height: Theme.control-height;
             text: root.show-timestamp ? "✓ 时间" : "时间";
             clicked => { root.timestamp-toggled(); }
         }
         Button {
+            height: Theme.control-height;
             text: root.log-send ? "✓ 记发送" : "记发送";
             clicked => { root.log-send-toggled(); }
         }
         Button {
+            height: Theme.control-height;
             text: root.auto-scroll ? "✓ 自动滚动" : "自动滚动";
             clicked => { root.auto-scroll-toggled(); }
         }
@@ -52,28 +56,39 @@ export component Toolbar inherits Rectangle {
         // —— 竖分隔线 ——
         Rectangle {
             width: 1px;
-            height: 20px;
-            y: (parent.height - self.height) / 2;
+            height: Theme.control-height;
             background: Theme.divider;
         }
 
         // —— 日志操作组 ——
         Button {
+            height: Theme.control-height;
             text: root.paused ? "▶ 继续" : "⏸ 暂停";
             clicked => { root.pause-toggled(); }
         }
-        Button { text: "清空"; clicked => { root.clear-clicked(); } }
+        Button { height: Theme.control-height; text: "清空"; clicked => { root.clear-clicked(); } }
         if !root.logging : Button {
+            height: Theme.control-height;
             text: "保存日志";
             clicked => { root.logging-toggled(); }
         }
         if root.logging : Button {
+            height: Theme.control-height;
             text: "📂 定位";
             clicked => { root.logging-reveal(); }
         }
         if root.logging : Button {
+            height: Theme.control-height;
             text: "⏹ 停止";
             clicked => { root.logging-toggled(); }
         }
+    }
+
+    // 底部分隔线
+    Rectangle {
+        y: root.height - 1px;
+        height: 1px;
+        width: 100%;
+        background: Theme.border;
     }
 }

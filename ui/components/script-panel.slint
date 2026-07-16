@@ -16,7 +16,7 @@ export struct CommandGroupSlint {
 
 export component ScriptPanel inherits Rectangle {
     background: Theme.panel;
-    min-width: 200px;
+    min-width: 300px;
 
     in-out property <[CommandGroupSlint]> groups;
     in-out property <int> current-group: 0;
@@ -48,8 +48,8 @@ export component ScriptPanel inherits Rectangle {
         HorizontalLayout {
             spacing: 0px;
             for g[i] in root.groups : Rectangle {
-                width: 64px;
-                height: 26px;
+                width: 80px;
+                height: 28px;
                 background: i == root.current-group ? Theme.bg : Theme.panel;
                 border-width: 1px;
                 border-color: Theme.border;
@@ -67,34 +67,39 @@ export component ScriptPanel inherits Rectangle {
             Rectangle { horizontal-stretch: 1; background: Theme.panel; border-width: 1px; border-color: Theme.border; }
         }
 
+        // 分隔线
+        Rectangle { height: 1px; background: Theme.border; }
+
         // 命令列表
         ListView {
             vertical-stretch: 1;
             for g[gi] in root.groups : Rectangle {
                 if gi == root.current-group : Rectangle {
                     for item[ii] in g.items : Rectangle {
-                        height: 28px;
+                        height: 34px;
                         width: 100%;
-                        border-width: 1px;
-                        border-color: Theme.border;
-                        background: Theme.panel;
+                        background: Math.mod(ii, 2) == 0 ? Theme.panel : Theme.panel-alt;
                         HorizontalLayout {
                             padding-left: 4px;
                             padding-right: 4px;
                             spacing: 4px;
                             Button {
+                                height: Theme.control-height;
                                 text: item.label;
                                 horizontal-stretch: 1;
+                                primary: true;
                                 clicked => { root.send-command(gi, ii); }
                             }
                             Button {
+                                height: Theme.control-height;
                                 text: "✎";
-                                width: 30px;
+                                width: 24px;
                                 clicked => { root.edit-command(gi, ii); }
                             }
                             Button {
+                                height: Theme.control-height;
                                 text: "✕";
-                                width: 30px;
+                                width: 24px;
                                 clicked => { root.delete-command(gi, ii); }
                             }
                         }
@@ -105,17 +110,18 @@ export component ScriptPanel inherits Rectangle {
 
         // 底部新增
         Rectangle {
-            height: 30px;
+            height: 34px;
             background: Theme.panel-light;
             border-color: Theme.border;
             border-width: 1px;
             HorizontalLayout {
-                padding-left: 4px;
-                padding-right: 4px;
-                padding-top: 2px;
-                padding-bottom: 2px;
+                padding-left: 6px;
+                padding-right: 6px;
+                padding-top: 3px;
+                padding-bottom: 3px;
                 alignment: center;
                 Button {
+                    height: Theme.control-height;
                     text: "+ 新增命令";
                     clicked => { root.add-command(); }
                 }
