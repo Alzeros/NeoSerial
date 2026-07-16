@@ -1,0 +1,59 @@
+import { Theme } from "../styles/theme.slint";
+
+export component StatusBar inherits Rectangle {
+    height: 22px;
+    background: Theme.panel;
+
+    in property <bool> connected;
+    in property <string> port-name;
+    in property <int> baud-rate;
+    in property <int> tx-bytes;
+    in property <int> rx-bytes;
+
+    HorizontalLayout {
+        spacing: 16px;
+        padding-left: 8px;
+        padding-right: 8px;
+        alignment: start;
+
+        HorizontalLayout {
+            spacing: 4px;
+            Text {
+                text: "●";
+                color: root.connected ? Theme.text-tx : Theme.text-error;
+                vertical-alignment: center;
+                font-size: 11px;
+            }
+            Text {
+                text: root.connected ? "Connected" : "Disconnected";
+                color: root.connected ? Theme.text-tx : Theme.text-error;
+                vertical-alignment: center;
+                font-size: 11px;
+            }
+        }
+        Text {
+            text: root.port-name == "" ? "COM -" : root.port-name;
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            font-size: 11px;
+        }
+        Text {
+            text: "\{root.baud-rate}";
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            font-size: 11px;
+        }
+        Text {
+            text: "TX: \{root.tx-bytes} B";
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            font-size: 11px;
+        }
+        Text {
+            text: "RX: \{root.rx-bytes} B";
+            color: Theme.text-muted;
+            vertical-alignment: center;
+            font-size: 11px;
+        }
+    }
+}
