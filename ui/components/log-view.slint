@@ -3,12 +3,10 @@ import { Theme } from "../styles/theme.slint";
 import { LogLine } from "connection-bar.slint";
 
 export component LogView inherits Rectangle {
-    background: Theme.bg;
+    background: Theme.log-bg;   // 白底
 
     in property <[LogLine]> log-model;
     in property <bool> paused;
-
-    callback scrolled-to-bottom(bool);
 
     log-list := ListView {
         y: 0;
@@ -24,9 +22,18 @@ export component LogView inherits Rectangle {
                 spacing: 8px;
                 Text {
                     text: line.ts;
-                    color: Theme.text-muted;
+                    color: Theme.log-muted;
                     font-size: Theme.font-mono-size;
                     font-family: "Consolas";
+                    // ts 为空时不占宽
+                    width: line.ts == "" ? 0px : self.preferred-width;
+                }
+                Text {
+                    text: line.tag;
+                    color: line.color;
+                    font-size: Theme.font-mono-size;
+                    font-family: "Consolas";
+                    width: self.preferred-width;
                 }
                 Text {
                     text: line.text;
@@ -43,6 +50,6 @@ export component LogView inherits Rectangle {
     if root.paused: Text {
         x: 16px; y: 8px;
         text: "⏸ 已暂停（后台继续接收）";
-        color: Theme.accent;
+        color: Theme.log-error;
     }
 }
