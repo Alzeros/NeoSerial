@@ -125,7 +125,7 @@ export component App inherits Window {
             }
             ScriptPanel {
                 groups: root.command-groups;
-                current-group: root.current-group;
+                current-group <=> root.current-group;
                 horizontal-stretch: 3;
                 send-command(g, i) => { root.script-send(g, i); }
                 add-command => { root.script-add(); }
