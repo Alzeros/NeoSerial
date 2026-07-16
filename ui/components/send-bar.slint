@@ -1,15 +1,16 @@
 import { Button, LineEdit } from "std-widgets.slint";
 import { Theme } from "../styles/theme.slint";
-import { SegButton } from "seg-button.slint";
 
 export component SendBar inherits FocusScope {
-    height: 48px;
+    // 有错误提示时加高一行，避免红字被裁半
+    height: root.error-hint == "" ? 44px : 62px;
     forward-focus: input;
 
     in property <string> error-hint;
     in-out property <string> input-text;
-    in-out property <int> ending-index;  // 0=Cr 1=Lf 2=Crlf 3=None
-    in-out property <bool> is-hex;
+    // ending / hex 由上方 Toolbar 控制，经 App 属性传入
+    in property <int> ending-index;  // 0=Cr 1=Lf 2=Crlf 3=None
+    in property <bool> is-hex;
 
     callback send(string, int, int);  // text, mode(0/1), ending(0..3)
     callback history-prev();
@@ -19,6 +20,7 @@ export component SendBar inherits FocusScope {
         background: Theme.panel;
         border-color: Theme.border;
         border-width: 1px;
+        clip: false;
 
         VerticalLayout {
             spacing: 2px;
@@ -37,18 +39,11 @@ export component SendBar inherits FocusScope {
                         root.send(root.input-text, root.is-hex ? 1 : 0, root.ending-index);
                     }
                 }
-                SegButton {
-                    options: ["CR", "LF", "CRLF", "无"];
-                    current: root.ending-index;
-                    selected(i) => { root.ending-index = i; }
-                }
-                Button {
-                    text: root.is-hex ? "HEX ✓" : "HEX";
-                    clicked => { root.is-hex = !root.is-hex; }
-                }
                 Button {
                     text: "发送";
                     primary: true;
+                    height: Theme.control-height;
+                    width: 72px;
                     clicked => {
                         root.send(root.input-text, root.is-hex ? 1 : 0, root.ending-index);
                     }
@@ -58,7 +53,9 @@ export component SendBar inherits FocusScope {
             if root.error-hint != "": Text {
                 text: root.error-hint;
                 color: Theme.text-error;
-                font-size: 11px;
+                font-size: 12px;
+                horizontal-alignment: left;
+                overflow: elide;
             }
         }
     }

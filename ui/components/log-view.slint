@@ -25,7 +25,7 @@ export component LogView inherits Rectangle {
                     text: line.ts;
                     color: Theme.log-muted;
                     font-size: Theme.font-mono-size;
-                    font-family: "Consolas";
+                    font-family: Theme.font-mono;
                     // 固定宽容下 HH:MM:SS.mmm；为空时不占宽
                     width: line.ts == "" ? 0px : 96px;
                     vertical-alignment: center;
@@ -34,7 +34,7 @@ export component LogView inherits Rectangle {
                     text: line.tag;
                     color: line.color;
                     font-size: Theme.font-mono-size;
-                    font-family: "Consolas";
+                    font-family: Theme.font-mono;
                     // 固定宽对齐（[发送]/[接收] 等宽对齐）
                     width: 52px;
                     vertical-alignment: center;
@@ -43,7 +43,7 @@ export component LogView inherits Rectangle {
                     text: line.text;
                     color: line.color;
                     font-size: Theme.font-mono-size;
-                    font-family: "Consolas";
+                    font-family: Theme.font-mono;
                     overflow: elide;
                     horizontal-stretch: 1;
                     vertical-alignment: center;
@@ -54,7 +54,7 @@ export component LogView inherits Rectangle {
 
     if root.paused: Text {
         x: 16px; y: 8px;
-        text: "⏸ 已暂停（后台继续接收）";
+        text: "已暂停（后台继续接收）";
         color: Theme.log-error;
     }
 }

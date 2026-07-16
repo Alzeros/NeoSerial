@@ -194,6 +194,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                     app.set_status_text("已连接".into());
                     app.set_status_color(slint::Color::from_rgb_u8(0x7e, 0xe7, 0x87).into());
                     app.set_last_error("None".into());
+                    // 清掉此前未连接时残留的发送错误提示
+                    app.set_error_hint("".into());
                 }
                 Err(e) => {
                     let msg = format!("打开失败: {}", e);
@@ -420,6 +422,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
 
             if let Some(h) = &st.handle {
                 h.send_command(ConnCommand::Send(bytes));
+                // 成功发出后清掉旧错误提示（如之前的「未连接」）
+                app.set_error_hint("".into());
             }
             // 发送后输入框保留（不清空）
         });
@@ -517,6 +521,8 @@ pub fn run() -> Result<(), slint::PlatformError> {
                         item.line_ending.append_bytes(&mut bytes);
                         if let Some(h) = &st.handle {
                             h.send_command(ConnCommand::Send(bytes));
+                            drop(st);
+                            app.set_error_hint("".into());
                         } else {
                             drop(st);
                             app.set_error_hint("未连接".into());
@@ -527,23 +533,37 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // 脚本：新增占位命令
+    // 脚本：新增命令（由侧边栏表单提交 label/content/mode/ending）
     {
         let weak = weak.clone();
         let state = state.clone();
-        app.on_script_add(move || {
+        app.on_script_add(move |label, content, mode, ending| {
             let app = weak.unwrap();
-            // 从 UI 读当前选中组（双向绑定回传），而非 AppState.current_group（后者不同步）
             let cg = app.get_current_group() as usize;
-            // 锁内只做内存修改 + clone 出持久化所需数据，drop 锁后再做文件 I/O（避免阻塞 Timer）
+            let label = label.to_string();
+            let content = content.to_string();
+            let label = if label.trim().is_empty() {
+                "新命令".into()
+            } else {
+                label
+            };
             let groups_to_save = {
                 let mut st = state.lock().unwrap();
                 if let Some(grp) = st.command_groups.get_mut(cg) {
                     grp.items.push(CommandItem {
-                        label: "新命令".into(),
-                        content: "".into(),
-                        mode: DisplayMode::Ascii,
-                        line_ending: LineEnding::Crlf,
+                        label,
+                        content,
+                        mode: if mode == 1 {
+                            DisplayMode::Hex
+                        } else {
+                            DisplayMode::Ascii
+                        },
+                        line_ending: match ending {
+                            0 => LineEnding::Cr,
+                            1 => LineEnding::Lf,
+                            3 => LineEnding::None,
+                            _ => LineEnding::Crlf,
+                        },
                         enabled: true,
                     });
                 }
@@ -554,25 +574,42 @@ pub fn run() -> Result<(), slint::PlatformError> {
         });
     }
 
-    // 脚本：编辑（MVP——载入到输入框供修改/重发，完整编辑面板留 v2）
+    // 脚本：更新已有命令
     {
         let weak = weak.clone();
         let state = state.clone();
-        app.on_script_edit(move |g, i| {
+        app.on_script_update(move |g, i, label, content, mode, ending| {
             let app = weak.unwrap();
-            let st = state.lock().unwrap();
-            if let Some(grp) = st.command_groups.get(g as usize) {
-                if let Some(item) = grp.items.get(i as usize) {
-                    app.set_input_text(item.content.clone().into());
-                    app.set_ending_index(match item.line_ending {
-                        LineEnding::Cr => 0,
-                        LineEnding::Lf => 1,
-                        LineEnding::Crlf => 2,
-                        LineEnding::None => 3,
-                    });
-                    app.set_is_hex_send(matches!(item.mode, DisplayMode::Hex));
+            let label = label.to_string();
+            let content = content.to_string();
+            let label = if label.trim().is_empty() {
+                "未命名".into()
+            } else {
+                label
+            };
+            let groups_to_save = {
+                let mut st = state.lock().unwrap();
+                if let Some(grp) = st.command_groups.get_mut(g as usize) {
+                    if let Some(item) = grp.items.get_mut(i as usize) {
+                        item.label = label;
+                        item.content = content;
+                        item.mode = if mode == 1 {
+                            DisplayMode::Hex
+                        } else {
+                            DisplayMode::Ascii
+                        };
+                        item.line_ending = match ending {
+                            0 => LineEnding::Cr,
+                            1 => LineEnding::Lf,
+                            3 => LineEnding::None,
+                            _ => LineEnding::Crlf,
+                        };
+                    }
                 }
-            }
+                sync_script_model(&app, &st);
+                st.command_groups.clone()
+            };
+            save_command_groups_data(&groups_to_save);
         });
     }
 

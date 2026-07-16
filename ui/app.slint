@@ -12,9 +12,15 @@ export { LogLine, QuickCmd, CommandGroupSlint }
 
 export component App inherits Window {
     title: "NeoSerial";
-    min-width: 1100px;
+    // 窗口标题栏 / 任务栏运行中图标（相对本 .slint 文件）
+    icon: @image-url("../assets/NeoSerial.png");
+    min-width: 900px;
     min-height: 600px;
     background: Theme.bg;
+    // 全局默认字体：系统中文 UI 字体 + 常规字重，避免小字号 700 发糊
+    default-font-family: Theme.font-ui;
+    default-font-size: Theme.font-ui-size;
+    default-font-weight: Theme.font-weight-normal;
 
     in-out property <[string]> ports: [];
     in-out property <string> port-name;
@@ -43,6 +49,7 @@ export component App inherits Window {
 
     in-out property <[CommandGroupSlint]> command-groups: [];
     in-out property <int> current-group: 0;
+    in-out property <bool> script-collapsed: false;
 
     in-out property <string> input-text: "";
     in-out property <int> ending-index: 2;
@@ -69,81 +76,96 @@ export component App inherits Window {
     callback history-prev();
     callback history-next();
     callback script-send(int, int);
-    callback script-add();
-    callback script-edit(int, int);
+    // label, content, mode(0/1), ending(0..3)
+    callback script-add(string, string, int, int);
+    // g, i, label, content, mode, ending
+    callback script-update(int, int, string, string, int, int);
     callback script-delete(int, int);
 
     VerticalLayout {
         spacing: 0px;
 
-        ConnectionBar {
-            ports: root.ports;
-            port-name: root.port-name;
-            baud-rate: root.baud-rate;
-            status-text: root.status-text;
-            status-color: root.status-color;
-            connected: root.connected;
-            data-bits: root.data-bits;
-            parity: root.parity;
-            stop-bits: root.stop-bits;
-            flow-control: root.flow-control;
-            port-selected(p) => { root.port-selected(p); }
-            baud-changed(b) => { root.baud-changed(b); }
-            data-bits-changed(d) => { root.data-bits-changed(d); }
-            parity-changed(p) => { root.parity-changed(p); }
-            stop-bits-changed(s) => { root.stop-bits-changed(s); }
-            flow-control-changed(f) => { root.flow-control-changed(f); }
-            open-clicked => { root.open-clicked(); }
-            close-clicked => { root.close-clicked(); }
-        }
-        Toolbar {
-            is-hex: root.is-hex;
-            paused: root.paused;
-            logging: root.logging;
-            log-file-name: root.log-file-name;
-            auto-scroll: root.auto-scroll;
-            show-timestamp: root.show-timestamp;
-            log-send: root.log-send;
-            mode-changed(h) => { root.is-hex = h; root.mode-changed(h); }
-            pause-toggled => { root.paused = !root.paused; root.pause-toggled(); }
-            clear-clicked => { root.clear-clicked(); }
-            logging-toggled => { root.logging-toggled(); }
-            logging-reveal => { root.logging-reveal(); }
-            auto-scroll-toggled => { root.auto-scroll = !root.auto-scroll; root.auto-scroll-toggled(); }
-            timestamp-toggled => { root.show-timestamp = !root.show-timestamp; root.timestamp-toggled(); }
-            log-send-toggled => { root.log-send = !root.log-send; root.log-send-toggled(); }
-        }
-
-        // 中间左右分栏
         HorizontalLayout {
             spacing: 0px;
             vertical-stretch: 1;
 
-            LogView {
-                log-model: root.log-model;
-                paused: root.paused;
+            VerticalLayout {
+                spacing: 0px;
                 horizontal-stretch: 1;
+
+                ConnectionBar {
+                    ports: root.ports;
+                    port-name: root.port-name;
+                    baud-rate: root.baud-rate;
+                    status-text: root.status-text;
+                    status-color: root.status-color;
+                    connected: root.connected;
+                    data-bits: root.data-bits;
+                    parity: root.parity;
+                    stop-bits: root.stop-bits;
+                    flow-control: root.flow-control;
+                    port-selected(p) => { root.port-selected(p); }
+                    baud-changed(b) => { root.baud-changed(b); }
+                    data-bits-changed(d) => { root.data-bits-changed(d); }
+                    parity-changed(p) => { root.parity-changed(p); }
+                    stop-bits-changed(s) => { root.stop-bits-changed(s); }
+                    flow-control-changed(f) => { root.flow-control-changed(f); }
+                    open-clicked => { root.open-clicked(); }
+                    close-clicked => { root.close-clicked(); }
+                }
+
+                LogView {
+                    log-model: root.log-model;
+                    paused: root.paused;
+                    vertical-stretch: 1;
+                }
+
+                Toolbar {
+                    is-hex: root.is-hex;
+                    paused: root.paused;
+                    logging: root.logging;
+                    log-file-name: root.log-file-name;
+                    auto-scroll: root.auto-scroll;
+                    show-timestamp: root.show-timestamp;
+                    log-send: root.log-send;
+                    ending-index <=> root.ending-index;
+                    is-hex-send <=> root.is-hex-send;
+                    mode-changed(h) => { root.is-hex = h; root.mode-changed(h); }
+                    pause-toggled => { root.paused = !root.paused; root.pause-toggled(); }
+                    clear-clicked => { root.clear-clicked(); }
+                    logging-toggled => { root.logging-toggled(); }
+                    logging-reveal => { root.logging-reveal(); }
+                    auto-scroll-toggled => { root.auto-scroll = !root.auto-scroll; root.auto-scroll-toggled(); }
+                    timestamp-toggled => { root.show-timestamp = !root.show-timestamp; root.timestamp-toggled(); }
+                    log-send-toggled => { root.log-send = !root.log-send; root.log-send-toggled(); }
+                }
+
+                SendBar {
+                    input-text <=> root.input-text;
+                    ending-index: root.ending-index;
+                    is-hex: root.is-hex-send;
+                    error-hint: root.error-hint;
+                    send(t, m, e) => { root.send(t, m, e); }
+                    history-prev => { root.history-prev(); }
+                    history-next => { root.history-next(); }
+                }
             }
+
             ScriptPanel {
                 groups: root.command-groups;
                 current-group <=> root.current-group;
-                width: 340px;
+                collapsed <=> root.script-collapsed;
                 send-command(g, i) => { root.script-send(g, i); }
-                add-command => { root.script-add(); }
-                edit-command(g, i) => { root.script-edit(g, i); }
+                add-command(label, content, mode, ending) => {
+                    root.script-add(label, content, mode, ending);
+                }
+                update-command(g, i, label, content, mode, ending) => {
+                    root.script-update(g, i, label, content, mode, ending);
+                }
                 delete-command(g, i) => { root.script-delete(g, i); }
             }
         }
 
-        SendBar {
-            input-text <=> root.input-text;
-            ending-index <=> root.ending-index;
-            is-hex <=> root.is-hex-send;
-            error-hint: root.error-hint;
-            send(t, m, e) => { root.send(t, m, e); }
-            history-prev => { root.history-prev(); }
-            history-next => { root.history-next(); }
-        }
         StatusBar {
             connected: root.connected;
             port-name: root.port-name;

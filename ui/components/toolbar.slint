@@ -1,8 +1,13 @@
 import { Button, ComboBox } from "std-widgets.slint";
 import { Theme } from "../styles/theme.slint";
+import { SegButton } from "seg-button.slint";
 
+/// 日志区与发送栏之间的工具区（两排）：
+/// 第1排：显示开关 / 日志操作
+/// 第2排：行尾 CR/LF + HEX
+/// 开关态用 primary 高亮，避免 ✓/emoji 在 Windows 上显示异常
 export component Toolbar inherits Rectangle {
-    height: Theme.toolbar-height;
+    height: 68px;
     background: Theme.panel;
 
     in property <bool> is-hex;
@@ -13,6 +18,9 @@ export component Toolbar inherits Rectangle {
     in property <bool> show-timestamp;
     in property <bool> log-send;
 
+    in-out property <int> ending-index: 2;  // 0=Cr 1=Lf 2=Crlf 3=None
+    in-out property <bool> is-hex-send: false;
+
     callback mode-changed(bool);
     callback pause-toggled();
     callback clear-clicked();
@@ -22,68 +30,114 @@ export component Toolbar inherits Rectangle {
     callback timestamp-toggled();
     callback log-send-toggled();
 
-    HorizontalLayout {
-        spacing: 8px;
+    VerticalLayout {
+        spacing: 0px;
         padding-left: 8px;
         padding-right: 8px;
-        padding-top: 1px;
-        padding-bottom: 1px;
-        alignment: start;
+        padding-top: 3px;
+        padding-bottom: 3px;
 
-        // —— 显示格式组 ——
-        ComboBox {
-            height: Theme.control-height;
-            model: ["ASCII", "HEX"];
-            current-value: root.is-hex ? "HEX" : "ASCII";
-            selected => { root.mode-changed(self.current-value == "HEX"); }
-        }
-        Button {
-            height: Theme.control-height;
-            text: root.show-timestamp ? "✓ 时间" : "时间";
-            clicked => { root.timestamp-toggled(); }
-        }
-        Button {
-            height: Theme.control-height;
-            text: root.log-send ? "✓ 记发送" : "记发送";
-            clicked => { root.log-send-toggled(); }
-        }
-        Button {
-            height: Theme.control-height;
-            text: root.auto-scroll ? "✓ 自动滚动" : "自动滚动";
-            clicked => { root.auto-scroll-toggled(); }
+        // —— 第1排：显示格式 + 日志操作 ——
+        HorizontalLayout {
+            spacing: 8px;
+            height: Theme.control-height + 4px;
+            alignment: start;
+
+            ComboBox {
+                height: Theme.control-height;
+                model: ["ASCII", "HEX"];
+                current-value: root.is-hex ? "HEX" : "ASCII";
+                selected => { root.mode-changed(self.current-value == "HEX"); }
+            }
+            Button {
+                height: Theme.control-height;
+                text: "时间";
+                primary: root.show-timestamp;
+                clicked => { root.timestamp-toggled(); }
+            }
+            Button {
+                height: Theme.control-height;
+                text: "记发送";
+                primary: root.log-send;
+                clicked => { root.log-send-toggled(); }
+            }
+            Button {
+                height: Theme.control-height;
+                text: "自动滚动";
+                primary: root.auto-scroll;
+                clicked => { root.auto-scroll-toggled(); }
+            }
+
+            Rectangle {
+                width: 1px;
+                height: Theme.control-height;
+                background: Theme.divider;
+            }
+
+            Button {
+                height: Theme.control-height;
+                text: root.paused ? "继续" : "暂停";
+                primary: root.paused;
+                clicked => { root.pause-toggled(); }
+            }
+            Button {
+                height: Theme.control-height;
+                text: "清空";
+                clicked => { root.clear-clicked(); }
+            }
+            if !root.logging : Button {
+                height: Theme.control-height;
+                text: "保存日志";
+                clicked => { root.logging-toggled(); }
+            }
+            if root.logging : Button {
+                height: Theme.control-height;
+                text: "定位";
+                clicked => { root.logging-reveal(); }
+            }
+            if root.logging : Button {
+                height: Theme.control-height;
+                text: "停止存盘";
+                primary: true;
+                clicked => { root.logging-toggled(); }
+            }
         }
 
-        // —— 竖分隔线 ——
-        Rectangle {
-            width: 1px;
-            height: Theme.control-height;
-            background: Theme.divider;
-        }
+        // —— 第2排：行尾 + HEX ——
+        HorizontalLayout {
+            spacing: 8px;
+            height: Theme.control-height + 4px;
+            alignment: start;
 
-        // —— 日志操作组 ——
-        Button {
-            height: Theme.control-height;
-            text: root.paused ? "▶ 继续" : "⏸ 暂停";
-            clicked => { root.pause-toggled(); }
-        }
-        Button { height: Theme.control-height; text: "清空"; clicked => { root.clear-clicked(); } }
-        if !root.logging : Button {
-            height: Theme.control-height;
-            text: "保存日志";
-            clicked => { root.logging-toggled(); }
-        }
-        if root.logging : Button {
-            height: Theme.control-height;
-            text: "📂 定位";
-            clicked => { root.logging-reveal(); }
-        }
-        if root.logging : Button {
-            height: Theme.control-height;
-            text: "⏹ 停止";
-            clicked => { root.logging-toggled(); }
+            Text {
+                text: "行尾";
+                color: Theme.text-muted;
+                vertical-alignment: center;
+                font-size: Theme.font-ui-size;
+            }
+            SegButton {
+                width: 180px;
+                height: Theme.control-height;
+                options: ["CR", "LF", "CRLF", "无"];
+                current: root.ending-index;
+                selected(i) => { root.ending-index = i; }
+            }
+            Button {
+                height: Theme.control-height;
+                text: "HEX";
+                primary: root.is-hex-send;
+                clicked => { root.is-hex-send = !root.is-hex-send; }
+            }
         }
     }
 
+    // 顶部分隔线
+    Rectangle {
+        y: 0px;
+        height: 1px;
+        width: 100%;
+        background: Theme.border;
+    }
     // 底部分隔线
     Rectangle {
         y: root.height - 1px;

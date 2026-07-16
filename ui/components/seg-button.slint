@@ -19,7 +19,7 @@ export component SegButton inherits Rectangle {
                 color: i == root.current ? #ffffff : #d0d7de;
                 horizontal-alignment: center;
                 vertical-alignment: center;
-                font-size: 11px;
+                font-size: Theme.font-ui-size;
             }
             TouchArea {
                 clicked => { root.selected(i); }

@@ -14,5 +14,9 @@ rfd = "0.14"
 [build-dependencies]
 slint-build = "1.17"
 
+# Windows 可执行文件图标 / 版本资源
+[target.'cfg(windows)'.build-dependencies]
+winres = "0.1"
+
 [profile.release]
 debug = true

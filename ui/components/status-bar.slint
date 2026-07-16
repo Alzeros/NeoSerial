@@ -32,7 +32,7 @@ export component StatusBar inherits Rectangle {
         HorizontalLayout {
             spacing: 4px;
             Text {
-                text: root.connected ? "●" : "○";
+                text: root.connected ? "[ON]" : "[OFF]";
                 color: root.connected ? Theme.status-on : Theme.status-off;
                 vertical-alignment: center;
                 font-size: Theme.font-ui-size;
