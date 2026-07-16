@@ -5,13 +5,15 @@ import { ConnectionBar, LogLine, QuickCmd } from "components/connection-bar.slin
 import { Toolbar } from "components/toolbar.slint";
 import { LogView } from "components/log-view.slint";
 import { SendBar } from "components/send-bar.slint";
+import { StatusBar } from "components/status-bar.slint";
+import { ScriptPanel, CommandGroupSlint } from "components/script-panel.slint";
 
-export { LogLine, QuickCmd }
+export { LogLine, QuickCmd, CommandGroupSlint }
 
 export component App inherits Window {
     title: "NeoSerial";
-    min-width: 800px;
-    min-height: 500px;
+    min-width: 900px;
+    min-height: 560px;
     background: Theme.bg;
 
     in-out property <[string]> ports: [];
@@ -21,34 +23,58 @@ export component App inherits Window {
     in-out property <color> status-color: #ff7b72;
     in-out property <bool> connected: false;
 
+    in-out property <int> data-bits: 8;
+    in-out property <string> parity: "None";
+    in-out property <string> stop-bits: "One";
+    in-out property <string> flow-control: "None";
+
     in-out property <[LogLine]> log-model: [];
     in-out property <bool> is-hex: false;
     in-out property <bool> paused: false;
     in-out property <bool> logging: false;
     in-out property <string> log-file-name: "";
     in-out property <bool> auto-scroll: true;
+    in-out property <bool> show-timestamp: true;
+    in-out property <bool> log-send: true;
 
-    in-out property <[QuickCmd]> quick-commands: [];
+    in-out property <int> tx-bytes: 0;
+    in-out property <int> rx-bytes: 0;
+
+    in-out property <[CommandGroupSlint]> command-groups: [];
+    in-out property <int> current-group: 0;
+
     in-out property <string> input-text: "";
     in-out property <int> ending-index: 2;
+    in-out property <bool> is-hex-send: false;
     in-out property <string> error-hint: "";
 
     callback open-clicked();
     callback close-clicked();
     callback port-selected(string);
     callback baud-changed(int);
+    callback data-bits-changed(int);
+    callback parity-changed(string);
+    callback stop-bits-changed(string);
+    callback flow-control-changed(string);
     callback mode-changed(bool);
     callback pause-toggled();
     callback clear-clicked();
     callback logging-toggled();
     callback logging-reveal();
     callback auto-scroll-toggled();
+    callback timestamp-toggled();
+    callback log-send-toggled();
     callback send(string, int, int);
-    callback add-quick-cmd();
     callback history-prev();
     callback history-next();
+    callback script-send(int, int);
+    callback script-add();
+    callback script-edit(int, int);
+    callback script-delete(int, int);
 
-    VerticalBox {
+    VerticalLayout {
+        spacing: 0px;
+
         ConnectionBar {
             ports: root.ports;
             port-name: root.port-name;
@@ -56,8 +82,16 @@ export component App inherits Window {
             status-text: root.status-text;
             status-color: root.status-color;
             connected: root.connected;
-            port-selected(port) => { root.port-selected(port); }
+            data-bits: root.data-bits;
+            parity: root.parity;
+            stop-bits: root.stop-bits;
+            flow-control: root.flow-control;
+            port-selected(p) => { root.port-selected(p); }
             baud-changed(b) => { root.baud-changed(b); }
+            data-bits-changed(d) => { root.data-bits-changed(d); }
+            parity-changed(p) => { root.parity-changed(p); }
+            stop-bits-changed(s) => { root.stop-bits-changed(s); }
+            flow-control-changed(f) => { root.flow-control-changed(f); }
             open-clicked => { root.open-clicked(); }
             close-clicked => { root.close-clicked(); }
         }
@@ -67,27 +101,54 @@ export component App inherits Window {
             logging: root.logging;
             log-file-name: root.log-file-name;
             auto-scroll: root.auto-scroll;
+            show-timestamp: root.show-timestamp;
+            log-send: root.log-send;
             mode-changed(h) => { root.is-hex = h; root.mode-changed(h); }
             pause-toggled => { root.paused = !root.paused; root.pause-toggled(); }
             clear-clicked => { root.clear-clicked(); }
             logging-toggled => { root.logging-toggled(); }
             logging-reveal => { root.logging-reveal(); }
             auto-scroll-toggled => { root.auto-scroll = !root.auto-scroll; root.auto-scroll-toggled(); }
+            timestamp-toggled => { root.show-timestamp = !root.show-timestamp; root.timestamp-toggled(); }
+            log-send-toggled => { root.log-send = !root.log-send; root.log-send-toggled(); }
         }
-        LogView {
-            log-model: root.log-model;
-            paused: root.paused;
+
+        // 中间左右分栏
+        HorizontalLayout {
+            spacing: 0px;
             vertical-stretch: 1;
+
+            LogView {
+                log-model: root.log-model;
+                paused: root.paused;
+                horizontal-stretch: 7;
+            }
+            ScriptPanel {
+                groups: root.command-groups;
+                current-group: root.current-group;
+                horizontal-stretch: 3;
+                send-command(g, i) => { root.script-send(g, i); }
+                add-command => { root.script-add(); }
+                edit-command(g, i) => { root.script-edit(g, i); }
+                delete-command(g, i) => { root.script-delete(g, i); }
+            }
         }
+
         SendBar {
-            quick-commands: root.quick-commands;
-            error-hint: root.error-hint;
             input-text <=> root.input-text;
             ending-index <=> root.ending-index;
+            is-hex <=> root.is-hex-send;
+            error-hint: root.error-hint;
             send(t, m, e) => { root.send(t, m, e); }
-            add-quick-cmd => { root.add-quick-cmd(); }
             history-prev => { root.history-prev(); }
             history-next => { root.history-next(); }
+        }
+        StatusBar {
+            connected: root.connected;
+            port-name: root.port-name;
+            baud-rate: root.baud-rate;
+            tx-bytes: root.tx-bytes;
+            rx-bytes: root.rx-bytes;
         }
     }
 }
