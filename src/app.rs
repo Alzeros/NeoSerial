@@ -37,7 +37,6 @@ struct AppState {
     rx_bytes: u64,
     /// 脚本命令组（侧边栏可增删改）。
     command_groups: Vec<CommandGroup>,
-    current_group: usize,
     send_history: Vec<String>,
 }
 
@@ -141,7 +140,6 @@ pub fn run() -> Result<(), slint::PlatformError> {
         tx_bytes: 0,
         rx_bytes: 0,
         command_groups: settings.command_groups.clone(),
-        current_group: 0,
         send_history: Vec::new(),
     }));
 
@@ -530,19 +528,24 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         app.on_script_add(move || {
             let app = weak.unwrap();
-            let mut st = state.lock().unwrap();
-            let cg = st.current_group;
-            if let Some(grp) = st.command_groups.get_mut(cg) {
-                grp.items.push(CommandItem {
-                    label: "新命令".into(),
-                    content: "".into(),
-                    mode: DisplayMode::Ascii,
-                    line_ending: LineEnding::Crlf,
-                    enabled: true,
-                });
-            }
-            sync_script_model(&app, &st);
-            save_command_groups(&st);
+            // 从 UI 读当前选中组（双向绑定回传），而非 AppState.current_group（后者不同步）
+            let cg = app.get_current_group() as usize;
+            // 锁内只做内存修改 + clone 出持久化所需数据，drop 锁后再做文件 I/O（避免阻塞 Timer）
+            let groups_to_save = {
+                let mut st = state.lock().unwrap();
+                if let Some(grp) = st.command_groups.get_mut(cg) {
+                    grp.items.push(CommandItem {
+                        label: "新命令".into(),
+                        content: "".into(),
+                        mode: DisplayMode::Ascii,
+                        line_ending: LineEnding::Crlf,
+                        enabled: true,
+                    });
+                }
+                sync_script_model(&app, &st);
+                st.command_groups.clone()
+            };
+            save_command_groups_data(&groups_to_save);
         });
     }
 
@@ -574,15 +577,19 @@ pub fn run() -> Result<(), slint::PlatformError> {
         let state = state.clone();
         app.on_script_delete(move |g, i| {
             let app = weak.unwrap();
-            let mut st = state.lock().unwrap();
-            if let Some(grp) = st.command_groups.get_mut(g as usize) {
-                let idx = i as usize;
-                if idx < grp.items.len() {
-                    grp.items.remove(idx);
+            // 锁内只做内存修改 + clone，drop 锁后再文件 I/O
+            let groups_to_save = {
+                let mut st = state.lock().unwrap();
+                if let Some(grp) = st.command_groups.get_mut(g as usize) {
+                    let idx = i as usize;
+                    if idx < grp.items.len() {
+                        grp.items.remove(idx);
+                    }
                 }
-            }
-            sync_script_model(&app, &st);
-            save_command_groups(&st);
+                sync_script_model(&app, &st);
+                st.command_groups.clone()
+            };
+            save_command_groups_data(&groups_to_save);
         });
     }
 
@@ -796,10 +803,11 @@ fn sync_script_model(app: &App, st: &AppState) {
     app.set_command_groups(ModelRc::new(VecModel::from(groups)));
 }
 
-/// 把当前 command_groups 写回配置文件（增删改后持久化）。
-fn save_command_groups(st: &AppState) {
+/// 把指定 command_groups 写回配置文件（增删改后持久化）。
+/// 接收数据切片而非 AppState，便于调用方先 drop 锁再做文件 I/O（避免阻塞 Timer）。
+fn save_command_groups_data(groups: &[CommandGroup]) {
     let mut settings = Settings::load();
-    settings.command_groups = st.command_groups.clone();
+    settings.command_groups = groups.to_vec();
     let _ = settings.save();
 }
 
