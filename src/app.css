@@ -1,0 +1,345 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: #0A0E17;
+    --background-elevated: #161B22;
+    --background-input: #0D1117;
+    --border: rgba(255, 255, 255, 0.1);
+    --border-subtle: rgba(255, 255, 255, 0.06);
+
+    --foreground: #E6EDF3;
+    --muted-foreground: #8B949E;
+
+    --primary: #58A6FF;
+    --primary-hover: #79B8FF;
+    --primary-foreground: #0D1117;
+
+    --rx: #3FB950;
+    --tx: #58A6FF;
+    --error: #F85149;
+    --warning: #D29922;
+
+    --radius: 6px;
+  }
+}
+
+@layer base {
+  * {
+    border-color: var(--border);
+  }
+
+  body {
+    margin: 0;
+    background: var(--background);
+    color: var(--foreground);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+    overflow: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+}
+
+/* ========================================
+   全局 <select> 样式覆盖
+   ========================================
+   目的：强制所有下拉框使用深色主题，消除浏览器默认白色背景。
+   策略：使用 appearance:none 移除系统原生样式，
+   然后通过 background-image 内联 SVG 自定义下拉箭头。
+   ======================================== */
+
+select {
+  /* 彻底重置系统默认外观 */
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  appearance: none;
+
+  /* 尺寸与间距 */
+  height: 40px;
+  min-width: 90px;
+  padding: 0 32px 0 12px;
+
+  /* 深色主题配色 */
+  background-color: var(--background-input);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  font-size: 14px;
+
+  /* 自定义下拉箭头（向上，灰色 #8B949E） */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238B949E' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+
+  outline: none;
+  cursor: pointer;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+
+  /* 防止 Flex 布局挤压 */
+  flex-shrink: 0;
+}
+
+/* 聚焦态：蓝色边框 + 光晕 */
+select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+/* 禁用态：明确视觉反馈 */
+select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background-color: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+select:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+/* Hover 态 */
+select:hover:not(:disabled) {
+  border-color: rgba(255, 255, 255, 0.15);
+  background-color: rgba(255, 255, 255, 0.03);
+}
+
+/* ========================================
+   <option> 选项样式
+   ========================================
+   注意：option 样式在跨平台支持有限，
+   但设置 background-color 和 color 可以在
+   大多数现代浏览器（尤其是 Chromium）中生效。
+   ======================================== */
+
+select option {
+  background-color: #161B22;
+  color: #E6EDF3;
+  padding: 8px 12px;
+  font-size: 14px;
+}
+
+select option:hover,
+select option:focus,
+select option:checked {
+  background-color: #1F2937;
+  color: #FFFFFF;
+}
+
+/* Webkit 特定：滚动条美化 */
+select::-webkit-scrollbar {
+  width: 6px;
+}
+
+select::-webkit-scrollbar-track {
+  background: #161B22;
+}
+
+select::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 3px;
+}
+
+/* ========================================
+   输入框样式
+   ======================================== */
+
+input[type="text"],
+input[type="number"],
+input:not([type]) {
+  height: 40px;
+  background: var(--background-input);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: var(--radius);
+  color: var(--foreground);
+  font-size: 14px;
+  padding: 0 12px;
+  outline: none;
+  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus,
+input:not([type]):focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+input:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  background: rgba(255, 255, 255, 0.02);
+  border-color: rgba(255, 255, 255, 0.05);
+}
+
+input:disabled:hover {
+  border-color: rgba(255, 255, 255, 0.05);
+  box-shadow: none;
+}
+
+/* ========================================
+   按钮样式 + 微交互
+   ======================================== */
+
+.btn {
+  height: 40px;
+  padding: 0 16px;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s, transform 0.1s, box-shadow 0.15s;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  user-select: none;
+}
+
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+.btn-primary {
+  background: var(--primary);
+  color: var(--primary-foreground);
+  box-shadow: 0 1px 3px rgba(88, 166, 255, 0.3);
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--primary-hover);
+  box-shadow: 0 2px 6px rgba(88, 166, 255, 0.4);
+  transform: translateY(-1px);
+}
+
+.btn-primary:active:not(:disabled) {
+  transform: scale(0.98) translateY(0);
+  box-shadow: 0 1px 2px rgba(88, 166, 255, 0.2);
+}
+
+.btn-secondary {
+  background: var(--background-elevated);
+  color: var(--foreground);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.btn-secondary:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.08);
+  border-color: rgba(255, 255, 255, 0.15);
+  transform: translateY(-1px);
+}
+
+.btn-secondary:active:not(:disabled) {
+  transform: scale(0.98) translateY(0);
+}
+
+.btn-ghost {
+  background: transparent;
+  color: var(--muted-foreground);
+}
+
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--foreground);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  transform: none !important;
+  box-shadow: none !important;
+}
+
+/* ========================================
+   开关 (Switch Checkbox)
+   ======================================== */
+
+.switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.switch input {
+  display: none;
+}
+
+.switch-track {
+  width: 32px;
+  height: 18px;
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 9px;
+  position: relative;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.switch-track::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  background: var(--foreground);
+  border-radius: 50%;
+  transition: transform 0.2s;
+}
+
+.switch input:checked + .switch-track {
+  background: var(--primary);
+}
+
+.switch input:checked + .switch-track::after {
+  transform: translateX(14px);
+}
+
+.switch-label {
+  color: var(--muted-foreground);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.switch input:checked ~ .switch-label {
+  color: var(--foreground);
+}
+
+/* ========================================
+   滚动条
+   ======================================== */
+
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.15);
+}
+
+/* ========================================
+   等宽字体
+   ======================================== */
+
+.font-mono {
+  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
+  font-size: 14px;
+  line-height: 1.5;
+}

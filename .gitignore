@@ -1,13 +1,37 @@
-/target
+# Rust build artifacts
+/target/
+src-tauri/target/
 **/*.rs.bk
 *.pdb
 
+# Node / Vite
+node_modules/
+dist/
+.svelte-kit/
 
-# Added by cargo
-#
-# already existing elements were commented out
+# IDE / Editor
+.codebuddy/
+.vscode/
+.idea/
 
-#/target
-node_modules
-src-tauri\target
-./codebuddy
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+out.log
+err.log
+
+# Temp files
+*.tmp
+*.bak
+
+# Screenshots
+*.png
+*.jpg
+!assets/*.png
+!assets/*.ico
+
+# Shot scripts
+shot*.ps1
