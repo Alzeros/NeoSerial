@@ -8,3 +8,6 @@
 # already existing elements were commented out
 
 #/target
+node_modules
+src-tauri\target
+./codebuddy
