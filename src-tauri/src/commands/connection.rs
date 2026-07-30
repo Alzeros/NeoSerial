@@ -1,4 +1,3 @@
-use std::sync::mpsc;
 use tauri::{State, Emitter};
 
 use crate::connection::{SerialParams, spawn_connection, WriteCommand};
@@ -45,8 +44,7 @@ pub fn connect(
         flow_control,
     };
 
-    let (ring_tx, _ring_rx) = mpsc::channel();
-    let handle = spawn_connection(params, app_handle, ring_tx)?;
+    let handle = spawn_connection(params, app_handle)?;
 
     let mut conn = state.connection.lock().map_err(|e| e.to_string())?;
     *conn = Some(handle);

@@ -27,11 +27,11 @@
     try {
       await connect({
         port: connectionParams.port,
-        baudRate: Number(baudRateStr),
-        dataBits: connectionParams.dataBits,
+        baud_rate: Number(baudRateStr),
+        data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
-        stopBits: Number(stopBitsStr) as 1 | 2,
-        flowControl: connectionParams.flowControl,
+        stop_bits: Number(stopBitsStr) as 1 | 2,
+        flow_control: connectionParams.flowControl,
       });
     } catch (e) {
       console.error('连接失败:', e);

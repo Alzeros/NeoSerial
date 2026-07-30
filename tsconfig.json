@@ -13,6 +13,7 @@
     "strict": true,
     "baseUrl": ".",
     "paths": {
+      "$lib/stores": ["./src/lib/stores.svelte.ts"],
       "$lib": ["./src/lib"],
       "$lib/*": ["./src/lib/*"],
       "$components": ["./src/components"],

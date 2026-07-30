@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { send } from '$lib/tauri';
+  import { send, onFileSendProgress } from '$lib/tauri';
   import {
     connected,
+    clearLogLines,
     fileSendPath,
     fileSendProgress,
     hexDisplay,
@@ -14,6 +15,16 @@
     showTimestamp,
   } from '$lib/stores';
   import { openFileDialog, saveFileDialog, sendFile, startLogging, stopLogging } from '$lib/tauri';
+  import { onMount } from 'svelte';
+
+  onMount(() => {
+    const unlisten = onFileSendProgress((p) => {
+      fileSendProgress.value = p.total > 0 ? Math.round((p.sent / p.total) * 100) : 0;
+    });
+    return () => {
+      unlisten.then((f) => f());
+    };
+  });
 
   async function handleSend() {
     if (!sendText.value.trim()) return;
@@ -84,6 +95,7 @@
 <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
   <!-- 第一排：操作按钮 + 复选框 -->
   <div class="flex items-center gap-3 px-5 py-3">
+    <button class="btn btn-secondary" onclick={clearLogLines}>清空</button>
     <button class="btn btn-secondary" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
 
     <div class="w-px h-5 bg-[var(--border)] mx-1"></div>

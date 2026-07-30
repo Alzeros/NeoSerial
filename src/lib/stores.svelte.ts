@@ -1,4 +1,4 @@
-import { defaultScriptPage, type LogLine, type ScriptPage } from './types';
+import { defaultScriptPage, type LogLine, type ScriptPage, type Settings } from './types';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
@@ -77,6 +77,9 @@ export const scriptCurrentRow = $state<{ value: number }>({ value: -1 });
 export function toggleScriptPanel() {
   scriptPanelOpen.value = !scriptPanelOpen.value;
 }
+
+// ============ 设置缓存（用于断开时回写） ============
+export const cachedSettings = $state<{ value: Settings | null }>({ value: null });
 
 export function addScriptPage() {
   if (scriptPages.length >= 6) return;

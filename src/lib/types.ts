@@ -69,9 +69,25 @@ export interface CommandGroup {
 }
 
 export interface Settings {
-  connection: ConnectionParams;
+  version: number;
+  window: { width: number; height: number; x: number; y: number };
+  serial_defaults: {
+    baud_rate: number;
+    data_bits: DataBits;
+    parity: Parity;
+    stop_bits: StopBits;
+    flow_control: FlowControl;
+  };
+  last_port: string;
+  ui: {
+    display_mode: 'Ascii' | 'Hex';
+    line_ending: LineEnding;
+    auto_scroll: boolean;
+    ring_buffer_capacity: number;
+    show_timestamp: boolean;
+    log_send: boolean;
+  };
   command_groups: CommandGroup[];
-  log_send_content: boolean;
   error_keywords: string[];
 }
 

@@ -7,17 +7,27 @@
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
   import {
     appendLogLine,
+    autoScroll,
+    cachedSettings,
     connected,
+    connectionParams,
     currentPort,
+    hexDisplay,
+    lineEnding,
     logLines,
+    logSendContent,
     rxBytes,
     scriptPanelOpen,
     scriptPanelWidth,
+    scriptCurrentRow,
     scriptRunning,
+    showTimestamp,
     txBytes,
   } from '$lib/stores';
-  import type { LogLine } from '$lib/types';
+  import type { LogLine, Settings } from '$lib/types';
   import {
+    getSettings,
+    saveSettings,
     onConnectionMode,
     onConnectionState,
     onError,
@@ -33,10 +43,66 @@
     appendLogLine(line);
   }
 
+  // 把加载到的 Settings 回填到各响应式 store
+  function applySettings(s: Settings) {
+    cachedSettings.value = s;
+    connectionParams.port = s.last_port || connectionParams.port;
+    connectionParams.baudRate = s.serial_defaults.baud_rate;
+    connectionParams.dataBits = s.serial_defaults.data_bits;
+    connectionParams.parity = s.serial_defaults.parity;
+    connectionParams.stopBits = s.serial_defaults.stop_bits;
+    connectionParams.flowControl = s.serial_defaults.flow_control;
+    lineEnding.value = s.ui.line_ending;
+    showTimestamp.value = s.ui.show_timestamp;
+    autoScroll.value = s.ui.auto_scroll;
+    hexDisplay.value = s.ui.display_mode === 'Hex';
+    logSendContent.value = s.ui.log_send;
+  }
+
+  // 从当前 UI 状态构建可保存的 Settings（基于缓存，避免丢字段）
+  function buildSettingsFromUi(): Settings | null {
+    const base = cachedSettings.value;
+    if (!base) return null;
+    return {
+      ...base,
+      last_port: connectionParams.port,
+      serial_defaults: {
+        baud_rate: connectionParams.baudRate,
+        data_bits: connectionParams.dataBits,
+        parity: connectionParams.parity,
+        stop_bits: connectionParams.stopBits,
+        flow_control: connectionParams.flowControl,
+      },
+      ui: {
+        ...base.ui,
+        display_mode: hexDisplay.value ? 'Hex' : 'Ascii',
+        line_ending: lineEnding.value,
+        auto_scroll: autoScroll.value,
+        show_timestamp: showTimestamp.value,
+        log_send: logSendContent.value,
+      },
+    };
+  }
+
+  async function persistSettings() {
+    const s = buildSettingsFromUi();
+    if (!s) return;
+    try {
+      await saveSettings(s);
+    } catch (e) {
+      console.error('保存设置失败:', e);
+    }
+  }
+
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
 
   onMount(() => {
+    // 启动时加载持久化设置
+    getSettings()
+      .then(applySettings)
+      .catch((e) => console.error('加载设置失败:', e));
+
     const unlistenRxLine = onRxLine((line) => handleRxLine(line));
     const unlistenTxLine = onTxLine((line) => handleRxLine(line));
     const unlistenTx = onTxUpdate((u) => (txBytes.value = u.total));
@@ -44,9 +110,17 @@
     const unlistenState = onConnectionState((s) => {
       connected.value = s.connected;
       currentPort.value = s.port;
+      // 断开时把当前 UI 设置落盘
+      if (!s.connected) {
+        persistSettings();
+      }
     });
     const unlistenSeqDone = onSequenceDone(() => {
       scriptRunning.value = false;
+      scriptCurrentRow.value = -1;
+    });
+    const unlistenSeqProgress = onSequenceProgress((p) => {
+      scriptCurrentRow.value = p.row;
     });
     const unlistenError = onError((e) => {
       console.error('[Serial Error]', e.message);
@@ -71,6 +145,7 @@
       unlistenRx.then((f) => f());
       unlistenState.then((f) => f());
       unlistenSeqDone.then((f) => f());
+      unlistenSeqProgress.then((f) => f());
       unlistenError.then((f) => f());
       unlistenMode.then((f) => f());
       document.removeEventListener('mousemove', handleMouseMove);

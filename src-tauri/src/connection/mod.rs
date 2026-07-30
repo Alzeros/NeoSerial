@@ -70,14 +70,13 @@ pub struct ConnectionMode {
 }
 
 /// 建立串口连接。成功返回 ConnectionHandle，失败返回错误信息。
-/// 
+///
 /// 策略：
 /// 1. 首先尝试 port.try_clone()，为读/写线程各持有一个独立句柄（无锁，性能最优）
 /// 2. 如果克隆失败（某些 USB 转串口芯片不支持），降级为 Arc<Mutex<>> 共享单个端口
 pub fn spawn_connection(
     params: SerialParams,
     app_handle: tauri::AppHandle,
-    ring_tx: std::sync::mpsc::Sender<crate::buffer::log_line::LogLine>,
 ) -> Result<ConnectionHandle, String> {
     let data_bits = match params.data_bits {
         DataBits::Five => serialport::DataBits::Five,
@@ -135,7 +134,6 @@ pub fn spawn_connection(
                 port_wrapper::PortReader::Owned(reader_port),
                 running.clone(),
                 rx_bytes.clone(),
-                ring_tx,
                 app_handle.clone(),
             );
 
@@ -159,7 +157,6 @@ pub fn spawn_connection(
                 port_wrapper::PortReader::Shared(shared.clone()),
                 running.clone(),
                 rx_bytes.clone(),
-                ring_tx,
                 app_handle.clone(),
             );
 

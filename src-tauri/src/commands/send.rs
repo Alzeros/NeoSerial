@@ -2,14 +2,12 @@ use tauri::{State, Emitter};
 
 use crate::state::AppState;
 use crate::connection::WriteCommand;
-use crate::buffer::log_line::{Dir, LogLine};
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
-use crate::util::time_fmt::now_local_ts;
 
 #[tauri::command]
 pub fn send(
     state: State<'_, AppState>,
-    app_handle: tauri::AppHandle,
+    _app_handle: tauri::AppHandle,
     text: String,
     ending: String,
     is_hex: bool,
@@ -35,14 +33,9 @@ pub fn send(
 
     let len = data.len();
 
-    // 通过 channel 发送给写线程
-    handle.write_tx.send(WriteCommand::Send(data.clone()))
+    // 通过 channel 发送给写线程；tx-line 回显统一在 writer 线程完成
+    handle.write_tx.send(WriteCommand::Send(data))
         .map_err(|e| format!("发送队列写入失败: {}", e))?;
-
-    // 发送成功后 emit tx-line 事件，让前端显示发送行
-    let ts = now_local_ts();
-    let tx_line = LogLine::new(ts, Dir::Tx, data, &[]);
-    let _ = app_handle.emit("tx-line", tx_line);
 
     Ok(len)
 }
