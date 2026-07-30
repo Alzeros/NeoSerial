@@ -1,297 +1,278 @@
+/* ============================================================
+   NeoSerial — 现代纸质风格 (Warm Neutral Paper Theme)
+   设计哲学：模拟自然纸张的暖灰底 + 油墨印刷的深褐字，
+   柔和阴影与圆角营造"高端数字笔记本"质感。
+   ============================================================ */
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-@layer base {
-  :root {
-    --background: #0A0E17;
-    --background-elevated: #161B22;
-    --background-input: #0D1117;
-    --border: rgba(255, 255, 255, 0.1);
-    --border-subtle: rgba(255, 255, 255, 0.06);
+:root {
+  /* ---- 纸张色阶 (Paper) ---- */
+  --background: #F5F2EB;              /* 主背景：暖灰米白，模拟自然纸张 */
+  --background-elevated: #FCFAF5;     /* 卡片/抬升面：比背景略亮 */
+  --background-input: #FFFFFF;        /* 输入框/下拉：最亮的纸白 */
+  --background-data: #FBFAF6;         /* 数据区：最干净的纸白，视觉重心 */
 
-    --foreground: #E6EDF3;
-    --muted-foreground: #8B949E;
+  /* ---- 墨水色 (Ink) ---- */
+  --foreground: #2D2D2D;              /* 主文字：深灰褐，模拟油墨 */
+  --foreground-secondary: #5C5C5C;    /* 次要文字 */
+  --muted-foreground: #8A8580;        /* 弱化文字/标签 */
 
-    --primary: #58A6FF;
-    --primary-hover: #79B8FF;
-    --primary-foreground: #0D1117;
+  /* ---- 强调色 (Accent) ---- */
+  --primary: #4A5BA8;                 /* 主色：低饱和靛蓝 */
+  --primary-hover: #3D4D94;           /* 主色 hover */
+  --primary-foreground: #FFFFFF;      /* 主色上的文字 */
 
-    --rx: #3FB950;
-    --tx: #58A6FF;
-    --error: #F85149;
-    --warning: #D29922;
+  /* ---- 功能色 ---- */
+  --rx: #2E7D5B;                      /* 接收：深绿，沉稳不刺眼 */
+  --tx: #3B5B8A;                      /* 发送：深蓝 */
+  --error: #B0413E;                   /* 错误：低饱和砖红 */
+  --warning: #B5852D;                 /* 警告：琥珀 */
 
-    --radius: 6px;
-  }
+  /* ---- 边框 ---- */
+  --border: rgba(0, 0, 0, 0.08);      /* 极细低对比，模拟纸张折痕 */
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --border-strong: rgba(0, 0, 0, 0.14);
+
+  /* ---- 柔和阴影 (Soft Shadow) ---- */
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  /* ---- 圆角 ---- */
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  /* ---- 字体 ---- */
+  --font-serif: "Iowan Old Style", "SF Pro Display", Georgia, "Times New Roman", serif;
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
+               "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+
+  /* ---- Tailwind HSL 映射（供 bg-background 等语义类使用，与纸质色对齐） ---- */
+  --background-hsl: 38 23% 94%;       /* #F5F2EB */
+  --foreground-hsl: 0 0% 18%;         /* #2D2D2D */
+  --primary-hsl: 225 39% 47%;         /* #4A5BA8 */
+  --primary-foreground-hsl: 0 0% 100%;
+  --muted-foreground-hsl: 30 10% 52%; /* #8A8580 */
+  --border-hsl: 0 0% 0%;              /* 配合 alpha 使用 */
+  --input-hsl: 0 0% 100%;
+  --ring-hsl: 225 39% 47%;
+  --secondary-hsl: 38 23% 96%;
+  --secondary-foreground-hsl: 0 0% 18%;
+  --destructive-hsl: 2 49% 47%;
+  --destructive-foreground-hsl: 0 0% 100%;
+  --muted-hsl: 38 18% 92%;
+  --accent-hsl: 225 39% 47%;
+  --accent-foreground-hsl: 0 0% 100%;
+  --popover-hsl: 0 0% 100%;
+  --popover-foreground-hsl: 0 0% 18%;
+  --card-hsl: 40 33% 98%;
+  --card-foreground-hsl: 0 0% 18%;
+  --rx-hsl: 146 47% 33%;              /* #2E7D5B */
+  --tx-hsl: 214 41% 38%;              /* #3B5B8A */
+  --system-hsl: 38 10% 52%;
 }
 
-@layer base {
-  * {
-    border-color: var(--border);
-  }
-
-  body {
-    margin: 0;
-    background: var(--background);
-    color: var(--foreground);
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-    font-size: 15px;
-    line-height: 1.6;
-    overflow: hidden;
-    -webkit-font-smoothing: antialiased;
-  }
+* {
+  box-sizing: border-box;
 }
 
-/* ========================================
-   全局 <select> 样式覆盖
-   ========================================
-   目的：强制所有下拉框使用深色主题，消除浏览器默认白色背景。
-   策略：使用 appearance:none 移除系统原生样式，
-   然后通过 background-image 内联 SVG 自定义下拉箭头。
-   ======================================== */
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  overflow: hidden;
+}
 
-select {
-  /* 彻底重置系统默认外观 */
-  -webkit-appearance: none;
-  -moz-appearance: none;
-  appearance: none;
-
-  /* 尺寸与间距 */
-  height: 40px;
-  min-width: 90px;
-  padding: 0 32px 0 12px;
-
-  /* 深色主题配色 */
-  background-color: var(--background-input);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius);
+body {
+  background-color: var(--background);
   color: var(--foreground);
+  font-family: var(--font-sans);
   font-size: 14px;
-
-  /* 自定义下拉箭头（向上，灰色 #8B949E） */
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%238B949E' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 10px center;
-
-  outline: none;
-  cursor: pointer;
-  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
-
-  /* 防止 Flex 布局挤压 */
-  flex-shrink: 0;
+  line-height: 1.7;
+  letter-spacing: 0.2px;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  /* 极微弱噪点纹理：模拟纸张纤维，Data URI SVG，不引入外部资源 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.025'/%3E%3C/svg%3E");
 }
 
-/* 聚焦态：蓝色边框 + 光晕 */
-select:focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
-  background-color: rgba(255, 255, 255, 0.03);
-}
-
-/* 禁用态：明确视觉反馈 */
-select:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  background-color: rgba(255, 255, 255, 0.02);
-  border-color: rgba(255, 255, 255, 0.05);
-}
-
-select:disabled:hover {
-  border-color: rgba(255, 255, 255, 0.05);
-  box-shadow: none;
-}
-
-/* Hover 态 */
-select:hover:not(:disabled) {
-  border-color: rgba(255, 255, 255, 0.15);
-  background-color: rgba(255, 255, 255, 0.03);
-}
-
-/* ========================================
-   <option> 选项样式
-   ========================================
-   注意：option 样式在跨平台支持有限，
-   但设置 background-color 和 color 可以在
-   大多数现代浏览器（尤其是 Chromium）中生效。
-   ======================================== */
-
-select option {
-  background-color: #161B22;
-  color: #E6EDF3;
-  padding: 8px 12px;
-  font-size: 14px;
-}
-
-select option:hover,
-select option:focus,
-select option:checked {
-  background-color: #1F2937;
-  color: #FFFFFF;
-}
-
-/* Webkit 特定：滚动条美化 */
-select::-webkit-scrollbar {
-  width: 6px;
-}
-
-select::-webkit-scrollbar-track {
-  background: #161B22;
-}
-
-select::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
-  border-radius: 3px;
-}
-
-/* ========================================
-   输入框样式
-   ======================================== */
-
-input[type="text"],
-input[type="number"],
-input:not([type]) {
-  height: 40px;
-  background: var(--background-input);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-  border-radius: var(--radius);
-  color: var(--foreground);
-  font-size: 14px;
-  padding: 0 12px;
-  outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s, background-color 0.15s;
-}
-
-input[type="text"]:focus,
-input[type="number"]:focus,
-input:not([type]):focus {
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(88, 166, 255, 0.15);
-  background: rgba(255, 255, 255, 0.03);
-}
-
-input:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-  background: rgba(255, 255, 255, 0.02);
-  border-color: rgba(255, 255, 255, 0.05);
-}
-
-input:disabled:hover {
-  border-color: rgba(255, 255, 255, 0.05);
-  box-shadow: none;
-}
-
-/* ========================================
-   按钮样式 + 微交互
-   ======================================== */
-
+/* ============================================================
+   按钮 (Button)
+   ============================================================ */
 .btn {
-  height: 40px;
-  padding: 0 16px;
-  border: none;
-  border-radius: var(--radius);
-  font-size: 14px;
+  font-family: var(--font-sans);
+  font-size: 13px;
   font-weight: 500;
+  letter-spacing: 0.2px;
+  padding: 8px 18px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
   cursor: pointer;
-  transition: background-color 0.15s, transform 0.1s, box-shadow 0.15s;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  user-select: none;
+  transition: all 0.15s ease;
+  background: var(--background-elevated);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:hover:not(:disabled) {
+  box-shadow: var(--shadow-md);
+  transform: translateY(-1px);
 }
 
 .btn:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: translateY(0);
+  box-shadow: var(--shadow-sm);
+}
+
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+  box-shadow: none;
 }
 
 .btn-primary {
   background: var(--primary);
   color: var(--primary-foreground);
-  box-shadow: 0 1px 3px rgba(88, 166, 255, 0.3);
+  border-color: var(--primary);
 }
 
 .btn-primary:hover:not(:disabled) {
   background: var(--primary-hover);
-  box-shadow: 0 2px 6px rgba(88, 166, 255, 0.4);
-  transform: translateY(-1px);
-}
-
-.btn-primary:active:not(:disabled) {
-  transform: scale(0.98) translateY(0);
-  box-shadow: 0 1px 2px rgba(88, 166, 255, 0.2);
+  border-color: var(--primary-hover);
 }
 
 .btn-secondary {
   background: var(--background-elevated);
   color: var(--foreground);
-  border: 1px solid rgba(255, 255, 255, 0.1);
-}
-
-.btn-secondary:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.08);
-  border-color: rgba(255, 255, 255, 0.15);
-  transform: translateY(-1px);
-}
-
-.btn-secondary:active:not(:disabled) {
-  transform: scale(0.98) translateY(0);
+  border-color: var(--border-strong);
 }
 
 .btn-ghost {
   background: transparent;
-  color: var(--muted-foreground);
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(0, 0, 0, 0.04);
+  box-shadow: none;
+}
+
+/* ============================================================
+   输入框 (Input)
+   ============================================================ */
+input[type="text"],
+input[type="number"] {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--background-input);
+  color: var(--foreground);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+input[type="text"]:focus,
+input[type="number"]:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(74, 91, 168, 0.12);
+}
+
+input[type="text"]:disabled,
+input[type="number"]:disabled {
+  background: var(--background);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* ============================================================
+   下拉框 (Select) — 浅色化
+   ============================================================ */
+select {
+  -webkit-appearance: none;
+  appearance: none;
+  font-family: var(--font-sans);
+  font-size: 13px;
+  height: 36px;
+  min-width: 90px;
+  padding: 0 28px 0 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background-color: var(--background-input);
+  color: var(--foreground);
+  cursor: pointer;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  /* 浅色下拉箭头 */
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%238A8580' stroke-width='1.5' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  flex-shrink: 0;
+}
+
+select:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(74, 91, 168, 0.12);
+}
+
+select:disabled {
+  background-color: var(--background);
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+select option {
+  background-color: var(--background-elevated);
   color: var(--foreground);
 }
 
-.btn:disabled {
-  opacity: 0.4;
-  cursor: not-allowed;
-  transform: none !important;
-  box-shadow: none !important;
-}
-
-/* ========================================
-   开关 (Switch Checkbox)
-   ======================================== */
-
+/* ============================================================
+   开关 (Toggle) — 柔和灰/低饱和蓝，模拟物理拨动
+   ============================================================ */
 .switch {
   display: inline-flex;
   align-items: center;
   gap: 8px;
   cursor: pointer;
   user-select: none;
+  font-size: 13px;
+  color: var(--foreground-secondary);
 }
 
-.switch input {
-  display: none;
+.switch input[type="checkbox"] {
+  position: absolute;
+  opacity: 0;
+  width: 0;
+  height: 0;
 }
 
 .switch-track {
-  width: 32px;
-  height: 18px;
-  background: rgba(255, 255, 255, 0.1);
-  border-radius: 9px;
   position: relative;
-  transition: background 0.2s;
+  width: 34px;
+  height: 20px;
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.16);
+  transition: background 0.2s ease;
   flex-shrink: 0;
 }
 
 .switch-track::after {
-  content: '';
+  content: "";
   position: absolute;
   top: 2px;
   left: 2px;
-  width: 14px;
-  height: 14px;
-  background: var(--foreground);
+  width: 16px;
+  height: 16px;
   border-radius: 50%;
-  transition: transform 0.2s;
+  background: #FFFFFF;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease;
 }
 
 .switch input:checked + .switch-track {
@@ -302,20 +283,49 @@ input:disabled:hover {
   transform: translateX(14px);
 }
 
-.switch-label {
-  color: var(--muted-foreground);
-  font-size: 13px;
-  font-weight: 500;
+.switch input:focus-visible + .switch-track {
+  box-shadow: 0 0 0 3px rgba(74, 91, 168, 0.18);
 }
 
-.switch input:checked ~ .switch-label {
+/* 普通复选框（表格内小方框） */
+input[type="checkbox"]:not(.switch input) {
+  accent-color: var(--primary);
+}
+
+/* ============================================================
+   数据区 / 日志 (Data Area) — 视觉重心，最干净纸白
+   ============================================================ */
+.log-view,
+.log-container {
+  background: var(--background-data);
   color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 1.8;
+  letter-spacing: 0.3px;
 }
 
-/* ========================================
-   滚动条
-   ======================================== */
+/* 日志行方向标签 */
+.log-line-dir-rx,
+.dir-rx {
+  color: var(--rx);
+  font-weight: 600;
+}
 
+.log-line-dir-tx,
+.dir-tx {
+  color: var(--tx);
+  font-weight: 600;
+}
+
+.log-line-error,
+.is-error {
+  color: var(--error);
+}
+
+/* ============================================================
+   滚动条 — 浅色细窄
+   ============================================================ */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;
@@ -326,20 +336,161 @@ input:disabled:hover {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.1);
+  background: rgba(0, 0, 0, 0.14);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.15);
+  background: rgba(0, 0, 0, 0.24);
 }
 
-/* ========================================
-   等宽字体
-   ======================================== */
+/* ============================================================
+   标题排版 — Serif 衬线，出版物感
+   ============================================================ */
+h1, h2, h3, h4 {
+  font-family: var(--font-serif);
+  font-weight: 600;
+  color: var(--foreground);
+  letter-spacing: 0.2px;
+}
 
-.font-mono {
-  font-family: 'Cascadia Code', 'Fira Code', 'Consolas', 'Monaco', 'Courier New', monospace;
-  font-size: 14px;
-  line-height: 1.5;
+/* ============================================================
+   表格 (Script Sequencer)
+   ============================================================ */
+table {
+  font-family: var(--font-sans);
+  font-size: 13px;
+}
+
+table thead {
+  background: var(--background-elevated);
+  color: var(--muted-foreground);
+}
+
+table tbody tr {
+  border-color: var(--border-subtle);
+  transition: background 0.1s ease;
+}
+
+table tbody tr:hover {
+  background: rgba(74, 91, 168, 0.04);
+}
+
+/* 标签文字（配置区） */
+.control-group span,
+label span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
+}
+
+/* ============================================================
+   布局：防弹级 Flexbox (Bulletproof Layout)
+   核心：打破 flex 子项的 min-width:auto 底线 + 独立滚动上下文
+   ============================================================ */
+
+/* 全局窗口防御：宁可内容被切也绝不出横向滚动条 */
+html, body {
+  overflow-x: hidden !important;
+}
+
+/* 配置栏：标签+控件横向一行排列，禁止换行——保持排版一致性 */
+.config-group {
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: nowrap;      /* 禁止换行：右栏伸缩时不让下拉框换行成垂直堆叠 */
+  gap: 12px;
+  min-width: 0 !important;  /* OVERRIDE flex default min-width:auto,
+                                允许整个分组无视内部文字宽度被安全压缩 */
+}
+
+/* 单个配置项：标签+控件纵向，整组禁止收缩 */
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex-shrink: 0;        /* 标签组完整保留，"波特率"等文字绝不被挤扁 */
+}
+
+/* 标签锁定：永不截断 */
+.control-group span,
+.control-group label {
+  white-space: nowrap;   /* 文字不换行，配合 flex-shrink:0 保证完整显示 */
+}
+
+/* 所有输入/下拉：允许适度收缩但绝不消失 */
+input[type="text"],
+input[type="number"],
+select {
+  flex-shrink: 1;
+  min-width: 60px;       /* 收缩下限：再窄也能容下基本输入，不会消失 */
+  max-width: 100%;
+}
+
+/* 输入框终极防御：省略号三件套 —— 空间不够显示 "波特率..." 而非挤飞界面 */
+input[type="text"],
+.script-list input[type="text"] {
+  white-space: nowrap;     /* 禁止文字自动换行 */
+  overflow: hidden;        /* 超出部分直接隐藏 */
+  text-overflow: ellipsis; /* 超出的字显示成 ... */
+}
+
+/* ============================================================
+   右侧脚本列表：绝对独立的滚动舱
+   ============================================================ */
+.script-list {
+  display: flex;          /* 建立 flex 上下文，让 flex:1 在垂直方向生效 */
+  flex-direction: column;
+  flex: 1 1 auto;         /* 填满侧边栏剩余高度 */
+  min-width: 0 !important;  /* 水平打破底线：无视内部表格宽度安全压缩 */
+  min-height: 0 !important; /* 垂直打破底线：无视内部列表项高度安全压缩，
+                                这是 overflow-y:auto 能正确触发的前提 */
+  max-height: calc(100vh - 150px); /* 列表过长只在内部滚动，不撑破底部 */
+  overflow-y: auto;       /* 独立垂直滚动：溢出只影响自身不外溢 */
+  overflow-x: hidden;
+  padding-right: 2px;     /* 边界加固：滚动条轨道不遮挡最右侧文字 */
+}
+
+/* 脚本列表内的行：禁止挤压成一条线 */
+.script-list table {
+  table-layout: fixed;   /* 列宽严格按 th 定义，容器缩小时立即收缩，
+                            避免 auto 布局"只增不减"导致输入框不更新 */
+  width: 100%;
+}
+
+.script-list tr {
+  flex-shrink: 0;        /* 行不被压成 0 高 */
+  min-height: 36px;     /* 行最小高度，防止被压缩成一条线 */
+}
+
+/* 动态列表项内的文本输入同样套省略号三件套（已在上方 input 规则覆盖） */
+.script-list td input,
+.script-list td input[type="text"],
+.script-list td input[type="number"] {
+  width: 100%;
+  min-width: 0 !important;  /* 表格内输入可收缩，触发省略号 */
+}
+
+/* ============================================================
+   主内容区：中间数据区独立滚动，顶/底固定
+   ============================================================ */
+.main-scroll {
+  flex: 1 1 auto;
+  min-width: 0 !important;  /* 水平打破底线 */
+  min-height: 0 !important; /* flex 子项能正确收缩+滚动的关键 */
+  overflow-y: auto;       /* 建立独立滚动上下文 */
+  overflow-x: hidden;
+}
+
+/* 顶/底栏固定不收缩 */
+.layout-fixed {
+  flex-shrink: 0;
+}
+
+
+/* Tauri 窗口适配：拖拽区/标题栏区域保持纸张色 */
+[data-tauri-drag-region] {
+  background: var(--background);
 }

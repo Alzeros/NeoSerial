@@ -65,7 +65,7 @@ export const hexDisplay = $state<{ value: boolean }>({ value: false });
 
 // ============ 脚本序列面板 ============
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });
-export const scriptPanelWidth = $state<{ value: number }>({ value: 360 });
+export const scriptPanelWidth = $state<{ value: number }>({ value: 420 });
 
 export const scriptPages = $state<ScriptPage[]>([defaultScriptPage('Page0')]);
 export const activeScriptPage = $state<{ value: number }>({ value: 0 });

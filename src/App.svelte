@@ -137,6 +137,7 @@
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    window.addEventListener('resize', handleResize);
 
     return () => {
       unlistenRxLine.then((f) => f());
@@ -150,8 +151,20 @@
       unlistenMode.then((f) => f());
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      window.removeEventListener('resize', handleResize);
     };
   });
+
+  // 窗口缩小时若右栏超出合法范围（左栏已触底），自动收缩右栏，
+  // 避免输入框卡在拉宽后的长度、需拖分隔条才刷新。
+  function handleResize() {
+    if (!leftPanel) return;
+    const containerWidth = leftPanel.parentElement?.clientWidth ?? 1200;
+    const maxByLeftFloor = containerWidth - 699 - 1;
+    if (scriptPanelWidth.value > maxByLeftFloor) {
+      scriptPanelWidth.value = Math.max(400, maxByLeftFloor);
+    }
+  }
 
   let isDragging = false;
   let leftPanel: HTMLDivElement;
@@ -166,7 +179,10 @@
     if (!isDragging || !leftPanel) return;
     const containerWidth = leftPanel.parentElement?.clientWidth ?? 1200;
     const newWidth = containerWidth - e.clientX;
-    scriptPanelWidth.value = Math.max(200, Math.min(600, newWidth));
+    // 左栏有 699px 下限：右栏最大不能超过 容器宽 - 左栏下限 - 分隔条(1)，
+    // 否则左栏触底后继续拖会把右栏撑大（总宽固定时左栏已不能缩，右栏变大无意义）。
+    const maxByLeftFloor = containerWidth - 699 - 1;
+    scriptPanelWidth.value = Math.max(400, Math.min(600, newWidth, maxByLeftFloor));
   }
 
   function handleMouseUp() {
@@ -189,16 +205,25 @@
 {/if}
 
 <div class="flex h-screen w-screen overflow-hidden">
-  <!-- 左侧主区域 -->
-  <div bind:this={leftPanel} class="flex flex-col min-w-0" style="flex: 1;">
-    <!-- 1. 会话配置区（顶部） -->
-    <ConnectionBar />
-    <!-- 2. 数据显示区（中部，占满剩余高度） -->
-    <LogView />
-    <!-- 3. 底部功能区 -->
-    <BottomPanel />
-    <!-- 状态栏 -->
-    <StatusBar />
+  <!-- 左侧主区域：flex:1 占剩余空间；min-width 699px 锁定配置区一行 + 底部开关行不换行，
+       右栏朝左拖时优先压缩右侧、到左侧下限即停，保证排版一致 -->
+  <div bind:this={leftPanel} class="flex flex-col" style="flex: 1 1 0%; min-width: 699px; min-height: 0;">
+    <!-- 1. 会话配置区（顶部，固定不收缩） -->
+    <div class="layout-fixed">
+      <ConnectionBar />
+    </div>
+    <!-- 2. 数据显示区（中部，内部独立滚动） -->
+    <div class="flex flex-col min-h-0" style="flex: 1 1 0%;">
+      <LogView />
+    </div>
+    <!-- 3. 底部功能区（固定不收缩） -->
+    <div class="layout-fixed">
+      <BottomPanel />
+    </div>
+    <!-- 状态栏（固定不收缩，z-index 防止被中间长文本遮挡） -->
+    <div class="layout-fixed" style="position: relative; z-index: 10;">
+      <StatusBar />
+    </div>
   </div>
 
   <!-- 分隔条 + 右侧脚本面板 -->
@@ -211,7 +236,9 @@
       style="background: var(--border);"
       onmousedown={handleMouseDown}
     ></div>
-    <div class="shrink-0" style="width: {scriptPanelWidth.value}px;">
+    <!-- 右栏：flex 不收缩，宽度由拖拽控制；min-width 覆盖全部表格列防截断。
+         窗口缩小时由左栏(flex:1)先吃压缩，右栏保持自身宽度直至触底。 -->
+    <div class="flex flex-col" style="width: {scriptPanelWidth.value}px; min-width: 400px; max-width: 600px; flex: 0 0 auto; min-height: 0; height: 100%; overflow: hidden;">
       <ScriptSequencer />
     </div>
   {/if}

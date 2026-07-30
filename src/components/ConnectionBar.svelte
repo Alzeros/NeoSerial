@@ -51,13 +51,13 @@
   });
 </script>
 
-<div class="flex items-center justify-between border-b px-5 py-4" style="background: var(--background-elevated); border-color: rgba(255, 255, 255, 0.08);">
+<div class="layout-fixed flex items-center justify-between border-b px-5 py-4" style="background: var(--background-elevated); border-color: var(--border);">
   <!-- 左侧：所有配置项分组 -->
-  <div class="config-group flex items-end gap-3" style="flex: 1; margin-right: 20px;">
+  <div class="config-group" style="flex: 1 1 auto; margin-right: 20px; min-width: 0;">
     <!-- 端口号 -->
-    <label class="control-group flex flex-col gap-1.5">
-      <span class="text-[12px] text-[var(--muted-foreground)] font-medium">端口号</span>
-      <select class="w-28" bind:value={connectionParams.port} disabled={connected.value}>
+    <label class="control-group">
+      <span>端口号</span>
+      <select bind:value={connectionParams.port} disabled={connected.value}>
         {#each availablePorts.value as p}
           <option value={p}>{p}</option>
         {/each}
@@ -65,9 +65,9 @@
     </label>
 
     <!-- 波特率 -->
-    <label class="control-group flex flex-col gap-1.5">
-      <span class="text-[12px] text-[var(--muted-foreground)] font-medium">波特率</span>
-      <select class="w-24" bind:value={baudRateStr} disabled={connected.value}>
+    <label class="control-group">
+      <span>波特率</span>
+      <select bind:value={baudRateStr} disabled={connected.value}>
         {#each baudRates as b}
           <option value={b}>{b}</option>
         {/each}
@@ -75,9 +75,9 @@
     </label>
 
     <!-- 数据位 -->
-    <label class="control-group flex flex-col gap-1.5">
-      <span class="text-[12px] text-[var(--muted-foreground)] font-medium">数据位</span>
-      <select class="w-14" bind:value={connectionParams.dataBits} disabled={connected.value}>
+    <label class="control-group">
+      <span>数据位</span>
+      <select bind:value={connectionParams.dataBits} disabled={connected.value}>
         {#each dataBitsOpts as o}
           <option value={o.v}>{o.l}</option>
         {/each}
@@ -85,9 +85,9 @@
     </label>
 
     <!-- 校验位 -->
-    <label class="control-group flex flex-col gap-1.5">
-      <span class="text-[12px] text-[var(--muted-foreground)] font-medium">校验位</span>
-      <select class="w-16" bind:value={connectionParams.parity} disabled={connected.value}>
+    <label class="control-group">
+      <span>校验位</span>
+      <select bind:value={connectionParams.parity} disabled={connected.value}>
         {#each parityOpts as o}
           <option value={o.v}>{o.l}</option>
         {/each}
@@ -95,9 +95,9 @@
     </label>
 
     <!-- 停止位 -->
-    <label class="control-group flex flex-col gap-1.5">
-      <span class="text-[12px] text-[var(--muted-foreground)] font-medium">停止位</span>
-      <select class="w-12" bind:value={stopBitsStr} disabled={connected.value}>
+    <label class="control-group">
+      <span>停止位</span>
+      <select bind:value={stopBitsStr} disabled={connected.value}>
         {#each stopBitsOpts as s}
           <option value={s}>{s}</option>
         {/each}
@@ -105,9 +105,9 @@
     </label>
 
     <!-- 流控制 -->
-    <label class="control-group flex flex-col gap-1.5">
-      <span class="text-[12px] text-[var(--muted-foreground)] font-medium">流控制</span>
-      <select class="w-16" bind:value={connectionParams.flowControl} disabled={connected.value}>
+    <label class="control-group">
+      <span>流控制</span>
+      <select bind:value={connectionParams.flowControl} disabled={connected.value}>
         {#each flowOpts as o}
           <option value={o.v}>{o.l}</option>
         {/each}

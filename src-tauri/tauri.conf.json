@@ -15,7 +15,7 @@
         "title": "NeoSerial",
         "width": 1200,
         "height": 750,
-        "minWidth": 800,
+        "minWidth": 1100,
         "minHeight": 500,
         "resizable": true,
         "fullscreen": false

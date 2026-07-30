@@ -42,8 +42,8 @@
   }
 </script>
 
-<!-- 数据显示区：背景稍微亮一点，营造凹陷聚焦感 -->
-<div class="flex-1 overflow-hidden flex flex-col" style="background: #11161D;">
+<!-- 数据显示区：最干净的纸白，视觉重心 -->
+<div class="h-full overflow-hidden flex flex-col" style="background: var(--background-data);">
   <div
     bind:this={scrollContainer}
     class="flex-1 overflow-y-auto overflow-x-auto font-mono px-5 py-4"

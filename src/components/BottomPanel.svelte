@@ -93,38 +93,38 @@
 </script>
 
 <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
-  <!-- 第一排：操作按钮 + 复选框 -->
+  <!-- 第一排：操作按钮 + 复选框（不换行，由左栏 min-width 兜底） -->
   <div class="flex items-center gap-3 px-5 py-3">
-    <button class="btn btn-secondary" onclick={clearLogLines}>清空</button>
-    <button class="btn btn-secondary" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
+    <button class="btn btn-secondary flex-shrink-0" onclick={clearLogLines}>清空</button>
+    <button class="btn btn-secondary flex-shrink-0" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
 
-    <div class="w-px h-5 bg-[var(--border)] mx-1"></div>
+    <div class="w-px h-5 bg-[var(--border)] mx-1 flex-shrink-0"></div>
 
-    <label class="switch">
+    <label class="switch flex-shrink-0">
       <input type="checkbox" bind:checked={hexDisplay.value} />
       <span class="switch-track"></span>
       <span class="switch-label">HEX显示</span>
     </label>
 
-    <label class="switch">
+    <label class="switch flex-shrink-0">
       <input type="checkbox" bind:checked={hexSend.value} />
       <span class="switch-track"></span>
       <span class="switch-label">HEX发送</span>
     </label>
 
-    <label class="switch">
+    <label class="switch flex-shrink-0">
       <input type="checkbox" bind:checked={showTimestamp.value} />
       <span class="switch-track"></span>
       <span class="switch-label">时间戳</span>
     </label>
 
-    <label class="switch">
+    <label class="switch flex-shrink-0">
       <input type="checkbox" checked={lineEnding.value === 'Crlf'} onchange={(e) => lineEnding.value = (e.target as HTMLInputElement).checked ? 'Crlf' : 'None'} />
       <span class="switch-track"></span>
       <span class="switch-label">回车换行</span>
     </label>
 
-    <div class="ml-auto">
+    <div class="ml-auto flex-shrink-0">
       {#if paused.value}
         <button class="btn btn-primary" onclick={() => (paused.value = false)}>继续</button>
       {:else}
@@ -134,11 +134,11 @@
   </div>
 
   <!-- 第二排：发送输入 -->
-  <div class="flex items-stretch gap-0 px-5 pb-3">
+  <div class="flex items-center gap-0 px-5 pb-3">
     <input
       type="text"
       class="!rounded-r-0 !border-r-0"
-      style="flex:1;height:40px;"
+      style="flex:1 1 0%;min-width:0;height:40px;"
       placeholder="输入要发送的内容..."
       bind:value={sendText.value}
       onkeydown={handleKeydown}
@@ -155,7 +155,7 @@
   <!-- 第三排：文件发送 + 进度 -->
   <div class="flex items-center gap-3 px-5 pb-3">
     <button
-      class="flex-1 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
+      class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
       style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
       onclick={handleSelectFile}
     >
@@ -168,7 +168,7 @@
   <!-- 第四排：日志保存 + 记录选项 -->
   <div class="flex items-center gap-3 px-5 pb-3">
     <button
-      class="flex-1 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
+      class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
       style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
       onclick={handleStartLogging}
     >

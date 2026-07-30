@@ -102,8 +102,8 @@
     </button>
   </div>
 
-  <!-- 命令序列表格 -->
-  <div class="flex-1 overflow-auto">
+  <!-- 命令序列表格（独立滚动，不撑开外部布局） -->
+  <div class="script-list">
     <table class="w-full text-[13px]">
       <thead class="sticky top-0" style="background: var(--background-elevated);">
         <tr class="text-[var(--muted-foreground)]">
