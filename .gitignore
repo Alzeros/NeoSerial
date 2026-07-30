@@ -9,6 +9,9 @@ node_modules/
 dist/
 .svelte-kit/
 
+# Docs
+docs/
+
 # IDE / Editor
 .codebuddy/
 .vscode/

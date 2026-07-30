@@ -160,7 +160,7 @@
   function handleResize() {
     if (!leftPanel) return;
     const containerWidth = leftPanel.parentElement?.clientWidth ?? 1200;
-    const maxByLeftFloor = containerWidth - 699 - 1;
+    const maxByLeftFloor = containerWidth - 810 - 1;
     if (scriptPanelWidth.value > maxByLeftFloor) {
       scriptPanelWidth.value = Math.max(400, maxByLeftFloor);
     }
@@ -179,9 +179,9 @@
     if (!isDragging || !leftPanel) return;
     const containerWidth = leftPanel.parentElement?.clientWidth ?? 1200;
     const newWidth = containerWidth - e.clientX;
-    // 左栏有 699px 下限：右栏最大不能超过 容器宽 - 左栏下限 - 分隔条(1)，
+    // 左栏有 810px 下限：右栏最大不能超过 容器宽 - 左栏下限 - 分隔条(1)，
     // 否则左栏触底后继续拖会把右栏撑大（总宽固定时左栏已不能缩，右栏变大无意义）。
-    const maxByLeftFloor = containerWidth - 699 - 1;
+    const maxByLeftFloor = containerWidth - 810 - 1;
     scriptPanelWidth.value = Math.max(400, Math.min(600, newWidth, maxByLeftFloor));
   }
 
@@ -205,9 +205,9 @@
 {/if}
 
 <div class="flex h-screen w-screen overflow-hidden">
-  <!-- 左侧主区域：flex:1 占剩余空间；min-width 699px 锁定配置区一行 + 底部开关行不换行，
+  <!-- 左侧主区域：flex:1 占剩余空间；min-width 810px 锁定配置区一行 + 底部开关行不换行，
        右栏朝左拖时优先压缩右侧、到左侧下限即停，保证排版一致 -->
-  <div bind:this={leftPanel} class="flex flex-col" style="flex: 1 1 0%; min-width: 699px; min-height: 0;">
+  <div bind:this={leftPanel} class="flex flex-col" style="flex: 1 1 0%; min-width: 810px; min-height: 0;">
     <!-- 1. 会话配置区（顶部，固定不收缩） -->
     <div class="layout-fixed">
       <ConnectionBar />
