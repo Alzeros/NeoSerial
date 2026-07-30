@@ -139,7 +139,7 @@
       type="text"
       class="!rounded-r-0 !border-r-0"
       style="flex:1 1 0%;min-width:0;height:40px;"
-      placeholder={connected.value ? "输入要发送的内容..." : "未连接端口（可先输入，连接后发送）"}
+      placeholder="输入要发送的内容..."
       bind:value={sendText.value}
       onkeydown={handleKeydown}
     />
