@@ -133,16 +133,15 @@
     </div>
   </div>
 
-  <!-- 第二排：发送输入 -->
+  <!-- 第二排：发送输入（输入框始终可输入，仅发送按钮在未连接时禁用） -->
   <div class="flex items-center gap-0 px-5 pb-3">
     <input
       type="text"
       class="!rounded-r-0 !border-r-0"
       style="flex:1 1 0%;min-width:0;height:40px;"
-      placeholder="输入要发送的内容..."
+      placeholder={connected.value ? "输入要发送的内容..." : "未连接端口（可先输入，连接后发送）"}
       bind:value={sendText.value}
       onkeydown={handleKeydown}
-      disabled={!connected.value}
     />
     <button
       style="height:40px;padding:0 20px;border-radius:0 6px 6px 0;"
