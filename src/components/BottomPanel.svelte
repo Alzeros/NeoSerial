@@ -30,7 +30,7 @@
     if (!sendText.value.trim()) return;
     try {
       await send(sendText.value, lineEnding.value, hexSend.value);
-      sendText.value = '';
+      // 发送后保留输入内容，便于重复发送/修改后再发
     } catch (e) {
       console.error('发送失败:', e);
     }
