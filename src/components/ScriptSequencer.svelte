@@ -334,7 +334,7 @@
           : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
         onclick={() => (activeScriptPage.value = i)}
         oncontextmenu={(e) => handlePageContextMenu(e, i)}
-        title="右键可删除此页签"
+        title="右键可编辑此页签"
       >
         {page.name}
       </button>
