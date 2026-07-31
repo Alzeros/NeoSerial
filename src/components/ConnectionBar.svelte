@@ -25,10 +25,13 @@
   }
 
   async function handleConnect() {
+    const baud = Number(baudRateStr);
+    // 波特率为空/非法时拒绝连接，避免 0 波特率下发到后端
+    if (!baud || baud <= 0) return;
     try {
       await connect({
         port: connectionParams.port,
-        baud_rate: Number(baudRateStr),
+        baud_rate: baud,
         data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
         stop_bits: Number(stopBitsStr) as 1 | 2,

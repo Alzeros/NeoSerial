@@ -5,6 +5,10 @@
 
   let open = $state(false);
 
+  // 内置默认波特率：不可删除，只能在此基础上增删用户自定义项
+  const DEFAULT_BAUD_RATES = [9600, 115200, 921600];
+  const isDefault = (n: number) => DEFAULT_BAUD_RATES.includes(n);
+
   // 预设波特率编辑副本（打开时从 store 拷贝，取消不污染 store）
   let editBaudRates = $state<number[]>([]);
   let newBaud = $state('');
@@ -27,14 +31,15 @@
   }
 
   function removeBaud(n: number) {
-    // 至少保留一项，不允许全删
-    if (editBaudRates.length <= 1) return;
+    // 内置默认波特率不可删除
+    if (isDefault(n)) return;
     editBaudRates = editBaudRates.filter((b) => b !== n);
   }
 
   async function handleSave() {
-    // 至少保留一项
-    const rates = editBaudRates.length ? editBaudRates : [9600, 115200, 921600];
+    // 合并：内置默认 3 项一定保留 + 用户自定义项（去重、排序）
+    const userAdded = editBaudRates.filter((b) => !isDefault(b));
+    const rates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
     presetBaudRates.value = rates;
     // 落盘：基于缓存 settings 透传，仅更新 presets
     const base = cachedSettings.value;
@@ -85,11 +90,11 @@
             >
               {b}
               <button
-                class="leading-none cursor-pointer {editBaudRates.length <= 1
-                  ? 'text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'
-                  : 'text-[var(--muted-foreground)] hover:text-[var(--error)]'}"
-                title={editBaudRates.length <= 1 ? '至少保留一项' : '移除'}
-                disabled={editBaudRates.length <= 1}
+                class="leading-none {isDefault(b)
+                  ? 'text-[var(--muted-foreground)] opacity-30 cursor-not-allowed'
+                  : 'text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer'}"
+                title={isDefault(b) ? '内置预设，不可删除' : '移除'}
+                disabled={isDefault(b)}
                 onclick={() => removeBaud(b)}
               >×</button>
             </span>

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { autoScroll, hexDisplay, logLines, showTimestamp } from '$lib/stores';
+  import { autoScroll, hexDisplay, logLines, logSendContent, showTimestamp } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
   let scrollContainer: HTMLDivElement;
@@ -76,10 +76,12 @@
   >
     {#each logLines as line, i (i)}
       <div class="flex hover:bg-[rgba(255,255,255,0.03)] px-2 py-px gap-4">
-        <!-- 方向标记 -->
-        <span class="w-8 shrink-0 text-right font-bold {dirColor(line.dir)}">
-          {dirLabel(line.dir)}
-        </span>
+        <!-- 方向标记：记录发送开关关闭时，隐去标签列，内容朝左对齐（Tx 此时本就不显示） -->
+        {#if logSendContent.value}
+          <span class="w-8 shrink-0 text-right font-bold {dirColor(line.dir)}">
+            {dirLabel(line.dir)}
+          </span>
+        {/if}
         <!-- 时间戳 -->
         {#if showTimestamp.value}
           <span class="w-24 shrink-0 text-[var(--muted-foreground)]">{line.ts}</span>

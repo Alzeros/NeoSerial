@@ -102,6 +102,18 @@
     }
   }
 
+  // "记录发送"开关变化时即时同步后端 state，让 writer 线程立刻按新值决定是否 emit tx-line。
+  // 否则只有断开连接时 persistSettings 才同步，拨开关后日志区仍会显示 Tx。
+  $effect(() => {
+    const v = logSendContent.value;
+    const base = cachedSettings.value;
+    if (!base) return;
+    // 仅更新 log_send 字段并同步后端内存 state + 落盘
+    if (base.ui.log_send === v) return;
+    base.ui.log_send = v;
+    saveSettings(base).catch((e) => console.error('同步记录发送开关失败:', e));
+  });
+
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
 
