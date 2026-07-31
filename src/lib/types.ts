@@ -89,6 +89,9 @@ export interface Settings {
   };
   command_groups: CommandGroup[];
   error_keywords: string[];
+  presets: {
+    baud_rates: number[];
+  };
 }
 
 export interface ScriptCommand {

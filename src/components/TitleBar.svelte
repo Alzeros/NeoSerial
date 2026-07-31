@@ -1,8 +1,9 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { getVersion } from '@tauri-apps/api/app';
-  import { Pin, PinOff, PanelRight, PanelRightClose, Settings, Info } from 'lucide-svelte';
+  import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, SlidersHorizontal, Info } from 'lucide-svelte';
   import { scriptPanelOpen, toggleScriptPanel } from '$lib/stores';
+  import SettingsDialog from '$components/SettingsDialog.svelte';
 
   const appWindow = getCurrentWindow();
 
@@ -11,6 +12,7 @@
   let menuOpen = $state<{ value: boolean }>({ value: false });
   let aboutOpen = $state<{ value: boolean }>({ value: false });
   let version = $state<{ value: string }>({ value: '' });
+  let settingsDialog: SettingsDialog;
 
   async function handleMinimize() {
     await appWindow.minimize();
@@ -44,6 +46,11 @@
   function handleOpenAbout() {
     menuOpen.value = false;
     aboutOpen.value = true;
+  }
+
+  function handleOpenSettings() {
+    menuOpen.value = false;
+    settingsDialog?.show();
   }
 
   // 标题栏拖动区域：按住鼠标拖动移动窗口（data-tauri-drag-region 由 Tauri 拦截）
@@ -112,7 +119,7 @@
       onclick={handleToggleMenu}
       title="设置"
     >
-      <Settings size={15} />
+      <SettingsIcon size={15} />
     </button>
     {#if menuOpen.value}
       <div
@@ -120,6 +127,13 @@
         style="background: var(--background-elevated); border-color: var(--border);"
         onclick={(e) => e.stopPropagation()}
       >
+        <button
+          class="flex items-center gap-2 w-full px-3 py-2 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+          onclick={handleOpenSettings}
+        >
+          <SlidersHorizontal size={14} />
+          设置
+        </button>
         <button
           class="flex items-center gap-2 w-full px-3 py-2 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
           onclick={handleOpenAbout}
@@ -192,3 +206,5 @@
     </div>
   </div>
 {/if}
+
+<SettingsDialog bind:this={settingsDialog} />

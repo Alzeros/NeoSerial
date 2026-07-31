@@ -45,6 +45,10 @@ export function clearLogLines() {
 export const txBytes = $state<{ value: number }>({ value: 0 });
 export const rxBytes = $state<{ value: number }>({ value: 0 });
 
+// ============ 预设项（设置弹窗维护，持久化到 settings.json） ============
+/** 预设波特率：连接栏下拉用，默认 9600/115200/921600，用户可在设置中增删 */
+export const presetBaudRates = $state<{ value: number[] }>({ value: [9600, 115200, 921600] });
+
 // ============ 文件日志 ============
 export const loggingPath = $state<{ value: string | null }>({ value: null });
 export const logSendContent = $state<{ value: boolean }>({ value: true });

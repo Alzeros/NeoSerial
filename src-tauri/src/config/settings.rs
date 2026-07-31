@@ -84,6 +84,25 @@ pub struct QuickCommand {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct PresetSettings {
+    /// 用户自定义的预设波特率，会追加到连接栏波特率下拉中。
+    #[serde(default = "default_baud_rates")]
+    pub baud_rates: Vec<u32>,
+}
+
+fn default_baud_rates() -> Vec<u32> {
+    vec![9600, 115200, 921600]
+}
+
+impl Default for PresetSettings {
+    fn default() -> Self {
+        PresetSettings {
+            baud_rates: default_baud_rates(),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
     pub window: WindowSettings,
@@ -92,6 +111,9 @@ pub struct Settings {
     pub ui: UiSettings,
     pub command_groups: Vec<CommandGroup>,
     pub error_keywords: Vec<String>,
+    /// 预设项（预设波特率等）。旧配置缺该字段时取默认。
+    #[serde(default)]
+    pub presets: PresetSettings,
 }
 
 impl Settings {
@@ -122,6 +144,7 @@ impl Settings {
                 "+CME ERROR".into(),
                 "+CMS ERROR".into(),
             ],
+            presets: PresetSettings::default(),
         }
     }
 
@@ -222,6 +245,7 @@ impl LegacySettings {
                 }).collect(),
             }],
             error_keywords: self.error_keywords,
+            presets: PresetSettings::default(),
         }
     }
 }

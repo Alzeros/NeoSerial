@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { availablePorts, connectionParams, connected } from '$lib/stores';
+  import { availablePorts, connectionParams, connected, presetBaudRates } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
 
-  const baudRates = ['9600', '115200', '921600'];
+  // 波特率下拉项 = 预设波特率（来自设置，持久化）
+  const baudRates = $derived(presetBaudRates.value.map((b) => String(b)));
   const dataBitsOpts = [{ l: '5', v: 'Five' }, { l: '6', v: 'Six' }, { l: '7', v: 'Seven' }, { l: '8', v: 'Eight' }];
   const parityOpts = [{ l: 'None', v: 'None' }, { l: 'Odd', v: 'Odd' }, { l: 'Even', v: 'Even' }];
   const stopBitsOpts = ['1', '2'];

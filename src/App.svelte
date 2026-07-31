@@ -17,6 +17,7 @@
     lineEnding,
     logLines,
     logSendContent,
+    presetBaudRates,
     rxBytes,
     scriptPanelOpen,
     scriptPanelWidth,
@@ -58,6 +59,9 @@
     autoScroll.value = s.ui.auto_scroll;
     hexDisplay.value = s.ui.display_mode === 'Hex';
     logSendContent.value = s.ui.log_send;
+    // 预设波特率：兜底为默认三项
+    presetBaudRates.value =
+      s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
   }
 
   // 从当前 UI 状态构建可保存的 Settings（基于缓存，避免丢字段）
@@ -81,6 +85,9 @@
         auto_scroll: autoScroll.value,
         show_timestamp: showTimestamp.value,
         log_send: logSendContent.value,
+      },
+      presets: {
+        baud_rates: presetBaudRates.value,
       },
     };
   }
