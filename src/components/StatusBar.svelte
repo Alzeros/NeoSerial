@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { connected, currentPort, rxBytes, scriptPanelOpen, toggleScriptPanel, txBytes } from '$lib/stores';
+  import { connected, currentPort, rxBytes, txBytes } from '$lib/stores';
 
   function formatBytes(n: number): string {
     if (n < 1024) return n.toString();
@@ -20,12 +20,4 @@
   <!-- 统计：本次会话累计收发字节数（不随日志清空重置） -->
   <span class="text-[13px] font-medium text-[var(--tx)]" title="本次会话累计发送字节数">Tx: {formatBytes(txBytes.value)}</span>
   <span class="text-[13px] font-medium text-[var(--rx)]" title="本次会话累计接收字节数">Rx: {formatBytes(rxBytes.value)}</span>
-
-  <!-- 右侧: 脚本面板切换 -->
-  <button
-    class="ml-auto text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] px-2 py-1 rounded hover:bg-[var(--background-elevated)] cursor-pointer transition-colors"
-    onclick={toggleScriptPanel}
-  >
-    脚本 {scriptPanelOpen.value ? '▾' : '▸'}
-  </button>
 </div>

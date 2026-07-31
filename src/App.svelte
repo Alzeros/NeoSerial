@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import TitleBar from '$components/TitleBar.svelte';
   import ConnectionBar from '$components/ConnectionBar.svelte';
   import LogView from '$components/LogView.svelte';
   import BottomPanel from '$components/BottomPanel.svelte';
@@ -204,10 +205,15 @@
   </div>
 {/if}
 
-<div class="flex h-screen w-screen overflow-hidden">
-  <!-- 左侧主区域：flex:1 占剩余空间；min-width 700px 锁定配置区一行 + 底部开关行不换行，
-       右栏朝左拖时优先压缩右侧、到左侧下限即停，保证排版一致 -->
-  <div bind:this={leftPanel} class="flex flex-col" style="flex: 1 1 0%; min-width: 700px; min-height: 0;">
+<div class="flex h-screen w-screen flex-col overflow-hidden">
+  <!-- 自定义标题栏（含脚本折叠按钮 + 窗口控制） -->
+  <TitleBar />
+
+  <!-- 主体区域：左栏 + 分隔条 + 右栏 -->
+  <div class="flex flex-1 min-h-0 overflow-hidden">
+    <!-- 左侧主区域：flex:1 占剩余空间；min-width 700px 锁定配置区一行 + 底部开关行不换行，
+         右栏朝左拖时优先压缩右侧、到左侧下限即停，保证排版一致 -->
+    <div bind:this={leftPanel} class="flex flex-col" style="flex: 1 1 0%; min-width: 700px; min-height: 0;">
     <!-- 1. 会话配置区（顶部，固定不收缩） -->
     <div class="layout-fixed">
       <ConnectionBar />
@@ -242,4 +248,5 @@
       <ScriptSequencer />
     </div>
   {/if}
+  </div>
 </div>
