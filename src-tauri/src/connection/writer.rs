@@ -9,7 +9,7 @@ use crate::buffer::log_line::{Dir, LogLine};
 use crate::connection::WriteCommand;
 use crate::connection::port_wrapper::PortWriter;
 use crate::state::AppState;
-use crate::util::log_format::{DisplayConfig, format_line};
+use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
 /// 启动串口写入线程。从 channel 接收命令并写入端口。
@@ -45,7 +45,7 @@ pub fn spawn_writer(
                                     .ok()
                                     .and_then(|ls| ls.as_ref().cloned());
                                 if let (Some(c), Some(tx)) = (cfg, sender) {
-                                    let formatted = format_line(&line, &c, false);
+                                    let formatted = format_line_for_file(&line, &c, false);
                                     if !formatted.is_empty() {
                                         let _ = tx.send(formatted);
                                     }

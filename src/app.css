@@ -151,6 +151,18 @@ body {
   border-color: var(--border-strong);
 }
 
+/* 断开按钮：用错误色（砖红）做警示，但保持次要按钮的轻盈感（浅红底+红字+红边） */
+.btn-danger {
+  background: rgba(176, 65, 62, 0.08);
+  color: var(--error);
+  border-color: var(--error);
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: rgba(176, 65, 62, 0.15);
+  border-color: var(--error);
+}
+
 .btn-ghost {
   background: transparent;
   border-color: transparent;
@@ -230,6 +242,7 @@ select:disabled {
 select option {
   background-color: var(--background-elevated);
   color: var(--foreground);
+  text-align: left;
 }
 
 /* ============================================================
@@ -384,6 +397,14 @@ label span {
   font-weight: 500;
   letter-spacing: 0.3px;
   white-space: nowrap;
+}
+
+/* 字段标签与下方选项值居中对齐（下拉框宽度固定且文字居中） */
+.control-group > span {
+  text-align: center;
+}
+.config-group .control-group select {
+  text-align: center;
 }
 
 /* ============================================================

@@ -55,12 +55,16 @@ fn hex_digit(b: u8) -> Option<u8> {
     }
 }
 
-/// 字节转 ASCII 显示字符串。可打印 ASCII（0x20-0x7E）原样，其余替换为 '.'。
+/// 字节转 ASCII 显示字符串。仅保留可打印 ASCII（0x20-0x7E），其余直接丢弃。
+/// 行尾 CR/LF 等控制字符不会出现在日志区，视觉更干净。
+/// 串口数据可能截断多字节 UTF-8 序列（如中文），用 from_utf8_lossy 保证不 panic。
 pub fn bytes_to_ascii(bytes: &[u8]) -> String {
-    bytes
+    let filtered: Vec<u8> = bytes
         .iter()
-        .map(|&b| if (0x20..=0x7e).contains(&b) { b as char } else { '.' })
-        .collect()
+        .filter(|&&b| (0x20..=0x7e).contains(&b))
+        .copied()
+        .collect();
+    String::from_utf8_lossy(&filtered).into_owned()
 }
 
 #[cfg(test)]
@@ -118,8 +122,10 @@ mod tests {
 
     #[test]
     fn test_bytes_to_ascii_nonprintable() {
-        assert_eq!(bytes_to_ascii(b"A\x01B\x7f"), "A.B.");
-        assert_eq!(bytes_to_ascii(b"\r\n"), "..");
+        // 控制字符/高位字节直接丢弃，不再用 '.' 占位
+        assert_eq!(bytes_to_ascii(b"A\x01B\x7f"), "AB");
+        assert_eq!(bytes_to_ascii(b"\r\n"), "");
+        assert_eq!(bytes_to_ascii(b"AT\r\n"), "AT");
     }
 
     #[test]

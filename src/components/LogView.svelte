@@ -14,9 +14,35 @@
 
   function renderLine(line: LogLine): string {
     if (hexDisplay.value) {
-      return line.hex;
+      return renderHex(line);
     }
     return line.ascii;
+  }
+
+  /**
+   * HEX 显示：hex dump + ASCII 解析列，让用户直观看到字节对应的字符。
+   * 格式: "41 54 0D 0A  AT.."
+   */
+  function renderHex(line: LogLine): string {
+    if (line.raw.length === 0) return '';
+    let out = '';
+    for (let i = 0; i < line.raw.length; i += 16) {
+      const chunk = line.raw.slice(i, i + 16);
+      let hexPart = '';
+      for (let j = 0; j < 16; j++) {
+        if (j < chunk.length) {
+          hexPart += chunk[j].toString(16).toUpperCase().padStart(2, '0') + ' ';
+        } else {
+          hexPart += '   ';
+        }
+        if (j === 7) hexPart += ' '; // 两组 8 字节间额外空格
+      }
+      const ascii = chunk
+        .map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '.'))
+        .join('');
+      out += `${hexPart} ${ascii}\n`;
+    }
+    return out.trimEnd();
   }
 
   function dirColor(dir: string): string {

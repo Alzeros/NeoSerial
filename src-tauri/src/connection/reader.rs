@@ -8,7 +8,7 @@ use crate::buffer::log_line::{Dir, LogLine};
 use crate::connection::line_assembler::LineAssembler;
 use crate::connection::port_wrapper::PortReader;
 use crate::state::AppState;
-use crate::util::log_format::{DisplayConfig, format_line};
+use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
 /// 把积攒的行 flush 出去：emit rx-line 给前端 + 送文件日志（若正在记录）。
@@ -36,7 +36,7 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>) {
     for line in lines.drain(..) {
         let _ = app_handle.emit("rx-line", line.clone());
         if let (Some(c), Some(tx)) = (&cfg, &sender) {
-            let formatted = format_line(&line, c, false);
+            let formatted = format_line_for_file(&line, c, false);
             if !formatted.is_empty() {
                 let _ = tx.send(formatted);
             }

@@ -118,7 +118,7 @@
   <!-- 右侧：连接/断开按钮（ml-auto 推至最右，与下拉框底部对齐） -->
   <div class="flex-shrink-0 ml-auto">
     {#if connected.value}
-      <button class="btn btn-secondary" style="width: 76px;" onclick={handleDisconnect}>断开</button>
+      <button class="btn btn-danger" style="width: 76px;" onclick={handleDisconnect}>断开</button>
     {:else}
       <button class="btn btn-primary" style="width: 76px;" onclick={handleConnect}>连接</button>
     {/if}
