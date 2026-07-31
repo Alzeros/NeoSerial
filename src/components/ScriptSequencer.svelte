@@ -3,8 +3,10 @@
     activeScriptModule,
     activeScriptPage,
     addScriptPage,
+    addScriptRow,
     currentModulePages,
     removeScriptPage,
+    removeScriptRow,
     scriptLoopInterval,
     scriptModules,
     scriptRunCount,
@@ -110,15 +112,35 @@
   function handleCancelDelete() {
     confirmDelete.open = false;
   }
+
+  // 命令行右键：删除当前行（至少保留 1 行）
+  let rowMenu = $state<{ open: boolean; x: number; y: number; index: number }>({
+    open: false, x: 0, y: 0, index: -1,
+  });
+
+  function handleRowContextMenu(e: MouseEvent, index: number) {
+    e.preventDefault();
+    rowMenu = { open: true, x: e.clientX, y: e.clientY, index };
+  }
+
+  function closeRowMenu() {
+    rowMenu.open = false;
+  }
+
+  function handleDeleteRowFromMenu() {
+    const idx = rowMenu.index;
+    closeRowMenu();
+    removeScriptRow(idx);
+  }
 </script>
 
-<svelte:window on:click={closePageMenu} on:contextmenu={(e) => {
-  // 点页签右键菜单外部时关闭（页签自身的 contextmenu 已 stopPropagation）
-  if (pageMenu.open) {
-    const t = e.target as HTMLElement;
-    if (!t.closest('[data-page-menu]') && !t.closest('[data-page-tab]')) {
-      closePageMenu();
-    }
+<svelte:window on:click={() => { closePageMenu(); closeRowMenu(); }} on:contextmenu={(e) => {
+  // 点菜单外部时关闭
+  const t = e.target as HTMLElement;
+  if ((pageMenu.open && !t.closest('[data-page-menu]') && !t.closest('[data-page-tab]'))
+      || (rowMenu.open && !t.closest('[data-row-menu]') && !t.closest('[data-row]'))) {
+    closePageMenu();
+    closeRowMenu();
   }
 }} />
 
@@ -186,7 +208,11 @@
       </thead>
       <tbody>
         {#each currentModulePages()[activeScriptPage.value]?.commands as cmd, i}
-          <tr class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]">
+          <tr
+            data-row
+            class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]"
+            oncontextmenu={(e) => handleRowContextMenu(e, i)}
+          >
             <td class="px-2 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enabled} />
             </td>
@@ -213,6 +239,18 @@
           </tr>
         {/each}
       </tbody>
+      <!-- 第 N+1 行：大 + 号，点击新增一行 -->
+      <tfoot>
+        <tr>
+          <td colspan="6" class="px-2 py-1">
+            <button
+              class="w-full py-2 text-[18px] font-light text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--primary)] cursor-pointer transition-colors rounded"
+              onclick={addScriptRow}
+              title="新增一行"
+            >+</button>
+          </td>
+        </tr>
+      </tfoot>
     </table>
   </div>
 
@@ -287,5 +325,23 @@
         >删除</button>
       </div>
     </div>
+  </div>
+{/if}
+
+<!-- 命令行右键菜单 -->
+{#if rowMenu.open}
+  <div
+    data-row-menu
+    class="fixed z-[60] min-w-[120px] border rounded-md shadow-lg py-1"
+    style="left: {rowMenu.x}px; top: {rowMenu.y}px; background: var(--background-elevated); border-color: var(--border);"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--border-subtle)] cursor-pointer {currentModulePages()[activeScriptPage.value]?.commands.length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
+      disabled={currentModulePages()[activeScriptPage.value]?.commands.length <= 1}
+      onclick={handleDeleteRowFromMenu}
+    >
+      删除此行
+    </button>
   </div>
 {/if}

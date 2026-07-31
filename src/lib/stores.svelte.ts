@@ -1,4 +1,4 @@
-import { defaultScriptPage, defaultScriptModule, presetScriptModules, type LogLine, type ScriptPage, type Settings } from './types';
+import { defaultScriptCommand, defaultScriptPage, defaultScriptModule, presetScriptModules, type LogLine, type ScriptPage, type Settings } from './types';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
@@ -109,4 +109,19 @@ export function removeScriptPage(index: number) {
   if (activeScriptPage.value >= pages.length) {
     activeScriptPage.value = pages.length - 1;
   }
+}
+
+// ===== 命令行级操作（作用于当前模块的当前页） =====
+/** 在当前页末尾追加一个空命令行 */
+export function addScriptRow() {
+  const page = currentModulePages()[activeScriptPage.value];
+  if (!page) return;
+  page.commands.push(defaultScriptCommand(page.commands.length + 1));
+}
+
+/** 删除指定行（至少保留 1 行） */
+export function removeScriptRow(rowIndex: number) {
+  const page = currentModulePages()[activeScriptPage.value];
+  if (!page || page.commands.length <= 1) return;
+  page.commands.splice(rowIndex, 1);
 }

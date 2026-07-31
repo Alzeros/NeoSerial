@@ -126,7 +126,7 @@ export function defaultScriptCommand(id: number): ScriptCommand {
 export function defaultScriptPage(name: string): ScriptPage {
   return {
     name,
-    commands: Array.from({ length: 25 }, (_, i) => defaultScriptCommand(i + 1)),
+    commands: Array.from({ length: 10 }, (_, i) => defaultScriptCommand(i + 1)),
   };
 }
 
