@@ -185,12 +185,14 @@
     }));
   }
 
-  // 右键页签：弹出"删除"菜单（多页时才允许删，单页禁用）
+  // 右键页签：弹出"重命名/删除"菜单（删除：多页才允许删，单页禁用）
   let pageMenu = $state<{ open: boolean; x: number; y: number; index: number }>({
     open: false, x: 0, y: 0, index: -1,
   });
   // 删除二次确认浮层
   let confirmDelete = $state<{ open: boolean; index: number }>({ open: false, index: -1 });
+  // 重命名浮层
+  let renameState = $state<{ open: boolean; index: number; name: string }>({ open: false, index: -1, name: '' });
 
   function handlePageContextMenu(e: MouseEvent, index: number) {
     e.preventDefault();
@@ -199,6 +201,27 @@
 
   function closePageMenu() {
     pageMenu.open = false;
+  }
+
+  // 点"重命名页签" → 关右键菜单 → 开重命名浮层（预填当前名）
+  function handleRenamePageFromMenu() {
+    const idx = pageMenu.index;
+    const pages = currentModulePages();
+    const cur = pages[idx]?.name ?? '';
+    closePageMenu();
+    renameState = { open: true, index: idx, name: cur };
+  }
+
+  function handleConfirmRename() {
+    const idx = renameState.index;
+    const pages = currentModulePages();
+    const page = pages[idx];
+    if (page) page.name = renameState.name.trim() || page.name;
+    renameState.open = false;
+  }
+
+  function handleCancelRename() {
+    renameState.open = false;
   }
 
   // 点"删除页签" → 关右键菜单 → 开二次确认
@@ -306,8 +329,34 @@
             />
           </th>
           <th class="px-2 py-2 text-center font-medium">命令</th>
-          <th class="w-8 px-1 py-2 text-center font-medium">Hex</th>
-          <th class="w-8 px-1 py-2 text-center font-medium">↩</th>
+          <th class="w-10 px-1 py-2 text-center font-medium">
+            <button
+              class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.hex) ?? false)
+                ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
+              title="全选/取消 Hex"
+              onclick={() => {
+                const page = currentModulePages()[activeScriptPage.value];
+                if (!page || page.commands.length === 0) return;
+                const allOn = page.commands.every((c: any) => c.hex);
+                page.commands.forEach((c: any) => (c.hex = !allOn));
+              }}
+            >Hex</button>
+          </th>
+          <th class="w-8 px-1 py-2 text-center font-medium">
+            <button
+              class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enter) ?? false)
+                ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
+              title="全选/取消 回车"
+              onclick={() => {
+                const page = currentModulePages()[activeScriptPage.value];
+                if (!page || page.commands.length === 0) return;
+                const allOn = page.commands.every((c: any) => c.enter);
+                page.commands.forEach((c: any) => (c.enter = !allOn));
+              }}
+            >↩</button>
+          </th>
           <th class="w-8 px-1 py-2 text-center font-medium">#</th>
           <th class="w-[48px] px-1 py-2 text-center font-medium">Delay</th>
           <th class="w-[95px] px-2 py-2 text-center font-medium">注释</th>
@@ -427,6 +476,12 @@
     onclick={(e) => e.stopPropagation()}
   >
     <button
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+      onclick={handleRenamePageFromMenu}
+    >
+      重命名页签
+    </button>
+    <button
       class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--border-subtle)] cursor-pointer {currentModulePages().length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
       disabled={currentModulePages().length <= 1}
       onclick={handleDeletePageFromMenu}
@@ -466,7 +521,38 @@
   </div>
 {/if}
 
-<!-- 命令行右键菜单 -->
+<!-- 重命名弹窗 -->
+{#if renameState.open}
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center"
+    style="background: rgba(0,0,0,0.35);"
+    onclick={handleCancelRename}
+  >
+    <div
+      class="rounded-lg shadow-xl w-[300px] border"
+      style="background: var(--background-elevated); border-color: var(--border);"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <div class="px-6 py-5">
+        <div class="text-[14px] font-medium text-[var(--foreground)] mb-2">重命名页签</div>
+        <input
+          class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+          bind:value={renameState.name}
+          onkeydown={(e) => { if (e.key === 'Enter') handleConfirmRename(); if (e.key === 'Escape') handleCancelRename(); }}
+        />
+      </div>
+      <div class="flex justify-end gap-2 px-4 pb-4">
+        <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={handleCancelRename}>取消</button>
+        <button
+          class="btn btn-primary cursor-pointer"
+          style="padding: 6px 14px;"
+          onclick={handleConfirmRename}
+        >确定</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
 {#if rowMenu.open}
   <div
     data-row-menu
