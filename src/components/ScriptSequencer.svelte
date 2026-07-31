@@ -5,6 +5,7 @@
     addScriptPage,
     addScriptRow,
     currentModulePages,
+    reorderScriptRow,
     removeScriptPage,
     removeScriptRow,
     scriptLoopInterval,
@@ -13,6 +14,96 @@
     scriptRunning,
     switchScriptModule,
   } from '$lib/stores';
+
+  // 顺序调整模式：开启后行可拖拽排序
+  let orderMode = $state<{ value: boolean }>({ value: false });
+
+  // ---- 指针事件拖拽（不依赖 HTML5 DnD，WebView2 里更可靠）----
+  let tbodyEl: HTMLElement | null = null;
+  let dragState: {
+    from: number;
+    startY: number;
+    moved: boolean;
+    targetIndex: number;
+    ghost: HTMLElement | null;
+  } | null = null;
+  let activeMove: ((e: PointerEvent) => void) | null = null;
+  let activeUp: ((e: PointerEvent) => void) | null = null;
+
+  function getRowEls(): HTMLElement[] {
+    return Array.from(tbodyEl?.querySelectorAll('tr[data-row]') ?? []) as HTMLElement[];
+  }
+
+  function onPointerDown(e: PointerEvent, index: number) {
+    if (!orderMode.value) return;
+    if (e.button !== 0) return;
+    e.preventDefault();
+    tbodyEl = (e.currentTarget as HTMLElement).closest('tbody') as HTMLElement;
+    dragState = { from: index, startY: e.clientY, moved: false, targetIndex: index, ghost: null };
+    activeMove = onPointerMove;
+    activeUp = onPointerUp;
+    window.addEventListener('pointermove', activeMove, { passive: false });
+    window.addEventListener('pointerup', activeUp, { passive: false });
+  }
+
+  function onPointerMove(e: PointerEvent) {
+    if (!dragState) return;
+    if (!dragState.moved && Math.abs(e.clientY - dragState.startY) < 3) return;
+    if (!dragState.moved) {
+      dragState.moved = true;
+      const src = getRowEls()[dragState.from];
+      if (src) {
+        const g = src.cloneNode(true) as HTMLElement;
+        const r = src.getBoundingClientRect();
+        g.style.position = 'fixed';
+        g.style.left = r.left + 'px';
+        g.style.top = r.top + 'px';
+        g.style.width = r.width + 'px';
+        g.style.opacity = '0.85';
+        g.style.pointerEvents = 'none';
+        g.style.zIndex = '9999';
+        g.style.background = 'var(--background-elevated)';
+        g.style.border = '1px solid var(--primary)';
+        g.style.boxShadow = '0 4px 12px rgba(0,0,0,0.25)';
+        document.body.appendChild(g);
+        dragState.ghost = g;
+      }
+      getRowEls().forEach((r) => { r.style.opacity = '0.3'; });
+    }
+    if (dragState.ghost) {
+      dragState.ghost.style.top = (e.clientY - 18) + 'px';
+    }
+    const rows = getRowEls();
+    let target = dragState.from;
+    const y = e.clientY;
+    for (let i = 0; i < rows.length; i++) {
+      const rr = rows[i].getBoundingClientRect();
+      if (y < rr.top + rr.height / 2) { target = i; break; }
+      if (i === rows.length - 1) target = i;
+    }
+    dragState.targetIndex = target;
+    rows.forEach((r, i) => {
+      r.style.borderTop = (i === target && target !== dragState!.from)
+        ? '2px solid var(--primary)' : '';
+    });
+    e.preventDefault();
+  }
+
+  function onPointerUp(_e: PointerEvent) {
+    if (activeMove) window.removeEventListener('pointermove', activeMove);
+    if (activeUp) window.removeEventListener('pointerup', activeUp);
+    activeMove = null;
+    activeUp = null;
+    if (dragState) {
+      getRowEls().forEach((r) => { r.style.opacity = ''; r.style.borderTop = ''; });
+      if (dragState.ghost) dragState.ghost.remove();
+      if (dragState.moved && dragState.targetIndex !== dragState.from) {
+        reorderScriptRow(dragState.from, dragState.targetIndex);
+      }
+      dragState = null;
+    }
+  }
+
   import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, sequenceRun, sequenceStop } from '$lib/tauri';
 
   async function handleRun() {
@@ -207,33 +298,45 @@
         </tr>
       </thead>
       <tbody>
-        {#each currentModulePages()[activeScriptPage.value]?.commands as cmd, i}
+        {#each currentModulePages()[activeScriptPage.value]?.commands as cmd, i (cmd)}
           <tr
             data-row
             class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]"
             oncontextmenu={(e) => handleRowContextMenu(e, i)}
           >
             <td class="px-2 py-1 text-center">
-              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enabled} />
+              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enabled} disabled={orderMode.value} />
             </td>
             <td class="px-2 py-1">
               <input
                 class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.command}
+                disabled={orderMode.value}
               />
             </td>
             <td class="px-2 py-1 text-center">
-              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.hex} />
+              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.hex} disabled={orderMode.value} />
             </td>
             <td class="px-2 py-1 text-center">
-              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enter} />
+              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enter} disabled={orderMode.value} />
             </td>
-            <td class="px-2 py-1 text-center text-[var(--muted-foreground)]">{i + 1}</td>
+            <td class="px-2 py-1 text-center text-[var(--muted-foreground)]">
+              {#if orderMode.value}
+                <span
+                  class="select-none cursor-grab inline-block px-1"
+                  title="拖动调整顺序"
+                  onpointerdown={(e) => onPointerDown(e, i)}
+                >⠿</span>
+              {:else}
+                {i + 1}
+              {/if}
+            </td>
             <td class="px-2 py-1">
               <input
                 type="number"
                 class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.delay_ms}
+                disabled={orderMode.value}
               />
             </td>
           </tr>
@@ -272,10 +375,15 @@
         <span>ms</span>
       </div>
     </div>
-    <div class="flex gap-2">
+    <div class="flex gap-2 items-center">
       <button class="btn btn-ghost" onclick={handleSaveConfig}>保存</button>
       <button class="btn btn-ghost" onclick={handleLoadConfig}>加载</button>
       <button class="btn btn-ghost" onclick={handleClearConfig}>清空</button>
+      <label class="switch ml-auto">
+        <input type="checkbox" bind:checked={orderMode.value} />
+        <span class="switch-track"></span>
+        <span class="switch-label">调整顺序</span>
+      </label>
     </div>
   </div>
 </div>

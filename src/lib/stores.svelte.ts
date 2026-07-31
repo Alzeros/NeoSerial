@@ -125,3 +125,23 @@ export function removeScriptRow(rowIndex: number) {
   if (!page || page.commands.length <= 1) return;
   page.commands.splice(rowIndex, 1);
 }
+
+/** 交换两行顺序（越界自动忽略） */
+export function moveScriptRow(from: number, to: number) {
+  const page = currentModulePages()[activeScriptPage.value];
+  if (!page) return;
+  if (to < 0 || to >= page.commands.length || from === to) return;
+  const tmp = page.commands[from];
+  page.commands[from] = page.commands[to];
+  page.commands[to] = tmp;
+}
+
+/** 拖拽排序：把 from 行移到 to 位置（插入式，先删后插） */
+export function reorderScriptRow(from: number, to: number) {
+  const page = currentModulePages()[activeScriptPage.value];
+  if (!page) return;
+  if (from < 0 || from >= page.commands.length) return;
+  if (to < 0 || to >= page.commands.length || from === to) return;
+  const [item] = page.commands.splice(from, 1);
+  page.commands.splice(to, 0, item);
+}
