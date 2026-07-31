@@ -17,9 +17,9 @@
 
   <div class="w-px h-4 bg-[var(--border)]"></div>
 
-  <!-- 统计 -->
-  <span class="text-[13px] font-medium text-[var(--tx)]">Tx: {formatBytes(txBytes.value)}</span>
-  <span class="text-[13px] font-medium text-[var(--rx)]">Rx: {formatBytes(rxBytes.value)}</span>
+  <!-- 统计：本次会话累计收发字节数（不随日志清空重置） -->
+  <span class="text-[13px] font-medium text-[var(--tx)]" title="本次会话累计发送字节数">Tx: {formatBytes(txBytes.value)}</span>
+  <span class="text-[13px] font-medium text-[var(--rx)]" title="本次会话累计接收字节数">Rx: {formatBytes(rxBytes.value)}</span>
 
   <!-- 右侧: 脚本面板切换 -->
   <button
