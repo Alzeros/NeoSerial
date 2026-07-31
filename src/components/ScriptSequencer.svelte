@@ -412,13 +412,14 @@
             <td class="px-1 py-1 text-center text-[var(--muted-foreground)]">
               {#if orderMode.value}
                 <span
-                  class="select-none cursor-grab inline-flex items-center justify-center w-6 h-6 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[14px] font-bold transition-colors hover:bg-[var(--primary)]/20"
+                  class="select-none cursor-grab inline-flex items-center justify-center w-5 h-5 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[12px] font-bold transition-colors hover:bg-[var(--primary)]/20"
                   title="拖动调整顺序"
                   onpointerdown={(e) => onPointerDown(e, i)}
                 >⠿</span>
               {:else}
                 <button
-                  class="inline-flex items-center justify-center w-6 h-6 rounded-md border text-[12px] font-medium transition-colors cursor-pointer {cmd.enabled
+                  data-row-toggle
+                  class="inline-flex items-center justify-center w-5 h-5 rounded-md border text-[10px] font-medium transition-colors cursor-pointer {cmd.enabled
                     ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
                     : 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--muted-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]'}"
                   title={cmd.enabled ? '已选中（点击取消）' : '未选中（点击选中）'}

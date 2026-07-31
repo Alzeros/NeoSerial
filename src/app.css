@@ -506,7 +506,7 @@ input[type="text"],
 
 /* 脚本表格内文本/数字输入框及注释按钮统一高度/padding，避免 number 框偏高 */
 .script-list td input:not([type="checkbox"]):not([type="radio"]),
-.script-list td button:not([data-add-row]) {
+.script-list td button:not([data-add-row]):not([data-row-toggle]) {
   padding: 2px 3px;
   height: 24px;
   box-sizing: border-box;

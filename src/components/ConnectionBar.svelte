@@ -2,7 +2,7 @@
   import { availablePorts, connectionParams, connected } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
 
-  const baudRates = ['9600', '19200', '38400', '57600', '115200', '230400', '460800', '921600'];
+  const baudRates = ['9600', '115200', '921600'];
   const dataBitsOpts = [{ l: '5', v: 'Five' }, { l: '6', v: 'Six' }, { l: '7', v: 'Seven' }, { l: '8', v: 'Eight' }];
   const parityOpts = [{ l: 'None', v: 'None' }, { l: 'Odd', v: 'Odd' }, { l: 'Even', v: 'Even' }];
   const stopBitsOpts = ['1', '2'];
