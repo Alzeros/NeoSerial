@@ -105,16 +105,20 @@ pub fn sequence_stop() -> Result<(), String> {
     Ok(())
 }
 
+/// 保存序列配置。data 为前端序列化后的 JSON（当前是 ScriptModule[]）。
+/// 用 serde_json::Value 透传，不锁定具体结构，便于后续扩展模块类型。
 #[tauri::command]
 pub fn save_sequence_config(
     path: String,
-    pages: Vec<serde_json::Value>,
+    data: Vec<serde_json::Value>,
 ) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(&pages).map_err(|e| e.to_string())?;
+    let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
     Ok(())
 }
 
+/// 加载序列配置。返回原始 JSON 数组，结构判定/旧格式迁移由前端完成
+/// （旧文件是裸 ScriptPage[]，前端检测无 id/pages 字段则包进默认模块）。
 #[tauri::command]
 pub fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>, String> {
     let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;

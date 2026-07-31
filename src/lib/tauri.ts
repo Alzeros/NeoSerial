@@ -9,12 +9,14 @@ import type {
   LogLine,
   RxUpdate,
   ScriptCommand,
+  ScriptModule,
   ScriptPage,
   SequenceDone,
   SequenceProgress,
   Settings,
   TxUpdate,
 } from './types';
+import { defaultScriptModule } from './types';
 
 // ============ 连接管理 ============
 
@@ -89,12 +91,24 @@ export async function sequenceStop(): Promise<void> {
   await invoke('sequence_stop');
 }
 
-export async function saveSequenceConfig(path: string, pages: ScriptPage[]): Promise<void> {
-  await invoke('save_sequence_config', { path, pages });
+export async function saveSequenceConfig(path: string, data: ScriptModule[]): Promise<void> {
+  await invoke('save_sequence_config', { path, data });
 }
 
-export async function loadSequenceConfig(path: string): Promise<ScriptPage[]> {
-  return await invoke<ScriptPage[]>('load_sequence_config', { path });
+/** 加载序列配置。返回 ScriptModule[]；旧格式（裸 ScriptPage[]）自动迁移为默认模块。 */
+export async function loadSequenceConfig(path: string): Promise<ScriptModule[]> {
+  const raw = await invoke<unknown[]>('load_sequence_config', { path });
+  // 迁移：元素无 pages 字段 → 视为旧裸 ScriptPage[]，包进默认"快捷指令"模块
+  const isModule = (r: unknown): r is ScriptModule =>
+    typeof r === 'object' && r !== null && 'pages' in r && 'id' in r;
+  if (raw.length > 0 && isModule(raw[0])) {
+    return raw as ScriptModule[];
+  }
+  // 旧格式：整包作为默认模块的 pages
+  return [defaultScriptModule('快捷指令')].map((m) => ({
+    ...m,
+    pages: raw as unknown as ScriptPage[],
+  }));
 }
 
 // ============ 文件对话框 ============

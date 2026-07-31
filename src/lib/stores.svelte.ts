@@ -1,4 +1,4 @@
-import { defaultScriptPage, type LogLine, type ScriptPage, type Settings } from './types';
+import { defaultScriptPage, defaultScriptModule, presetScriptModules, type LogLine, type ScriptPage, type Settings } from './types';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
@@ -67,12 +67,19 @@ export const hexDisplay = $state<{ value: boolean }>({ value: false });
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });
 export const scriptPanelWidth = $state<{ value: number }>({ value: 420 });
 
-export const scriptPages = $state<ScriptPage[]>([defaultScriptPage('Page0')]);
+/** 右栏模块列表（Page 之上的分组层）。预置功能，代码写死，用户不可增删。 */
+export const scriptModules = $state(presetScriptModules());
+export const activeScriptModule = $state<{ value: number }>({ value: 0 });
 export const activeScriptPage = $state<{ value: number }>({ value: 0 });
 export const scriptRunning = $state<{ value: boolean }>({ value: false });
 export const scriptRunCount = $state<{ value: number }>({ value: 1 });
 export const scriptLoopInterval = $state<{ value: number }>({ value: 500 });
 export const scriptCurrentRow = $state<{ value: number }>({ value: -1 });
+
+/** 当前激活模块的 pages（便捷访问，源数据在 scriptModules[activeScriptModule].pages） */
+export function currentModulePages(): ScriptPage[] {
+  return scriptModules[activeScriptModule.value]?.pages ?? [];
+}
 
 export function toggleScriptPanel() {
   scriptPanelOpen.value = !scriptPanelOpen.value;
@@ -81,15 +88,25 @@ export function toggleScriptPanel() {
 // ============ 设置缓存（用于断开时回写） ============
 export const cachedSettings = $state<{ value: Settings | null }>({ value: null });
 
+// ===== 模块级操作（仅切换；模块为预置功能，用户不可增删） =====
+export function switchScriptModule(index: number) {
+  if (index < 0 || index >= scriptModules.length) return;
+  activeScriptModule.value = index;
+  activeScriptPage.value = 0;
+}
+
+// ===== 页签级操作（作用于当前模块） =====
 export function addScriptPage() {
-  if (scriptPages.length >= 6) return;
-  scriptPages.push(defaultScriptPage(`Page${scriptPages.length}`));
+  const pages = currentModulePages();
+  if (pages.length >= 6) return;
+  pages.push(defaultScriptPage(`Page${pages.length}`));
 }
 
 export function removeScriptPage(index: number) {
-  if (scriptPages.length <= 1) return;
-  scriptPages.splice(index, 1);
-  if (activeScriptPage.value >= scriptPages.length) {
-    activeScriptPage.value = scriptPages.length - 1;
+  const pages = currentModulePages();
+  if (pages.length <= 1) return;
+  pages.splice(index, 1);
+  if (activeScriptPage.value >= pages.length) {
+    activeScriptPage.value = pages.length - 1;
   }
 }

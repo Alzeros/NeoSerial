@@ -1,17 +1,21 @@
 <script lang="ts">
   import {
+    activeScriptModule,
     activeScriptPage,
     addScriptPage,
+    currentModulePages,
     removeScriptPage,
     scriptLoopInterval,
-    scriptPages,
+    scriptModules,
     scriptRunCount,
     scriptRunning,
+    switchScriptModule,
   } from '$lib/stores';
   import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, sequenceRun, sequenceStop } from '$lib/tauri';
 
   async function handleRun() {
-    const page = scriptPages[activeScriptPage.value];
+    const pages = currentModulePages();
+    const page = pages[activeScriptPage.value];
     if (!page) return;
     try {
       await sequenceRun(page.commands, scriptRunCount.value, scriptLoopInterval.value);
@@ -36,7 +40,7 @@
     );
     if (!path) return;
     try {
-      await saveSequenceConfig(path, scriptPages);
+      await saveSequenceConfig(path, scriptModules);
     } catch (e) {
       console.error('保存配置失败:', e);
     }
@@ -48,10 +52,11 @@
     ]);
     if (!path) return;
     try {
-      const pages = await loadSequenceConfig(path);
-      if (pages && pages.length > 0) {
-        scriptPages.length = 0;
-        scriptPages.push(...pages);
+      const modules = await loadSequenceConfig(path);
+      if (modules && modules.length > 0) {
+        scriptModules.length = 0;
+        scriptModules.push(...modules);
+        activeScriptModule.value = 0;
         activeScriptPage.value = 0;
       }
     } catch (e) {
@@ -60,7 +65,8 @@
   }
 
   function handleClearConfig() {
-    const page = scriptPages[activeScriptPage.value];
+    const pages = currentModulePages();
+    const page = pages[activeScriptPage.value];
     if (!page) return;
     page.commands = page.commands.map((cmd: any, i: number) => ({
       enabled: true,
@@ -73,9 +79,23 @@
 </script>
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" style="background: var(--background-elevated);">
-  <!-- 页签栏 -->
+  <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分 -->
+  <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-2" style="background: var(--background);">
+    {#each scriptModules as m, i}
+      <button
+        class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {i === activeScriptModule.value
+          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
+        onclick={() => switchScriptModule(i)}
+      >
+        {m.name}
+      </button>
+    {/each}
+  </div>
+
+  <!-- 页签栏（当前模块的 Page0/Page1...） -->
   <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2">
-    {#each scriptPages as page, i}
+    {#each currentModulePages() as page, i}
       <button
         class="rounded px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer {i === activeScriptPage.value
           ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
@@ -85,7 +105,7 @@
         {page.name}
       </button>
     {/each}
-    {#if scriptPages.length < 6}
+    {#if currentModulePages().length < 6}
       <button
         class="rounded px-2 py-1.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
         onclick={addScriptPage}
@@ -109,9 +129,9 @@
         <tr class="text-[var(--muted-foreground)]">
           <th class="w-8 px-2 py-2 text-center">
             <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]"
-              checked={scriptPages[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false}
+              checked={currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false}
               onchange={(e) => {
-                const page = scriptPages[activeScriptPage.value];
+                const page = currentModulePages()[activeScriptPage.value];
                 if (page) page.commands.forEach((c: any) => (c.enabled = (e.target as HTMLInputElement).checked));
               }}
             />
@@ -124,7 +144,7 @@
         </tr>
       </thead>
       <tbody>
-        {#each scriptPages[activeScriptPage.value]?.commands as cmd, i}
+        {#each currentModulePages()[activeScriptPage.value]?.commands as cmd, i}
           <tr class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]">
             <td class="px-2 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enabled} />

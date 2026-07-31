@@ -104,6 +104,15 @@ export interface ScriptPage {
   commands: ScriptCommand[];
 }
 
+/** 脚本模块：右栏一个独立功能区，是 Page 之上的分组层。
+ *  当前仅快捷指令一种类型，后续可扩展自动化测试等。 */
+export interface ScriptModule {
+  id: string;
+  name: string;
+  type: 'quick_commands';
+  pages: ScriptPage[];
+}
+
 export function defaultScriptCommand(id: number): ScriptCommand {
   return {
     enabled: true,
@@ -119,4 +128,29 @@ export function defaultScriptPage(name: string): ScriptPage {
     name,
     commands: Array.from({ length: 25 }, (_, i) => defaultScriptCommand(i + 1)),
   };
+}
+
+let moduleIdSeq = 0;
+export function defaultScriptModule(name = '快捷指令'): ScriptModule {
+  moduleIdSeq += 1;
+  return {
+    id: `module_${moduleIdSeq}`,
+    name,
+    type: 'quick_commands',
+    pages: [defaultScriptPage('Page0')],
+  };
+}
+
+/** 预置模块列表（代码写死，用户不可增删）。
+ *  快捷指令是初始功能；后续扩展新功能模块在此追加，
+ *  并在 ScriptSequencer 按 type 分发到对应子组件。 */
+export function presetScriptModules(): ScriptModule[] {
+  return [
+    {
+      id: 'quick_commands',
+      name: '快捷指令',
+      type: 'quick_commands',
+      pages: [defaultScriptPage('Page0')],
+    },
+  ];
 }
