@@ -251,7 +251,7 @@
     ></div>
     <!-- 右栏：flex 不收缩，宽度由拖拽控制；min-width 覆盖全部表格列防截断。
          窗口缩小时由左栏(flex:1)先吃压缩，右栏保持自身宽度直至触底。 -->
-    <div class="flex flex-col" style="width: {scriptPanelWidth.value}px; min-width: 400px; max-width: 600px; flex: 0 0 auto; min-height: 0; height: 100%; overflow: hidden;">
+    <div class="flex flex-col" style="width: {scriptPanelWidth.value}px; min-width: 500px; max-width: 600px; flex: 0 0 auto; min-height: 0; height: 100%; overflow: hidden;">
       <ScriptSequencer />
     </div>
   {/if}

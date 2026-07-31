@@ -13,9 +13,9 @@
     "windows": [
       {
         "title": "NeoSerial",
-        "width": 1200,
+        "width": 1216,
         "height": 750,
-        "minWidth": 1200,
+        "minWidth": 1216,
         "minHeight": 500,
         "resizable": true,
         "fullscreen": false,

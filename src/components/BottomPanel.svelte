@@ -90,11 +90,15 @@
       handleSend();
     }
   }
+
+  // 文件发送 / 日志保存 折叠区：默认收起，点击标题展开
+  let extraOpen = $state(false);
 </script>
 
 <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
   <!-- 第一排：操作按钮 + 复选框（不换行，由左栏 min-width 兜底） -->
-  <div class="flex items-center gap-3 px-5 py-3">
+  <!-- 第一排：操作按钮 + 显示/发送开关 -->
+  <div class="flex items-center gap-3 px-5 pt-3 pb-1.5">
     <button class="btn btn-secondary flex-shrink-0" onclick={clearLogLines}>清空</button>
     <button class="btn btn-secondary flex-shrink-0" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
 
@@ -112,6 +116,17 @@
       <span class="switch-label">HEX发送</span>
     </label>
 
+    <div class="ml-auto flex-shrink-0">
+      {#if paused.value}
+        <button class="btn btn-primary" onclick={() => (paused.value = false)}>继续</button>
+      {:else}
+        <button class="btn btn-secondary" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
+      {/if}
+    </div>
+  </div>
+
+  <!-- 第二排：时间戳 / 回车换行 / 记录发送 -->
+  <div class="flex items-center gap-3 px-5 pb-3">
     <label class="switch flex-shrink-0">
       <input type="checkbox" bind:checked={showTimestamp.value} />
       <span class="switch-track"></span>
@@ -124,13 +139,11 @@
       <span class="switch-label">回车换行</span>
     </label>
 
-    <div class="ml-auto flex-shrink-0">
-      {#if paused.value}
-        <button class="btn btn-primary" onclick={() => (paused.value = false)}>继续</button>
-      {:else}
-        <button class="btn btn-secondary" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
-      {/if}
-    </div>
+    <label class="switch flex-shrink-0">
+      <input type="checkbox" bind:checked={logSendContent.value} />
+      <span class="switch-track"></span>
+      <span class="switch-label">记录发送</span>
+    </label>
   </div>
 
   <!-- 第二排：发送输入（输入框始终可输入，仅发送按钮在未连接时禁用） -->
@@ -151,37 +164,58 @@
     >发送</button>
   </div>
 
-  <!-- 第三排：文件发送 + 进度 -->
-  <div class="flex items-center gap-3 px-5 pb-3">
-    <button
-      class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
-      style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
-      onclick={handleSelectFile}
-    >
-      <span class="truncate">{fileSendPath.value || '点击选择发送文件路径'}</span>
-    </button>
-    <button class="btn btn-secondary" onclick={handleSendFile} disabled={!connected.value || !fileSendPath.value}>发送文件</button>
-    <span class="w-16 text-center text-[var(--muted-foreground)] text-sm">{fileSendProgress.value}%</span>
-  </div>
+  <!-- 第三、四排：文件发送 + 日志保存（可折叠，默认收起，向上展开） -->
+  <div class="flex flex-col-reverse">
+    {#if extraOpen}
+      <!-- 第四排：日志保存 -->
+      <div class="flex items-center gap-3 px-5 pb-3">
+        <button
+          class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
+          style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
+          onclick={handleStartLogging}
+        >
+          <span class="truncate">{loggingPath.value || '点击选择日志保存路径'}</span>
+        </button>
+        {#if loggingPath.value}
+          <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStopLogging}>停止</button>
+        {:else}
+          <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStartLogging}>开始记录</button>
+        {/if}
+      </div>
 
-  <!-- 第四排：日志保存 + 记录选项 -->
-  <div class="flex items-center gap-3 px-5 pb-3">
-    <button
-      class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
-      style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
-      onclick={handleStartLogging}
-    >
-      <span class="truncate">{loggingPath.value || '点击选择日志保存路径'}</span>
-    </button>
-    <label class="switch">
-      <input type="checkbox" bind:checked={logSendContent.value} />
-      <span class="switch-track"></span>
-      <span class="switch-label">记录发送</span>
-    </label>
-    {#if loggingPath.value}
-      <button class="btn btn-secondary" onclick={handleStopLogging}>停止</button>
-    {:else}
-      <button class="btn btn-secondary" onclick={handleStartLogging}>开始记录</button>
+      <!-- 第三排：文件发送（进度内置进按钮） -->
+      <div class="flex items-center gap-3 px-5 pb-3">
+        <button
+          class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
+          style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
+          onclick={handleSelectFile}
+        >
+          <span class="truncate">{fileSendPath.value || '点击选择发送文件路径'}</span>
+        </button>
+        <button
+          class="relative overflow-hidden min-w-[96px] h-10 btn btn-secondary"
+          onclick={handleSendFile}
+          disabled={!connected.value || !fileSendPath.value}
+          title="发送文件"
+        >
+          <!-- 进度填充层 -->
+          <span
+            class="absolute inset-y-0 left-0 transition-[width] duration-150"
+            style="width: {fileSendProgress.value}%; background: var(--primary); opacity: 0.18;"
+          ></span>
+          <span class="relative z-10 font-medium">发送文件 {fileSendProgress.value > 0 && fileSendProgress.value < 100 ? fileSendProgress.value + '%' : ''}</span>
+        </button>
+      </div>
     {/if}
+
+    <!-- 折叠标题栏 -->
+    <button
+      class="flex items-center gap-1 px-5 py-1.5 text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer transition-colors border-t border-[var(--border-subtle)]"
+      onclick={() => (extraOpen = !extraOpen)}
+      title={extraOpen ? '收起' : '展开文件发送 / 日志保存'}
+    >
+      <span class="inline-block transition-transform {extraOpen ? 'rotate-180' : ''}">▾</span>
+      文件发送 / 日志保存
+    </button>
   </div>
 </div>
