@@ -97,6 +97,7 @@ export interface ScriptCommand {
   hex: boolean;
   enter: boolean;
   delay_ms: number;
+  note: string;
 }
 
 export interface ScriptPage {
@@ -120,6 +121,7 @@ export function defaultScriptCommand(id: number): ScriptCommand {
     hex: false,
     enter: true,
     delay_ms: id === 1 ? 2000 : 0,
+    note: '',
   };
 }
 

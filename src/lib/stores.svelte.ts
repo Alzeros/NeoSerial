@@ -65,7 +65,7 @@ export const hexDisplay = $state<{ value: boolean }>({ value: false });
 
 // ============ 脚本序列面板 ============
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });
-export const scriptPanelWidth = $state<{ value: number }>({ value: 420 });
+export const scriptPanelWidth = $state<{ value: number }>({ value: 500 });
 
 /** 右栏模块列表（Page 之上的分组层）。预置功能，代码写死，用户不可增删。 */
 export const scriptModules = $state(presetScriptModules());

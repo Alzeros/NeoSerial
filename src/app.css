@@ -494,6 +494,23 @@ input[type="text"],
   min-width: 0 !important;  /* 表格内输入可收缩，触发省略号 */
 }
 
+/* Delay 列：隐藏 number 输入框的上下箭头，只显示数字 */
+.script-list td input[type="number"]::-webkit-inner-spin-button,
+.script-list td input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.script-list td input[type="number"] {
+  -moz-appearance: textfield;
+}
+
+/* 脚本表格内文本/数字输入框统一高度/padding，避免 number 框偏高 */
+.script-list td input:not([type="checkbox"]):not([type="radio"]) {
+  padding: 2px 3px;
+  height: 24px;
+  box-sizing: border-box;
+}
+
 /* ============================================================
    主内容区：中间数据区独立滚动，顶/底固定
    ============================================================ */

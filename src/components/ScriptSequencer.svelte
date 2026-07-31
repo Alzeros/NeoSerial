@@ -104,7 +104,21 @@
     }
   }
 
-  import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, sequenceRun, sequenceStop } from '$lib/tauri';
+  import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, sequenceRun, sequenceStop, send } from '$lib/tauri';
+  import { connected } from '$lib/stores';
+
+  // 单行发送：点编号按钮即发送该行（用本行 hex/enter 设置）
+  async function sendOne(index: number) {
+    if (!connected.value) return;
+    const page = currentModulePages()[activeScriptPage.value];
+    const cmd = page?.commands[index];
+    if (!cmd || !cmd.command.trim()) return;
+    try {
+      await send(cmd.command, cmd.enter ? 'Crlf' : 'None', cmd.hex);
+    } catch (e) {
+      console.error('单行发送失败:', e);
+    }
+  }
 
   async function handleRun() {
     const pages = currentModulePages();
@@ -167,6 +181,7 @@
       hex: false,
       enter: true,
       delay_ms: i === 0 ? 2000 : 0,
+      note: '',
     }));
   }
 
@@ -278,7 +293,7 @@
 
   <!-- 命令序列表格（独立滚动，不撑开外部布局） -->
   <div class="script-list">
-    <table class="w-full text-[13px]">
+    <table class="w-full text-[13px] table-fixed">
       <thead class="sticky top-0" style="background: var(--background-elevated);">
         <tr class="text-[var(--muted-foreground)]">
           <th class="w-8 px-2 py-2 text-center">
@@ -290,11 +305,12 @@
               }}
             />
           </th>
-          <th class="px-2 py-2 text-left font-medium">命令</th>
-          <th class="w-10 px-2 py-2 text-center font-medium">Hex</th>
-          <th class="w-10 px-2 py-2 text-center font-medium">↩</th>
-          <th class="w-8 px-2 py-2 text-center font-medium">#</th>
-          <th class="w-16 px-2 py-2 text-center font-medium">Delay</th>
+          <th class="px-2 py-2 text-center font-medium">命令</th>
+          <th class="w-8 px-1 py-2 text-center font-medium">Hex</th>
+          <th class="w-8 px-1 py-2 text-center font-medium">↩</th>
+          <th class="w-8 px-1 py-2 text-center font-medium">#</th>
+          <th class="w-[48px] px-1 py-2 text-center font-medium">Delay</th>
+          <th class="w-[95px] px-2 py-2 text-center font-medium">注释</th>
         </tr>
       </thead>
       <tbody>
@@ -314,28 +330,42 @@
                 disabled={orderMode.value}
               />
             </td>
-            <td class="px-2 py-1 text-center">
+            <td class="px-1 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.hex} disabled={orderMode.value} />
             </td>
-            <td class="px-2 py-1 text-center">
+            <td class="px-1 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enter} disabled={orderMode.value} />
             </td>
-            <td class="px-2 py-1 text-center text-[var(--muted-foreground)]">
+            <td class="px-1 py-1 text-center text-[var(--muted-foreground)]">
               {#if orderMode.value}
                 <span
-                  class="select-none cursor-grab inline-block px-1"
+                  class="select-none cursor-grab inline-flex items-center justify-center w-6 h-6 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[14px] font-bold transition-colors hover:bg-[var(--primary)]/20"
                   title="拖动调整顺序"
                   onpointerdown={(e) => onPointerDown(e, i)}
                 >⠿</span>
               {:else}
-                {i + 1}
+                <button
+                  class="inline-flex items-center justify-center w-6 h-6 rounded-md border text-[12px] font-medium transition-colors {connected.value
+                    ? 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--muted-foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
+                    : 'border-[var(--border-subtle)] text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'}"
+                  title={connected.value ? '点击发送此行' : '未连接'}
+                  disabled={!connected.value}
+                  onclick={() => sendOne(i)}
+                >{i + 1}</button>
               {/if}
             </td>
-            <td class="px-2 py-1">
+            <td class="px-1 py-1">
               <input
                 type="number"
                 class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.delay_ms}
+                disabled={orderMode.value}
+              />
+            </td>
+            <td class="px-2 py-1">
+              <input
+                class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                bind:value={cmd.note}
                 disabled={orderMode.value}
               />
             </td>
@@ -345,7 +375,7 @@
       <!-- 第 N+1 行：大 + 号，点击新增一行 -->
       <tfoot>
         <tr>
-          <td colspan="6" class="px-2 py-1">
+          <td colspan="7" class="px-2 py-1">
             <button
               class="w-full py-2 text-[18px] font-light text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--primary)] cursor-pointer transition-colors rounded"
               onclick={addScriptRow}
