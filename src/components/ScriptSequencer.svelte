@@ -76,7 +76,51 @@
       delay_ms: i === 0 ? 2000 : 0,
     }));
   }
+
+  // 右键页签：弹出"删除"菜单（多页时才允许删，单页禁用）
+  let pageMenu = $state<{ open: boolean; x: number; y: number; index: number }>({
+    open: false, x: 0, y: 0, index: -1,
+  });
+  // 删除二次确认浮层
+  let confirmDelete = $state<{ open: boolean; index: number }>({ open: false, index: -1 });
+
+  function handlePageContextMenu(e: MouseEvent, index: number) {
+    e.preventDefault();
+    pageMenu = { open: true, x: e.clientX, y: e.clientY, index };
+  }
+
+  function closePageMenu() {
+    pageMenu.open = false;
+  }
+
+  // 点"删除页签" → 关右键菜单 → 开二次确认
+  function handleDeletePageFromMenu() {
+    const idx = pageMenu.index;
+    closePageMenu();
+    if (currentModulePages().length <= 1) return;
+    confirmDelete = { open: true, index: idx };
+  }
+
+  function handleConfirmDelete() {
+    const idx = confirmDelete.index;
+    confirmDelete.open = false;
+    removeScriptPage(idx);
+  }
+
+  function handleCancelDelete() {
+    confirmDelete.open = false;
+  }
 </script>
+
+<svelte:window on:click={closePageMenu} on:contextmenu={(e) => {
+  // 点页签右键菜单外部时关闭（页签自身的 contextmenu 已 stopPropagation）
+  if (pageMenu.open) {
+    const t = e.target as HTMLElement;
+    if (!t.closest('[data-page-menu]') && !t.closest('[data-page-tab]')) {
+      closePageMenu();
+    }
+  }
+}} />
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" style="background: var(--background-elevated);">
   <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分 -->
@@ -93,14 +137,17 @@
     {/each}
   </div>
 
-  <!-- 页签栏（当前模块的 Page0/Page1...） -->
+  <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2">
     {#each currentModulePages() as page, i}
       <button
+        data-page-tab
         class="rounded px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer {i === activeScriptPage.value
           ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
           : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
         onclick={() => (activeScriptPage.value = i)}
+        oncontextmenu={(e) => handlePageContextMenu(e, i)}
+        title="右键可删除此页签"
       >
         {page.name}
       </button>
@@ -109,17 +156,11 @@
       <button
         class="rounded px-2 py-1.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
         onclick={addScriptPage}
+        title="新增页签"
       >
         +
       </button>
     {/if}
-    <button
-      class="ml-auto rounded px-1.5 py-0.5 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer"
-      onclick={() => removeScriptPage(activeScriptPage.value)}
-      title="关闭当前页签"
-    >
-      ×
-    </button>
   </div>
 
   <!-- 命令序列表格（独立滚动，不撑开外部布局） -->
@@ -200,3 +241,51 @@
     </div>
   </div>
 </div>
+
+<!-- 页签右键菜单 -->
+{#if pageMenu.open}
+  <div
+    data-page-menu
+    class="fixed z-[60] min-w-[120px] border rounded-md shadow-lg py-1"
+    style="left: {pageMenu.x}px; top: {pageMenu.y}px; background: var(--background-elevated); border-color: var(--border);"
+    onclick={(e) => e.stopPropagation()}
+  >
+    <button
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--border-subtle)] cursor-pointer {currentModulePages().length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
+      disabled={currentModulePages().length <= 1}
+      onclick={handleDeletePageFromMenu}
+    >
+      删除页签
+    </button>
+  </div>
+{/if}
+
+<!-- 删除二次确认弹窗 -->
+{#if confirmDelete.open}
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center"
+    style="background: rgba(0,0,0,0.35);"
+    onclick={handleCancelDelete}
+  >
+    <div
+      class="rounded-lg shadow-xl w-[300px] border"
+      style="background: var(--background-elevated); border-color: var(--border);"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <div class="px-6 py-5">
+        <div class="text-[14px] font-medium text-[var(--foreground)] mb-2">删除页签</div>
+        <div class="text-[13px] text-[var(--muted-foreground)]">
+          确定删除此页签？该页签内的所有命令将被清除。
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 px-4 pb-4">
+        <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={handleCancelDelete}>取消</button>
+        <button
+          class="btn cursor-pointer"
+          style="padding: 6px 14px; background: var(--error); color: white; border-color: var(--error);"
+          onclick={handleConfirmDelete}
+        >删除</button>
+      </div>
+    </div>
+  </div>
+{/if}
