@@ -180,7 +180,7 @@
       command: '',
       hex: false,
       enter: true,
-      delay_ms: i === 0 ? 2000 : 0,
+      delay_ms: 0,
       note: '',
     }));
   }
@@ -196,7 +196,7 @@
 
   function handlePageContextMenu(e: MouseEvent, index: number) {
     e.preventDefault();
-    pageMenu = { open: true, x: e.clientX, y: e.clientY, index };
+    pageMenu = { open: true, x: clampMenuX(e.clientX), y: clampMenuY(e.clientY), index };
   }
 
   function closePageMenu() {
@@ -249,17 +249,53 @@
 
   function handleRowContextMenu(e: MouseEvent, index: number) {
     e.preventDefault();
-    rowMenu = { open: true, x: e.clientX, y: e.clientY, index };
+    rowMenu = { open: true, x: clampMenuX(e.clientX), y: clampMenuY(e.clientY), index };
   }
 
   function closeRowMenu() {
     rowMenu.open = false;
   }
 
+  // 右键菜单边界检测：靠近右/下边缘时向左/上偏移，避免超出窗口不可见
+  // 菜单预估宽 140、高 120，留 8px 安全边距
+  const MENU_W = 140;
+  const MENU_H = 120;
+  const SAFE = 8;
+  function clampMenuX(x: number): number {
+    const vw = window.innerWidth;
+    return x + MENU_W + SAFE > vw ? Math.max(SAFE, x - MENU_W) : x;
+  }
+  function clampMenuY(y: number): number {
+    const vh = window.innerHeight;
+    return y + MENU_H + SAFE > vh ? Math.max(SAFE, y - MENU_H) : y;
+  }
+
   function handleDeleteRowFromMenu() {
     const idx = rowMenu.index;
     closeRowMenu();
     removeScriptRow(idx);
+  }
+
+  // 行右键：编辑注释（弹窗，默认空，预填当前 note）
+  let noteEdit = $state<{ open: boolean; index: number; text: string }>({ open: false, index: -1, text: '' });
+
+  function handleEditNoteFromMenu() {
+    const idx = rowMenu.index;
+    const page = currentModulePages()[activeScriptPage.value];
+    const cur = page?.commands[idx]?.note ?? '';
+    closeRowMenu();
+    noteEdit = { open: true, index: idx, text: cur };
+  }
+
+  function handleConfirmNote() {
+    const idx = noteEdit.index;
+    const page = currentModulePages()[activeScriptPage.value];
+    if (page?.commands[idx]) page.commands[idx].note = noteEdit.text;
+    noteEdit.open = false;
+  }
+
+  function handleCancelNote() {
+    noteEdit.open = false;
   }
 </script>
 
@@ -319,14 +355,19 @@
     <table class="w-full text-[13px] table-fixed">
       <thead class="sticky top-0" style="background: var(--background-elevated);">
         <tr class="text-[var(--muted-foreground)]">
-          <th class="w-8 px-2 py-2 text-center">
-            <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]"
-              checked={currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false}
-              onchange={(e) => {
+          <th class="w-8 px-1 py-2 text-center font-medium">
+            <button
+              class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false)
+                ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
+              title="全选/取消选中"
+              onclick={() => {
                 const page = currentModulePages()[activeScriptPage.value];
-                if (page) page.commands.forEach((c: any) => (c.enabled = (e.target as HTMLInputElement).checked));
+                if (!page || page.commands.length === 0) return;
+                const allOn = page.commands.every((c: any) => c.enabled);
+                page.commands.forEach((c: any) => (c.enabled = !allOn));
               }}
-            />
+            >#</button>
           </th>
           <th class="px-2 py-2 text-center font-medium">命令</th>
           <th class="w-10 px-1 py-2 text-center font-medium">
@@ -357,7 +398,6 @@
               }}
             >↩</button>
           </th>
-          <th class="w-8 px-1 py-2 text-center font-medium">#</th>
           <th class="w-[48px] px-1 py-2 text-center font-medium">Delay</th>
           <th class="w-[95px] px-2 py-2 text-center font-medium">注释</th>
         </tr>
@@ -369,8 +409,22 @@
             class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]"
             oncontextmenu={(e) => handleRowContextMenu(e, i)}
           >
-            <td class="px-2 py-1 text-center">
-              <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enabled} disabled={orderMode.value} />
+            <td class="px-1 py-1 text-center text-[var(--muted-foreground)]">
+              {#if orderMode.value}
+                <span
+                  class="select-none cursor-grab inline-flex items-center justify-center w-6 h-6 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[14px] font-bold transition-colors hover:bg-[var(--primary)]/20"
+                  title="拖动调整顺序"
+                  onpointerdown={(e) => onPointerDown(e, i)}
+                >⠿</span>
+              {:else}
+                <button
+                  class="inline-flex items-center justify-center w-6 h-6 rounded-md border text-[12px] font-medium transition-colors cursor-pointer {cmd.enabled
+                    ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                    : 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--muted-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]'}"
+                  title={cmd.enabled ? '已选中（点击取消）' : '未选中（点击选中）'}
+                  onclick={() => (cmd.enabled = !cmd.enabled)}
+                >{i + 1}</button>
+              {/if}
             </td>
             <td class="px-2 py-1">
               <input
@@ -385,24 +439,6 @@
             <td class="px-1 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enter} disabled={orderMode.value} />
             </td>
-            <td class="px-1 py-1 text-center text-[var(--muted-foreground)]">
-              {#if orderMode.value}
-                <span
-                  class="select-none cursor-grab inline-flex items-center justify-center w-6 h-6 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[14px] font-bold transition-colors hover:bg-[var(--primary)]/20"
-                  title="拖动调整顺序"
-                  onpointerdown={(e) => onPointerDown(e, i)}
-                >⠿</span>
-              {:else}
-                <button
-                  class="inline-flex items-center justify-center w-6 h-6 rounded-md border text-[12px] font-medium transition-colors {connected.value
-                    ? 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--muted-foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
-                    : 'border-[var(--border-subtle)] text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'}"
-                  title={connected.value ? '点击发送此行' : '未连接'}
-                  disabled={!connected.value}
-                  onclick={() => sendOne(i)}
-                >{i + 1}</button>
-              {/if}
-            </td>
             <td class="px-1 py-1">
               <input
                 type="number"
@@ -412,11 +448,15 @@
               />
             </td>
             <td class="px-2 py-1">
-              <input
-                class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                bind:value={cmd.note}
-                disabled={orderMode.value}
-              />
+              <button
+                class="w-full rounded border px-2 py-1 text-[13px] transition-colors truncate text-center flex items-center justify-center {connected.value
+                  ? 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
+                  : 'border-[var(--border-subtle)] text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'}"
+                style="padding: 2px 3px; line-height: 1;"
+                title={cmd.note ? `发送：${cmd.note}` : (connected.value ? '点击发送此行（右键编辑注释）' : '未连接')}
+                disabled={!connected.value}
+                onclick={() => sendOne(i)}
+              >{cmd.note || '发送'}</button>
             </td>
           </tr>
         {/each}
@@ -424,12 +464,13 @@
       <!-- 第 N+1 行：大 + 号，点击新增一行 -->
       <tfoot>
         <tr>
-          <td colspan="7" class="px-2 py-1">
+          <td colspan="6" class="px-2 py-1">
             <button
-              class="w-full py-2 text-[18px] font-light text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--primary)] cursor-pointer transition-colors rounded"
+              data-add-row
+              class="w-full py-1 text-[13px] font-medium text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] border border-dashed border-[var(--border)] hover:border-[var(--primary)] cursor-pointer transition-colors rounded-md"
               onclick={addScriptRow}
               title="新增一行"
-            >+</button>
+            >+ 新增一行</button>
           </td>
         </tr>
       </tfoot>
@@ -561,11 +602,50 @@
     onclick={(e) => e.stopPropagation()}
   >
     <button
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+      onclick={handleEditNoteFromMenu}
+    >
+      编辑注释
+    </button>
+    <button
       class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--border-subtle)] cursor-pointer {currentModulePages()[activeScriptPage.value]?.commands.length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
       disabled={currentModulePages()[activeScriptPage.value]?.commands.length <= 1}
       onclick={handleDeleteRowFromMenu}
     >
       删除此行
     </button>
+  </div>
+{/if}
+
+<!-- 编辑注释弹窗 -->
+{#if noteEdit.open}
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center"
+    style="background: rgba(0,0,0,0.35);"
+    onclick={handleCancelNote}
+  >
+    <div
+      class="rounded-lg shadow-xl w-[320px] border"
+      style="background: var(--background-elevated); border-color: var(--border);"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <div class="px-6 py-5">
+        <div class="text-[14px] font-medium text-[var(--foreground)] mb-2">编辑注释</div>
+        <input
+          class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+          bind:value={noteEdit.text}
+          placeholder="为该行写点说明..."
+          onkeydown={(e) => { if (e.key === 'Enter') handleConfirmNote(); if (e.key === 'Escape') handleCancelNote(); }}
+        />
+      </div>
+      <div class="flex justify-end gap-2 px-4 pb-4">
+        <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={handleCancelNote}>取消</button>
+        <button
+          class="btn btn-primary cursor-pointer"
+          style="padding: 6px 14px;"
+          onclick={handleConfirmNote}
+        >确定</button>
+      </div>
+    </div>
   </div>
 {/if}

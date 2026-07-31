@@ -120,7 +120,7 @@ export function defaultScriptCommand(id: number): ScriptCommand {
     command: '',
     hex: false,
     enter: true,
-    delay_ms: id === 1 ? 2000 : 0,
+    delay_ms: 0,
     note: '',
   };
 }
