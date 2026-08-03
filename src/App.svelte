@@ -18,6 +18,10 @@
     logLines,
     logSendContent,
     presetBaudRates,
+    logFontSize,
+    logLineHeight,
+    logDirLabelStyle,
+    applyLogFont,
     themeColor,
     applyThemeColor,
     rxBytes,
@@ -61,6 +65,13 @@
     autoScroll.value = s.ui.auto_scroll;
     hexDisplay.value = s.ui.display_mode === 'Hex';
     logSendContent.value = s.ui.log_send;
+    // 日志区字体：兜底默认 14px / 1.6
+    const fs = s.ui?.log_font_size ?? 14;
+    const lh = s.ui?.log_line_height ?? 1.6;
+    logFontSize.value = fs;
+    logLineHeight.value = lh;
+    applyLogFont(fs, lh);
+    logDirLabelStyle.value = (s.ui?.log_dir_label === 'full') ? 'full' : 'short';
     // 预设波特率：兜底为默认三项
     presetBaudRates.value =
       s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
@@ -91,6 +102,9 @@
         auto_scroll: autoScroll.value,
         show_timestamp: showTimestamp.value,
         log_send: logSendContent.value,
+        log_font_size: logFontSize.value,
+        log_line_height: logLineHeight.value,
+        log_dir_label: logDirLabelStyle.value,
       },
       presets: {
         baud_rates: presetBaudRates.value,

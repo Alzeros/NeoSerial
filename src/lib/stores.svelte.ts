@@ -130,6 +130,20 @@ export function themeColorHex(value: string): string {
 export const loggingPath = $state<{ value: string | null }>({ value: null });
 /** 是否正在记录中（与 loggingPath 解耦：停止后路径保留，此值为 false） */
 export const loggingActive = $state<{ value: boolean }>({ value: false });
+
+// ============ 日志区字体（设置中调节，持久化） ============
+export const logFontSize = $state<{ value: number }>({ value: 14 });
+export const logLineHeight = $state<{ value: number }>({ value: 1.6 });
+/** 方向标签样式：'short'=Tx/Rx，'full'=发送/接收 */
+export const logDirLabelStyle = $state<{ value: 'short' | 'full' }>({ value: 'short' });
+
+/** 应用日志区字体到 <html>，CSS 变量覆盖即生效 */
+export function applyLogFont(size: number, lineH: number) {
+  if (typeof document === 'undefined') return;
+  const el = document.documentElement;
+  el.style.setProperty('--log-font-size', `${size}px`);
+  el.style.setProperty('--log-line-height', String(lineH));
+}
 export const logSendContent = $state<{ value: boolean }>({ value: true });
 
 // ============ 手动发送 ============

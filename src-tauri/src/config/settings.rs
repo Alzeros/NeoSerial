@@ -73,6 +73,27 @@ pub struct UiSettings {
     pub ring_buffer_capacity: usize,
     pub show_timestamp: bool,
     pub log_send: bool,
+    /// 日志区字号（px），默认 14
+    #[serde(default = "default_log_font_size")]
+    pub log_font_size: u32,
+    /// 日志区行高（无单位倍数），默认 1.6
+    #[serde(default = "default_log_line_height")]
+    pub log_line_height: f64,
+    /// 方向标签样式："short"=Tx/Rx，"full"=发送/接收
+    #[serde(default = "default_log_dir_label")]
+    pub log_dir_label: String,
+}
+
+fn default_log_font_size() -> u32 {
+    14
+}
+
+fn default_log_line_height() -> f64 {
+    1.6
+}
+
+fn default_log_dir_label() -> String {
+    "short".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -144,6 +165,9 @@ impl Settings {
                 ring_buffer_capacity: 5000,
                 show_timestamp: true,
                 log_send: true,
+                log_font_size: default_log_font_size(),
+                log_line_height: default_log_line_height(),
+                log_dir_label: default_log_dir_label(),
             },
             command_groups: vec![CommandGroup::default_group()],
             error_keywords: vec![
@@ -241,6 +265,9 @@ impl LegacySettings {
                 ring_buffer_capacity: self.ui.ring_buffer_capacity,
                 show_timestamp: def.ui.show_timestamp,
                 log_send: def.ui.log_send,
+                log_font_size: def.ui.log_font_size,
+                log_line_height: def.ui.log_line_height,
+                log_dir_label: def.ui.log_dir_label,
             },
             command_groups: vec![CommandGroup {
                 name: "默认".into(),

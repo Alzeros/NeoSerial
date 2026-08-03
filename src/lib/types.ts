@@ -86,6 +86,9 @@ export interface Settings {
     ring_buffer_capacity: number;
     show_timestamp: boolean;
     log_send: boolean;
+    log_font_size: number;
+    log_line_height: number;
+    log_dir_label: string;
   };
   command_groups: CommandGroup[];
   error_keywords: string[];

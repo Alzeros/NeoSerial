@@ -45,11 +45,15 @@
   --radius: 10px;
   --radius-sm: 6px;
 
+  /* ---- 日志区字体（可在设置中调节） ---- */
+  --log-font-size: 14px;
+  --log-line-height: 1.6;
+
   /* ---- 字体 ---- */
   --font-serif: "Iowan Old Style", "SF Pro Display", Georgia, "Times New Roman", serif;
   --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC",
                "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
-  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, monospace;
+  --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Microsoft YaHei", monospace;
 
   /* ---- Tailwind HSL 映射（供 bg-background 等语义类使用，与纸质色对齐） ---- */
   --background-hsl: 38 23% 94%;       /* #F5F2EB */
