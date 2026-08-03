@@ -10,6 +10,7 @@
     lineEnding,
     logSendContent,
     loggingPath,
+    loggingActive,
     paused,
     sendText,
     showTimestamp,
@@ -60,7 +61,8 @@
     }
   }
 
-  async function handleStartLogging() {
+  // 点路径框：选/换日志文件路径（仅设路径，不自动开始记录）
+  async function handleSelectLogPath() {
     try {
       const selectedPath = await saveFileDialog(
         '保存日志文件',
@@ -68,8 +70,34 @@
         [{ name: '日志文件', extensions: ['log'] }, { name: '文本文件', extensions: ['txt'] }]
       );
       if (!selectedPath) return;
-      const path = await startLogging(selectedPath);
+      // 仅记录路径，等用户点"开始记录"再启动；标记该文件尚未记录过
+      loggingPath.value = selectedPath;
+      loggingActive.value = false;
+      logFileStarted = false;
+    } catch (e) {
+      console.error('选择日志路径失败:', e);
+    }
+  }
+
+  // 该路径是否已启动过记录（区分首次新建 vs 停止后续写）
+  let logFileStarted = $state(false);
+
+  // 点"开始记录"按钮：
+  // - 无路径 → 弹对话框选路径（选完不自动开始）
+  // - 有路径且首次 → 传 path 新建覆盖
+  // - 有路径且曾停止 → 不传 path 续写同一文件
+  async function handleStartLogging() {
+    if (!loggingPath.value) {
+      await handleSelectLogPath();
+      return;
+    }
+    try {
+      const path = logFileStarted
+        ? await startLogging()                 // 续写：不传 path，后端用 last_log_path append
+        : await startLogging(loggingPath.value); // 首次：传 path 新建覆盖
       loggingPath.value = path;
+      loggingActive.value = true;
+      logFileStarted = true;
     } catch (e) {
       console.error('启动日志失败:', e);
     }
@@ -78,7 +106,8 @@
   async function handleStopLogging() {
     try {
       await stopLogging();
-      loggingPath.value = null;
+      // 停止记录但保留路径，再次开始时续写同一文件
+      loggingActive.value = false;
     } catch (e) {
       console.error('停止日志失败:', e);
     }
@@ -172,14 +201,17 @@
         <button
           class="flex-1 min-w-0 h-10 rounded px-3 text-left text-sm cursor-pointer transition-colors flex items-center"
           style="background: var(--background-input); border: 1px solid var(--border); color: var(--muted-foreground);"
-          onclick={handleStartLogging}
+          onclick={handleSelectLogPath}
+          title="点击选择/更换日志文件（新建覆盖）"
         >
           <span class="truncate">{loggingPath.value || '点击选择日志保存路径'}</span>
         </button>
-        {#if loggingPath.value}
+        {#if loggingActive.value}
           <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStopLogging}>停止</button>
         {:else}
-          <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStartLogging}>开始记录</button>
+          <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStartLogging}>
+            {logFileStarted ? '继续记录' : '开始记录'}
+          </button>
         {/if}
       </div>
 

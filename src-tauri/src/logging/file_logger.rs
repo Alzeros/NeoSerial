@@ -12,8 +12,18 @@ pub struct FileLogger {
 }
 
 impl FileLogger {
-    pub fn start(path: PathBuf, error_tx: Sender<String>) -> std::io::Result<Self> {
-        let file = File::create(&path)?;
+    /// 启动存盘线程。
+    /// - append=false：覆盖新建文件（File::create）
+    /// - append=true：在已有文件末尾续写（不存在则创建）
+    pub fn start(path: PathBuf, error_tx: Sender<String>, append: bool) -> std::io::Result<Self> {
+        let file = if append {
+            std::fs::OpenOptions::new()
+                .append(true)
+                .create(true)
+                .open(&path)?
+        } else {
+            File::create(&path)?
+        };
         let (tx, rx) = unbounded::<String>();
 
         std::thread::Builder::new()
@@ -80,7 +90,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("neoserial_test_{}.log", std::process::id()));
         let (error_tx, error_rx) = crossbeam_channel::unbounded::<String>();
-        let logger = FileLogger::start(path.clone(), error_tx).unwrap();
+        let logger = FileLogger::start(path.clone(), error_tx, false).unwrap();
         let tx = logger.line_sender();
         let _ = tx.send("08:00:01.000 [发送] AT".to_string());
         let _ = tx.send("08:00:01.123 [接收] OK".to_string());
@@ -100,7 +110,7 @@ mod tests {
         let dir = std::env::temp_dir();
         let path = dir.join(format!("neoserial_test_path_{}.log", std::process::id()));
         let (error_tx, _) = crossbeam_channel::unbounded::<String>();
-        let logger = FileLogger::start(path.clone(), error_tx).unwrap();
+        let logger = FileLogger::start(path.clone(), error_tx, false).unwrap();
         assert_eq!(logger.current_path(), Some(path.to_string_lossy().to_string()));
         logger.stop();
         let _ = std::fs::remove_file(&path);

@@ -128,6 +128,8 @@ export function themeColorHex(value: string): string {
 
 // ============ 文件日志 ============
 export const loggingPath = $state<{ value: string | null }>({ value: null });
+/** 是否正在记录中（与 loggingPath 解耦：停止后路径保留，此值为 false） */
+export const loggingActive = $state<{ value: boolean }>({ value: false });
 export const logSendContent = $state<{ value: boolean }>({ value: true });
 
 // ============ 手动发送 ============

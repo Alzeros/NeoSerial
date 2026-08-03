@@ -10,18 +10,47 @@ pub fn start_logging(
     path: Option<String>,
 ) -> Result<String, String> {
     let (error_tx, _error_rx) = crossbeam_channel::unbounded();
-    let actual_path = path.unwrap_or_else(|| {
-        let filename = format!("{}.log", now_local_compact());
-        let appdata = std::env::var("APPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        appdata.join("neoserial").join("logs").join(filename).to_string_lossy().to_string()
-    });
+
+    // 传 path → 新建/覆盖该文件（append=false）；记录为 last_log_path
+    // 不传 path → 用上次路径续写（append=true）；无上次路径则生成默认路径新建
+    let (actual_path, append) = match path {
+        Some(p) => (p, false),
+        None => {
+            let last = state
+                .last_log_path
+                .lock()
+                .ok()
+                .and_then(|g| g.clone());
+            match last {
+                Some(p) => (p, true),
+                None => {
+                    let filename = format!("{}.log", now_local_compact());
+                    let appdata = std::env::var("APPDATA")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    let p = appdata
+                        .join("neoserial")
+                        .join("logs")
+                        .join(filename)
+                        .to_string_lossy()
+                        .to_string();
+                    (p, false)
+                }
+            }
+        }
+    };
 
     let logger = FileLogger::start(
         std::path::PathBuf::from(&actual_path),
         error_tx,
+        append,
     ).map_err(|e| format!("启动日志失败: {}", e))?;
+
+    // 记忆本次路径，供停止后续写用
+    {
+        let mut last = state.last_log_path.lock().map_err(|e| e.to_string())?;
+        *last = Some(actual_path.clone());
+    }
 
     // 把行文本 sender 暴露给 reader/writer 线程
     let sender = logger.line_sender();
@@ -47,6 +76,7 @@ pub fn stop_logging(state: State<'_, AppState>) -> Result<(), String> {
     if let Some(logger) = file_logger.take() {
         logger.stop();
     }
+    // 注意：不清 last_log_path，再次 start_logging 不传 path 时续写同一文件
     Ok(())
 }
 
