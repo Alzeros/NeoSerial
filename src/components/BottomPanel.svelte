@@ -176,18 +176,16 @@
   </div>
 
   <!-- 第二排：发送输入（输入框始终可输入，仅发送按钮在未连接时禁用） -->
-  <div class="flex items-center gap-0 px-5 pb-3">
+  <div class="flex items-center gap-3 px-5 pb-3">
     <input
       type="text"
-      class="!rounded-r-0 !border-r-0"
       style="flex:1 1 0%;min-width:0;height:40px;"
       placeholder="输入要发送的内容..."
       bind:value={sendText.value}
       onkeydown={handleKeydown}
     />
     <button
-      style="height:40px;padding:0 20px;border-radius:0 6px 6px 0;"
-      class="btn btn-primary"
+      class="btn btn-primary min-w-[96px] h-10"
       onclick={handleSend}
       disabled={!connected.value}
     >发送</button>
