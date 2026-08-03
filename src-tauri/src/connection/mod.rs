@@ -15,6 +15,9 @@ use crate::config::settings::{DataBits, FlowControl, Parity, StopBits};
 /// 发送到写线程的命令。
 pub enum WriteCommand {
     Send(Vec<u8>),
+    /// 只写串口不 emit tx-line（调用方已自行 emit）。用于脚本序列：
+    /// sequence 线程按 delay 间隔发起并 emit，writer 异步写，避免写阻塞拖慢发起节奏。
+    SendSilent(Vec<u8>),
     Close,
 }
 

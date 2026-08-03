@@ -3,11 +3,14 @@ use std::thread;
 use std::time::Duration;
 
 use serde::Serialize;
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager};
 
 use crate::state::AppState;
 use crate::connection::WriteCommand;
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
+use crate::buffer::log_line::{Dir, LogLine};
+use crate::util::log_format::{DisplayConfig, format_line_for_file};
+use crate::util::time_fmt::now_local_ts;
 
 #[derive(Clone, Serialize)]
 pub struct SequenceProgress {
@@ -75,11 +78,42 @@ pub fn sequence_run(
                 };
                 line_ending.append_bytes(&mut data);
 
-                // 通过写线程通道实际发送
                 if !data.is_empty() {
-                    let _ = write_tx.send(WriteCommand::Send(data));
+                    // 工具侧发起节奏 = delay：在此刻 emit tx-line（发起时刻打时间戳），
+                    // 塞 channel 让 writer 异步写，sequence 线程按 delay 间隔继续下一行。
+                    // 不等 write 完成，避免被串口驱动写阻塞拖慢发起节奏。
+                    let line = LogLine::new(now_local_ts(), Dir::Tx, data.clone(), &[]);
+                    // 取显示配置与文件日志 sender
+                    let (cfg, sender) = match app_handle.try_state::<AppState>() {
+                        Some(state) => {
+                            let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
+                                show_timestamp: s.ui.show_timestamp,
+                                log_send: s.ui.log_send,
+                            });
+                            let sender = state
+                                .line_sender
+                                .lock()
+                                .ok()
+                                .and_then(|ls| ls.as_ref().cloned());
+                            (cfg, sender)
+                        }
+                        None => (None, None),
+                    };
+                    let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
+                    if log_send {
+                        let _ = app_handle.emit("tx-line", line.clone());
+                        if let (Some(c), Some(tx)) = (cfg, sender) {
+                            let formatted = format_line_for_file(&line, &c, false);
+                            if !formatted.is_empty() {
+                                let _ = tx.send(formatted);
+                            }
+                        }
+                    }
+                    // 塞 channel，writer 异步写（SendSilent：不 emit，sequence 已 emit）
+                    let _ = write_tx.send(WriteCommand::SendSilent(data));
                 }
 
+                // 行间延时：sequence 线程按 delay 间隔发起下一条，不受 writer 写阻塞影响
                 if cmd.delay_ms > 0 {
                     thread::sleep(Duration::from_millis(cmd.delay_ms as u64));
                 }
