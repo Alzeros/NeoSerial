@@ -21,8 +21,8 @@
   --muted-foreground: #8A8580;        /* 弱化文字/标签 */
 
   /* ---- 强调色 (Accent) ---- */
-  --primary: #4A5BA8;                 /* 主色：低饱和靛蓝 */
-  --primary-hover: #3D4D94;           /* 主色 hover */
+  --primary: #3F51C5;                 /* 主色：靛蓝（默认主题色） */
+  --primary-hover: #3342A8;           /* 主色 hover */
   --primary-foreground: #FFFFFF;      /* 主色上的文字 */
 
   /* ---- 功能色 ---- */
@@ -54,18 +54,18 @@
   /* ---- Tailwind HSL 映射（供 bg-background 等语义类使用，与纸质色对齐） ---- */
   --background-hsl: 38 23% 94%;       /* #F5F2EB */
   --foreground-hsl: 0 0% 18%;         /* #2D2D2D */
-  --primary-hsl: 225 39% 47%;         /* #4A5BA8 */
+  --primary-hsl: 230 53% 51%;         /* #3F51C5 */
   --primary-foreground-hsl: 0 0% 100%;
   --muted-foreground-hsl: 30 10% 52%; /* #8A8580 */
   --border-hsl: 0 0% 0%;              /* 配合 alpha 使用 */
   --input-hsl: 0 0% 100%;
-  --ring-hsl: 225 39% 47%;
+  --ring-hsl: 230 53% 51%;
   --secondary-hsl: 38 23% 96%;
   --secondary-foreground-hsl: 0 0% 18%;
   --destructive-hsl: 2 49% 47%;
   --destructive-foreground-hsl: 0 0% 100%;
   --muted-hsl: 38 18% 92%;
-  --accent-hsl: 225 39% 47%;
+  --accent-hsl: 230 53% 51%;
   --accent-foreground-hsl: 0 0% 100%;
   --popover-hsl: 0 0% 100%;
   --popover-foreground-hsl: 0 0% 18%;
@@ -74,6 +74,46 @@
   --rx-hsl: 146 47% 33%;              /* #2E7D5B */
   --tx-hsl: 214 41% 38%;              /* #3B5B8A */
   --system-hsl: 38 10% 52%;
+}
+
+/* ============================================================
+   主题色切换：html[data-theme-color="..."] 覆盖主色衍生变量。
+   5 种预设，默认 blue(#4A5FE8) 已在 :root 定义。
+   ============================================================ */
+html[data-theme-color="green"] {
+  --primary: #0F6E56;
+  --primary-hover: #0C5A48;
+  --primary-hsl: 167 76% 24%;
+  --ring-hsl: 167 76% 24%;
+  --accent-hsl: 167 76% 24%;
+}
+html[data-theme-color="orange"] {
+  --primary: #B4653F;
+  --primary-hover: #9A5535;
+  --primary-hsl: 19 49% 48%;
+  --ring-hsl: 19 49% 48%;
+  --accent-hsl: 19 49% 48%;
+}
+html[data-theme-color="teal"] {
+  --primary: #3A5A50;
+  --primary-hover: #2F4A42;
+  --primary-hsl: 156 22% 29%;
+  --ring-hsl: 156 22% 29%;
+  --accent-hsl: 156 22% 29%;
+}
+html[data-theme-color="slate"] {
+  --primary: #4C5A73;
+  --primary-hover: #3F4A60;
+  --primary-hsl: 218 21% 38%;
+  --ring-hsl: 218 21% 38%;
+  --accent-hsl: 218 21% 38%;
+}
+html[data-theme-color="blue"] {
+  --primary: #3F51C5;
+  --primary-hover: #3342A8;
+  --primary-hsl: 230 53% 51%;
+  --ring-hsl: 230 53% 51%;
+  --accent-hsl: 230 53% 51%;
 }
 
 * {

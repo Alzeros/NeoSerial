@@ -49,6 +49,24 @@ export const rxBytes = $state<{ value: number }>({ value: 0 });
 /** 预设波特率：连接栏下拉用，默认 9600/115200/921600，用户可在设置中增删 */
 export const presetBaudRates = $state<{ value: number[] }>({ value: [9600, 115200, 921600] });
 
+/** 主题色：5 种预设，默认 blue(#4A5FE8)。切换时通过 html[data-theme-color] 覆盖 --primary */
+export type ThemeColorKey = 'green' | 'orange' | 'teal' | 'slate' | 'blue';
+export const themeColorMeta: { key: ThemeColorKey; color: string; label: string }[] = [
+  { key: 'blue', color: '#3F51C5', label: '靛蓝' },
+  { key: 'green', color: '#0F6E56', label: '松绿' },
+  { key: 'orange', color: '#B4653F', label: '橙棕' },
+  { key: 'teal', color: '#3A5A50', label: '青墨' },
+  { key: 'slate', color: '#4C5A73', label: '灰蓝' },
+];
+export const themeColor = $state<{ value: ThemeColorKey }>({ value: 'blue' });
+
+/** 应用主题色到 <html>，CSS 变量覆盖即生效 */
+export function applyThemeColor(key: ThemeColorKey) {
+  if (typeof document !== 'undefined') {
+    document.documentElement.setAttribute('data-theme-color', key);
+  }
+}
+
 // ============ 文件日志 ============
 export const loggingPath = $state<{ value: string | null }>({ value: null });
 export const logSendContent = $state<{ value: boolean }>({ value: true });

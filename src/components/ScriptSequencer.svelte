@@ -307,6 +307,15 @@
     closePageMenu();
     closeRowMenu();
   }
+}} on:keydown={(e) => {
+  // Esc 关闭所有弹窗（弹窗不再支持点遮罩关闭，Esc 是键盘退出途径）
+  if (e.key === 'Escape') {
+    if (confirmDelete.open) handleCancelDelete();
+    if (renameState.open) handleCancelRename();
+    if (noteEdit.open) handleCancelNote();
+    closePageMenu();
+    closeRowMenu();
+  }
 }} />
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" style="background: var(--background-elevated);">
@@ -538,7 +547,6 @@
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
     style="background: rgba(0,0,0,0.35);"
-    onclick={handleCancelDelete}
   >
     <div
       class="rounded-lg shadow-xl w-[300px] border"
@@ -568,7 +576,6 @@
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
     style="background: rgba(0,0,0,0.35);"
-    onclick={handleCancelRename}
   >
     <div
       class="rounded-lg shadow-xl w-[300px] border"
@@ -623,7 +630,6 @@
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
     style="background: rgba(0,0,0,0.35);"
-    onclick={handleCancelNote}
   >
     <div
       class="rounded-lg shadow-xl w-[320px] border"

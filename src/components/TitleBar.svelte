@@ -67,6 +67,10 @@
       menuOpen.value = false;
     }
   }}
+  on:keydown={(e) => {
+    // Esc 关闭关于弹窗（弹窗不再支持点遮罩关闭）
+    if (e.key === 'Escape' && aboutOpen.value) aboutOpen.value = false;
+  }}
 />
 
 <!-- 自定义标题栏：左侧应用名 + 右侧 脚本折叠按钮 | 窗口控制按钮 -->
@@ -182,7 +186,6 @@
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
     style="background: rgba(0,0,0,0.35);"
-    onclick={() => (aboutOpen.value = false)}
   >
     <div
       class="rounded-lg shadow-xl w-[320px] border"

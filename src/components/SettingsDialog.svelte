@@ -1,9 +1,12 @@
 <script lang="ts">
-  import { presetBaudRates, cachedSettings } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, themeColor, themeColorMeta, applyThemeColor, type ThemeColorKey } from '$lib/stores';
   import { saveSettings } from '$lib/tauri';
   import type { Settings } from '$lib/types';
 
   let open = $state(false);
+
+  // 主题色编辑副本（打开时从 store 拷贝，取消不应用；选中即时预览）
+  let editThemeColor = $state<ThemeColorKey>('blue');
 
   // 内置默认波特率：不可删除，只能在此基础上增删用户自定义项
   const DEFAULT_BAUD_RATES = [9600, 115200, 921600];
@@ -15,8 +18,15 @@
 
   export function show() {
     editBaudRates = [...presetBaudRates.value];
+    editThemeColor = themeColor.value;
     newBaud = '';
     open = true;
+  }
+
+  // 选中主题色：即时预览（应用到 <html>），但不落盘；取消则恢复原值
+  function selectThemeColor(key: ThemeColorKey) {
+    editThemeColor = key;
+    applyThemeColor(key);
   }
 
   function addBaud() {
@@ -41,30 +51,38 @@
     const userAdded = editBaudRates.filter((b) => !isDefault(b));
     const rates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
     presetBaudRates.value = rates;
+    // 主题色：预览值落盘到 store（<html> 已在选中时应用）
+    themeColor.value = editThemeColor;
     // 落盘：基于缓存 settings 透传，仅更新 presets
     const base = cachedSettings.value;
     if (base) {
-      const next: Settings = { ...base, presets: { baud_rates: rates } };
+      const next: Settings = { ...base, presets: { baud_rates: rates, theme_color: editThemeColor } };
       try {
         await saveSettings(next);
         cachedSettings.value = next;
       } catch (e) {
-        console.error('保存预设波特率失败:', e);
+        console.error('保存设置失败:', e);
       }
     }
     open = false;
   }
 
   function handleCancel() {
+    // 取消：恢复打开前的主题色（撤销预览）
+    applyThemeColor(themeColor.value);
     open = false;
   }
 </script>
+
+<svelte:window on:keydown={(e) => {
+  // Esc 关闭设置弹窗（弹窗不再支持点遮罩关闭）
+  if (e.key === 'Escape' && open) handleCancel();
+}} />
 
 {#if open}
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
     style="background: rgba(0,0,0,0.35);"
-    onclick={handleCancel}
   >
     <div
       class="rounded-lg shadow-xl w-[380px] border"
@@ -112,6 +130,24 @@
             onkeydown={(e) => { if (e.key === 'Enter') addBaud(); }}
           />
           <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={addBaud}>添加</button>
+        </div>
+
+        <!-- 主题色 -->
+        <div class="mt-5 mb-2 text-[13px] font-medium text-[var(--foreground)]">主题色</div>
+        <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+          选择应用图标的强调色，点击即时预览。
+        </div>
+        <div class="flex items-center gap-3">
+          {#each themeColorMeta as t}
+            <button
+              class="w-8 h-8 rounded-full border-2 transition-transform cursor-pointer {editThemeColor === t.key
+                ? 'border-[var(--foreground)] scale-110'
+                : 'border-transparent hover:scale-105'}"
+              style="background: {t.color};"
+              title={t.label}
+              onclick={() => selectThemeColor(t.key)}
+            ></button>
+          {/each}
         </div>
       </div>
 
