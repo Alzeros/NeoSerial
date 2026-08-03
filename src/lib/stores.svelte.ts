@@ -58,13 +58,72 @@ export const themeColorMeta: { key: ThemeColorKey; color: string; label: string 
   { key: 'teal', color: '#3A5A50', label: '青墨' },
   { key: 'slate', color: '#4C5A73', label: '灰蓝' },
 ];
-export const themeColor = $state<{ value: ThemeColorKey }>({ value: 'blue' });
+/** 主题色值：预设 key（如 'blue'）或自定义 'custom:#RRGGBB' */
+export const themeColor = $state<{ value: string }>({ value: 'blue' });
 
-/** 应用主题色到 <html>，CSS 变量覆盖即生效 */
-export function applyThemeColor(key: ThemeColorKey) {
-  if (typeof document !== 'undefined') {
-    document.documentElement.setAttribute('data-theme-color', key);
+/** hex → "H S% L%" 字符串，用于 --primary-hsl 等 */
+function hexToHsl(hex: string): string {
+  const m = hex.replace('#', '');
+  const r = parseInt(m.slice(0, 2), 16) / 255;
+  const g = parseInt(m.slice(2, 4), 16) / 255;
+  const b = parseInt(m.slice(4, 6), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
+    else if (max === g) h = (b - r) / d + 2;
+    else h = (r - g) / d + 4;
+    h /= 6;
   }
+  return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
+}
+
+/** hex 略深一点作为 hover */
+function darkenHex(hex: string, amount = 0.12): string {
+  const m = hex.replace('#', '');
+  let r = parseInt(m.slice(0, 2), 16);
+  let g = parseInt(m.slice(2, 4), 16);
+  let b = parseInt(m.slice(4, 6), 16);
+  r = Math.round(r * (1 - amount));
+  g = Math.round(g * (1 - amount));
+  b = Math.round(b * (1 - amount));
+  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
+}
+
+/** 应用主题色到 <html>。
+ *  预设 key → 设 data-theme-color 属性，CSS 规则覆盖变量。
+ *  custom:hex → 设 data-theme-color="custom" + 内联覆盖 --primary 等变量。 */
+export function applyThemeColor(value: string) {
+  if (typeof document === 'undefined') return;
+  const el = document.documentElement;
+  if (value.startsWith('custom:')) {
+    const hex = value.slice(7);
+    const hsl = hexToHsl(hex);
+    el.setAttribute('data-theme-color', 'custom');
+    el.style.setProperty('--primary', hex);
+    el.style.setProperty('--primary-hover', darkenHex(hex));
+    el.style.setProperty('--primary-hsl', hsl);
+    el.style.setProperty('--ring-hsl', hsl);
+    el.style.setProperty('--accent-hsl', hsl);
+  } else {
+    // 预设：清除可能的自定义内联变量，靠 CSS 规则
+    el.style.removeProperty('--primary');
+    el.style.removeProperty('--primary-hover');
+    el.style.removeProperty('--primary-hsl');
+    el.style.removeProperty('--ring-hsl');
+    el.style.removeProperty('--accent-hsl');
+    el.setAttribute('data-theme-color', value);
+  }
+}
+
+/** 取主题色当前实际 hex（用于色块高亮/预览） */
+export function themeColorHex(value: string): string {
+  if (value.startsWith('custom:')) return value.slice(7);
+  const meta = themeColorMeta.find((t) => t.key === value);
+  return meta?.color ?? '#3F51C5';
 }
 
 // ============ 文件日志 ============
