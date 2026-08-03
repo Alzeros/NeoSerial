@@ -39,6 +39,10 @@ export async function listPorts(): Promise<string[]> {
   return await invoke<string[]>('list_ports');
 }
 
+export async function resetStats(): Promise<void> {
+  await invoke('reset_stats');
+}
+
 // ============ 数据收发 ============
 
 export async function send(text: string, ending: string, isHex: boolean): Promise<number> {

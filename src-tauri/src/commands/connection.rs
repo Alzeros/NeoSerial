@@ -74,3 +74,20 @@ pub fn list_ports() -> Result<Vec<String>, String> {
     let ports = serialport::available_ports().map_err(|e| e.to_string())?;
     Ok(ports.into_iter().map(|p| p.port_name).collect())
 }
+
+/// 清零收发字节统计。把累计器置 0，并 emit tx-update/rx-update = 0 让前端同步。
+/// 未连接时无 handle，仅 emit 0（前端已置 0，幂等）。
+#[tauri::command]
+pub fn reset_stats(
+    state: State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    let conn = state.connection.lock().map_err(|e| e.to_string())?;
+    if let Some(handle) = conn.as_ref() {
+        handle.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
+        handle.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
+    }
+    let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total: 0 });
+    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total: 0 });
+    Ok(())
+}
