@@ -12,6 +12,7 @@
     scriptModules,
     scriptRunCount,
     scriptRunning,
+    scriptRunState,
     switchScriptModule,
   } from '$lib/stores';
 
@@ -124,6 +125,13 @@
     const pages = currentModulePages();
     const page = pages[activeScriptPage.value];
     if (!page) return;
+    // 初始化运行状态：总发送数=勾选行数×轮数，记录起始时刻
+    const enabledCount = page.commands.filter((c: any) => c.enabled).length;
+    scriptRunState.total = enabledCount * scriptRunCount.value;
+    scriptRunState.sent = 0;
+    scriptRunState.round = 1;
+    scriptRunState.startedAt = Date.now();
+    scriptRunState.finished = '';
     try {
       await sequenceRun(page.commands, scriptRunCount.value, scriptLoopInterval.value);
     } catch (e) {
@@ -171,7 +179,15 @@
     }
   }
 
+  // 清空需二次确认：点"清空"只弹确认浮层，确认后才真正清空
+  let confirmClear = $state<{ open: boolean }>({ open: false });
+
   function handleClearConfig() {
+    confirmClear.open = true;
+  }
+
+  function handleConfirmClear() {
+    confirmClear.open = false;
     const pages = currentModulePages();
     const page = pages[activeScriptPage.value];
     if (!page) return;
@@ -183,6 +199,10 @@
       delay_ms: 0,
       note: '',
     }));
+  }
+
+  function handleCancelClear() {
+    confirmClear.open = false;
   }
 
   // 右键页签：弹出"重命名/删除"菜单（删除：多页才允许删，单页禁用）
@@ -297,6 +317,83 @@
   function handleCancelNote() {
     noteEdit.open = false;
   }
+
+  // ---- 执行状态区：三态文案 + 圆点 ----
+  // 就绪态：N=表格总行数，M=勾选行数，实时更新
+  const totalRows = $derived(
+    currentModulePages()[activeScriptPage.value]?.commands.length ?? 0
+  );
+  const enabledRows = $derived(
+    currentModulePages()[activeScriptPage.value]?.commands.filter((c: any) => c.enabled).length ?? 0
+  );
+  // 勾选行 Delay 之和(秒，保留一位小数)——空闲态"约 t s/轮"用
+  const enabledDelaySec = $derived.by(() => {
+    const cmds = currentModulePages()[activeScriptPage.value]?.commands ?? [];
+    const sum = cmds.filter((c: any) => c.enabled).reduce((acc: number, c: any) => acc + (c.delay_ms || 0), 0);
+    return Math.round(sum / 100) / 10;
+  });
+  // 能否运行：至少勾选一条
+  const canRun = $derived(enabledRows > 0 && !scriptRunning.value);
+
+  // 结束态淡回：done/aborted 后 3 秒切回就绪态展示
+  let finishedVisible = $state(false);
+  let finishTimer: ReturnType<typeof setTimeout> | null = null;
+  // 用时：结束触发时定格（finishedElapsed）
+  let finishedElapsed = $state(0);
+
+  $effect(() => {
+    const f = scriptRunState.finished;
+    if (f === 'done' || f === 'aborted') {
+      // 定格用时
+      finishedElapsed = scriptRunState.startedAt > 0
+        ? Math.max(0, Math.round((Date.now() - scriptRunState.startedAt) / 1000))
+        : 0;
+      finishedVisible = true;
+      if (finishTimer) clearTimeout(finishTimer);
+      finishTimer = setTimeout(() => {
+        finishedVisible = false;
+        scriptRunState.finished = '';
+      }, 3000);
+    }
+  });
+
+  // 进度条比例：已发送 / 总发送（运行中）
+  const progressPct = $derived(
+    scriptRunState.total > 0
+      ? Math.min(100, Math.round((scriptRunState.sent / scriptRunState.total) * 100))
+      : 0
+  );
+
+  // 状态区显示态：'running' | 'finished' | 'idle'
+  const statusMode = $derived(
+    scriptRunning.value ? 'running' : (finishedVisible ? 'finished' : 'idle')
+  );
+  // 状态区文案（圆点颜色与按钮形态已表达的状态不再用文字重复）
+  const statusText = $derived.by(() => {
+    if (statusMode === 'running') {
+      // 运行中：i=当前轮内已发送序号，N=单轮勾选条数
+      const perRound = scriptRunCount.value > 0 ? scriptRunState.total / scriptRunCount.value : 0;
+      const iInRound = perRound > 0
+        ? ((scriptRunState.sent - 1) % perRound) + 1
+        : scriptRunState.sent;
+      // y=1 时省略轮次段
+      if (scriptRunCount.value <= 1) return `${iInRound}/${perRound}条`;
+      return `第${scriptRunState.round}/${scriptRunCount.value}轮 · ${iInRound}/${perRound}条`;
+    }
+    if (statusMode === 'finished') {
+      // 中断（用户主动停止）单独标"已停止"；正常结束"已完成"
+      const label = scriptRunState.finished === 'aborted' ? '已停止' : '已完成';
+      return `${label} ${scriptRunState.sent}条 · ${finishedElapsed}s`;
+    }
+    // 空闲态：按勾选情况区分
+    if (enabledRows === 0) return '未勾选指令';
+    if (enabledRows === totalRows) return `待发送 ${totalRows} 条`;
+    return `待发送 ${enabledRows}/${totalRows} 条`;
+  });
+  // 空闲态末尾"约 t s/轮"后缀（勾选行 Delay 之和；0 时不显示）
+  const idleSuffix = $derived(
+    statusMode === 'idle' && enabledDelaySec > 0 ? ` · 约${enabledDelaySec}s/轮` : ''
+  );
 </script>
 
 <svelte:window on:click={() => { closePageMenu(); closeRowMenu(); }} on:contextmenu={(e) => {
@@ -311,6 +408,7 @@
   // Esc 关闭所有弹窗（弹窗不再支持点遮罩关闭，Esc 是键盘退出途径）
   if (e.key === 'Escape') {
     if (confirmDelete.open) handleCancelDelete();
+    if (confirmClear.open) handleCancelClear();
     if (renameState.open) handleCancelRename();
     if (noteEdit.open) handleCancelNote();
     closePageMenu();
@@ -424,7 +522,7 @@
                   class="select-none cursor-grab inline-flex items-center justify-center w-5 h-5 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[12px] font-bold transition-colors hover:bg-[var(--primary)]/20"
                   title="拖动调整顺序"
                   onpointerdown={(e) => onPointerDown(e, i)}
-                >⠿</span>
+                >☰</span>
               {:else}
                 <button
                   data-row-toggle
@@ -452,7 +550,7 @@
             <td class="px-1 py-1">
               <input
                 type="number"
-                class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                class="w-full tnum rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.delay_ms}
                 disabled={orderMode.value}
               />
@@ -487,33 +585,94 @@
     </table>
   </div>
 
-  <!-- 执行控制 -->
-  <div class="border-t border-[var(--border)] px-4 py-3 space-y-2">
-    <div class="flex items-center gap-2">
-      {#if scriptRunning.value}
-        <button class="btn btn-secondary" onclick={handleStop}>■ 停止</button>
-      {:else}
-        <button class="btn btn-primary" onclick={handleRun}>▶ 运行</button>
-      {/if}
-      <div class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)]">
-        <span>次数:</span>
-        <input type="number" class="w-14" bind:value={scriptRunCount.value} min="1" />
-      </div>
-      <div class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)]">
-        <span>间隔:</span>
-        <input type="number" class="w-16" bind:value={scriptLoopInterval.value} min="0" />
-        <span>ms</span>
-      </div>
-    </div>
-    <div class="flex gap-2 items-center">
-      <button class="btn btn-ghost" onclick={handleSaveConfig}>保存</button>
-      <button class="btn btn-ghost" onclick={handleLoadConfig}>加载</button>
-      <button class="btn btn-ghost" onclick={handleClearConfig}>清空</button>
-      <label class="switch ml-auto">
-        <input type="checkbox" bind:checked={orderMode.value} />
+  <!-- 执行控制：两层布局，上弱（次级操作）下强（主操作），两层左右缘对齐 -->
+  <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
+    <!-- 第一层：次级操作（ghost 文字按钮 + 调整顺序开关） -->
+    <div class="flex items-center gap-2 px-3 py-2">
+      <button
+        class="h-7 -ml-2 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] transition-colors"
+        onclick={handleSaveConfig}
+      >保存</button>
+      <button
+        class="h-7 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] transition-colors"
+        onclick={handleLoadConfig}
+      >加载</button>
+      <div class="w-px h-4 bg-[var(--border)] mx-1"></div>
+      <button
+        class="h-7 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--error)] hover:bg-[var(--border-subtle)] transition-colors"
+        onclick={handleClearConfig}
+      >清空</button>
+      <label class="switch ml-auto {scriptRunning.value ? 'opacity-50 pointer-events-none' : ''}">
+        <input type="checkbox" bind:checked={orderMode.value} disabled={scriptRunning.value} />
         <span class="switch-track"></span>
         <span class="switch-label">调整顺序</span>
       </label>
+    </div>
+    <!-- 两层分割线 -->
+    <div class="border-t border-[var(--border-subtle)]"></div>
+    <!-- 第二层：主操作（运行 + 状态区 + 参数组），底座底色 -->
+    <div class="relative flex items-center gap-3 px-3 py-2.5" style="background: var(--background-deep);">
+      {#if scriptRunning.value}
+        <button
+          class="btn btn-danger-solid h-9 leading-none inline-flex items-center gap-1.5"
+          onclick={handleStop}
+          title="停止"
+        ><span class="text-[12px]">■</span>停止</button>
+      {:else}
+        <button
+          class="btn btn-primary h-9 leading-none inline-flex items-center gap-1.5"
+          onclick={handleRun}
+          disabled={!canRun}
+          title={canRun ? '运行' : '未勾选任何指令'}
+        >
+          <span class="text-[12px]">▶</span>运行
+        </button>
+      {/if}
+      <!-- 执行状态区：左对齐紧跟运行按钮，flex-1 撑开 + min-w-0 允许省略号截断，不挤压右侧参数组 -->
+      <div class="flex items-center gap-1.5 min-w-0 flex-1 tnum">
+        <span
+          class="h-2 w-2 rounded-full flex-shrink-0 {statusMode === 'running'
+            ? 'bg-[var(--rx)] status-dot-pulse'
+            : 'bg-[var(--muted-foreground)]'}"
+        ></span>
+        <span class="text-[12px] text-[var(--muted-foreground)] truncate">{statusText}{idleSuffix}</span>
+      </div>
+      <!-- 参数组：整体右对齐，单位移到输入框右侧；两组间 12px -->
+      <div class="flex items-center gap-3 flex-shrink-0">
+        <div class="flex items-center gap-1">
+          <span class="text-[12px] text-[var(--muted-foreground)]">次数</span>
+          <input
+            type="number"
+            class="no-spin tnum rounded border border-[var(--border)] bg-[var(--background-input)] text-[13px] text-right focus-visible:outline-none focus-visible:border-[var(--primary)]"
+            style="height: 32px; width: 52px; padding: 0 8px;"
+            bind:value={scriptRunCount.value}
+            min="1"
+            disabled={scriptRunning.value}
+          />
+          <span class="text-[12px] text-[var(--muted-foreground)]">次</span>
+        </div>
+        <div class="flex items-center gap-1">
+          <span class="text-[12px] text-[var(--muted-foreground)]">间隔</span>
+          <input
+            type="number"
+            class="no-spin tnum rounded border border-[var(--border)] bg-[var(--background-input)] text-[13px] text-right focus-visible:outline-none focus-visible:border-[var(--primary)]"
+            style="height: 32px; width: 60px; padding: 0 8px;"
+            bind:value={scriptLoopInterval.value}
+            min="0"
+            disabled={scriptRunCount.value <= 1 || scriptRunning.value}
+          />
+          <span class="text-[12px] text-[var(--muted-foreground)]">ms</span>
+        </div>
+      </div>
+      <!-- 底部 2px 进度条：仅运行中显示，进度=已发送/总发送 -->
+      {#if scriptRunning.value}
+        <div class="absolute left-0 right-0 bottom-0 h-0.5 bg-[var(--border-subtle)]">
+          <div
+            class="h-full bg-[var(--primary)] transition-[width] duration-150"
+            style="width: {progressPct}%;"
+          ></div>
+        </div>
+      {/if}
     </div>
   </div>
 </div>
@@ -652,6 +811,35 @@
           style="padding: 6px 14px;"
           onclick={handleConfirmNote}
         >确定</button>
+      </div>
+    </div>
+  </div>
+{/if}
+
+<!-- 清空指令二次确认弹窗 -->
+{#if confirmClear.open}
+  <div
+    class="fixed inset-0 z-[100] flex items-center justify-center"
+    style="background: rgba(0,0,0,0.35);"
+  >
+    <div
+      class="rounded-lg shadow-xl w-[300px] border"
+      style="background: var(--background-elevated); border-color: var(--border);"
+      onclick={(e) => e.stopPropagation()}
+    >
+      <div class="px-6 py-5">
+        <div class="text-[14px] font-medium text-[var(--foreground)] mb-2">清空指令</div>
+        <div class="text-[13px] text-[var(--muted-foreground)]">
+          确定清空当前页签的所有指令？所有命令内容将被重置为空。
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 px-4 pb-4">
+        <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={handleCancelClear}>取消</button>
+        <button
+          class="btn cursor-pointer"
+          style="padding: 6px 14px; background: var(--error); color: white; border-color: var(--error);"
+          onclick={handleConfirmClear}
+        >清空</button>
       </div>
     </div>
   </div>

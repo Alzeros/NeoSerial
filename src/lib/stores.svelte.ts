@@ -173,6 +173,21 @@ export const scriptRunCount = $state<{ value: number }>({ value: 1 });
 export const scriptLoopInterval = $state<{ value: number }>({ value: 500 });
 export const scriptCurrentRow = $state<{ value: number }>({ value: -1 });
 
+/** 序列运行实时状态：由后端 sequence-progress / sequence-done 事件驱动，
+ *  供底部"执行状态区 + 进度条"展示。所有字段在一次运行生命周期内有效。 */
+export const scriptRunState = $state<{
+  /** 当前轮次，从 1 开始 */
+  round: number;
+  /** 本次运行累计已发送条数（每发一条 +1） */
+  sent: number;
+  /** 本次运行总发送条数 = 勾选行数 × 轮数，运行开始时算定 */
+  total: number;
+  /** 运行起始时间戳(ms)，用于显示用时；非运行中为 0 */
+  startedAt: number;
+  /** 结束态文案展示用：'done' | 'aborted' | ''（空闲） */
+  finished: '' | 'done' | 'aborted';
+}>({ round: 1, sent: 0, total: 0, startedAt: 0, finished: '' });
+
 /** 当前激活模块的 pages（便捷访问，源数据在 scriptModules[activeScriptModule].pages） */
 export function currentModulePages(): ScriptPage[] {
   return scriptModules[activeScriptModule.value]?.pages ?? [];

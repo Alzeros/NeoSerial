@@ -29,6 +29,8 @@
     scriptPanelWidth,
     scriptCurrentRow,
     scriptRunning,
+    scriptRunCount,
+    scriptRunState,
     showTimestamp,
     txBytes,
   } from '$lib/stores';
@@ -156,12 +158,23 @@
         persistSettings();
       }
     });
-    const unlistenSeqDone = onSequenceDone(() => {
+    const unlistenSeqDone = onSequenceDone((d) => {
       scriptRunning.value = false;
       scriptCurrentRow.value = -1;
+      // 结束态：aborted=用户中断，否则完成
+      scriptRunState.finished = d.aborted ? 'aborted' : 'done';
     });
     const unlistenSeqProgress = onSequenceProgress((p) => {
       scriptCurrentRow.value = p.row;
+      // 每条实际发送（progress 仅在 enabled 行发送后触发）计数 +1
+      scriptRunState.sent += 1;
+      // 轮次：已发送数对单轮勾选数取整 +1（单轮 0 条时兜底 1）
+      const perRound = scriptRunState.total > 0 && scriptRunCount.value > 0
+        ? scriptRunState.total / scriptRunCount.value
+        : 0;
+      scriptRunState.round = perRound > 0
+        ? Math.min(scriptRunCount.value, Math.floor((scriptRunState.sent - 1) / perRound) + 1)
+        : 1;
     });
     const unlistenError = onError((e) => {
       console.error('[Serial Error]', e.message);

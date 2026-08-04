@@ -14,6 +14,7 @@
   --background-elevated: #FCFAF5;     /* 卡片/抬升面：比背景略亮 */
   --background-input: #FFFFFF;        /* 输入框/下拉：最亮的纸白 */
   --background-data: #FBFAF6;         /* 数据区：最干净的纸白，视觉重心 */
+  --background-deep: #F4F1E8;         /* 底座：比面板背景略深 2~3%，形成主操作区底座 */
 
   /* ---- 墨水色 (Ink) ---- */
   --foreground: #2D2D2D;              /* 主文字：深灰褐，模拟油墨 */
@@ -29,6 +30,7 @@
   --rx: #2E7D5B;                      /* 接收：深绿，沉稳不刺眼 */
   --tx: #3B5B8A;                      /* 发送：深蓝 */
   --error: #B0413E;                   /* 错误：低饱和砖红 */
+  --error-hover: #9A3936;             /* 错误 hover：略深砖红（实心危险按钮用） */
   --warning: #B5852D;                 /* 警告：琥珀 */
 
   /* ---- 边框 ---- */
@@ -207,6 +209,18 @@ body {
   border-color: var(--error);
 }
 
+/* 实心危险按钮：运行中"停止"用，红底白字，视觉警示强于 btn-danger */
+.btn-danger-solid {
+  background: var(--error);
+  color: #FFFFFF;
+  border-color: var(--error);
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+  background: var(--error-hover);
+  border-color: var(--error-hover);
+}
+
 .btn-ghost {
   background: transparent;
   border-color: transparent;
@@ -245,6 +259,36 @@ input[type="number"]:disabled {
   background: var(--background);
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+/* 隐藏 number 输入框的上下箭头（带后缀的紧凑输入框用） */
+.no-spin::-webkit-inner-spin-button,
+.no-spin::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.no-spin {
+  -moz-appearance: textfield;
+}
+
+/* 等宽数字：数字变化时宽度不跳（状态区、次数、间隔、Delay 等） */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 运行中圆点呼吸动画 */
+@keyframes status-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.5; transform: scale(1.25); }
+}
+.status-dot-pulse {
+  animation: status-pulse 1.4s ease-in-out infinite;
+}
+
+/* 结束态淡回 */
+@keyframes status-fade {
+  from { opacity: 1; }
+  to { opacity: 0; }
 }
 
 /* ============================================================
