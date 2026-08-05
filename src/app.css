@@ -197,6 +197,13 @@ body {
   border-color: var(--border-strong);
 }
 
+/* 清空按钮：平时次要样式，悬停变浅红底+红字（同断开按钮风格） */
+.btn-clear-hover:hover:not(:disabled) {
+  background: rgba(176, 65, 62, 0.08);
+  color: var(--error);
+  border-color: var(--error);
+}
+
 /* 断开按钮：用错误色（砖红）做警示，但保持次要按钮的轻盈感（浅红底+红字+红边） */
 .btn-danger {
   background: rgba(176, 65, 62, 0.08);

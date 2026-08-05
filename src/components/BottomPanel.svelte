@@ -22,6 +22,7 @@
     const unlisten = onFileSendProgress((p) => {
       fileSendProgress.value = p.total > 0 ? Math.round((p.sent / p.total) * 100) : 0;
     });
+
     return () => {
       unlisten.then((f) => f());
     };
@@ -125,70 +126,67 @@
 </script>
 
 <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
-  <!-- 第一排：操作按钮 + 复选框（不换行，由左栏 min-width 兜底） -->
-  <!-- 第一排：操作按钮 + 显示/发送开关 -->
-  <div class="flex items-center gap-3 px-5 pt-3 pb-1.5">
-    <button class="btn btn-secondary flex-shrink-0" onclick={clearLogLines}>清空</button>
-    <button class="btn btn-secondary flex-shrink-0" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
-
-    <div class="w-px h-5 bg-[var(--border)] mx-1 flex-shrink-0"></div>
-
-    <label class="switch flex-shrink-0">
-      <input type="checkbox" bind:checked={hexDisplay.value} />
-      <span class="switch-track"></span>
-      <span class="switch-label">HEX显示</span>
-    </label>
-
-    <label class="switch flex-shrink-0">
-      <input type="checkbox" bind:checked={hexSend.value} />
-      <span class="switch-track"></span>
-      <span class="switch-label">HEX发送</span>
-    </label>
-
-    <div class="ml-auto flex-shrink-0">
+  <!-- 工具条 + 输入行：共用同一水平 padding（px-5），保证六点边缘对齐 -->
+  <div class="px-5">
+    <!-- 第一行：接收组（左按钮 + 右开关） -->
+    <div class="flex items-center gap-2 pt-3 pb-2">
+      <button data-m-clear class="btn btn-secondary flex-shrink-0 flex items-center justify-center btn-clear-hover" style="height: 32px; width: 96px; padding: 0;" onclick={clearLogLines}>清空</button>
       {#if paused.value}
-        <button class="btn btn-primary" onclick={() => (paused.value = false)}>继续</button>
+        <button data-m-pause class="btn btn-primary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={() => (paused.value = false)}>继续</button>
       {:else}
-        <button class="btn btn-secondary" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
+        <button data-m-pause class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
       {/if}
+      <div class="ml-auto flex items-center gap-4 flex-shrink-0">
+        <label data-m-hexdisp class="switch flex-shrink-0 min-w-[96px]">
+          <input type="checkbox" bind:checked={hexDisplay.value} />
+          <span class="switch-track"></span>
+          <span class="switch-label">HEX显示</span>
+        </label>
+        <label data-m-hexsend class="switch flex-shrink-0 min-w-[96px]">
+          <input type="checkbox" bind:checked={hexSend.value} />
+          <span class="switch-track"></span>
+          <span class="switch-label">HEX发送</span>
+        </label>
+      </div>
     </div>
-  </div>
 
-  <!-- 第二排：时间戳 / 回车换行 / 记录发送 -->
-  <div class="flex items-center gap-3 px-5 pb-3">
-    <label class="switch flex-shrink-0">
-      <input type="checkbox" bind:checked={showTimestamp.value} />
-      <span class="switch-track"></span>
-      <span class="switch-label">时间戳</span>
-    </label>
+    <!-- 第二行：发送组（左按钮 + 右开关），行距 8px -->
+    <div class="flex items-center gap-2 pb-3">
+      <button class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
+      <div class="ml-auto flex items-center gap-4 flex-shrink-0">
+        <label data-m-ts class="switch flex-shrink-0 min-w-[96px]">
+          <input type="checkbox" bind:checked={showTimestamp.value} />
+          <span class="switch-track"></span>
+          <span class="switch-label">时间戳</span>
+        </label>
+        <label data-m-crlf class="switch flex-shrink-0 min-w-[96px]">
+          <input type="checkbox" checked={lineEnding.value === 'Crlf'} onchange={(e) => lineEnding.value = (e.target as HTMLInputElement).checked ? 'Crlf' : 'None'} />
+          <span class="switch-track"></span>
+          <span class="switch-label">回车换行</span>
+        </label>
+        <label data-m-logsend class="switch flex-shrink-0 min-w-[96px]">
+          <input type="checkbox" bind:checked={logSendContent.value} />
+          <span class="switch-track"></span>
+          <span class="switch-label">记录发送</span>
+        </label>
+      </div>
+    </div>
 
-    <label class="switch flex-shrink-0">
-      <input type="checkbox" checked={lineEnding.value === 'Crlf'} onchange={(e) => lineEnding.value = (e.target as HTMLInputElement).checked ? 'Crlf' : 'None'} />
-      <span class="switch-track"></span>
-      <span class="switch-label">回车换行</span>
-    </label>
-
-    <label class="switch flex-shrink-0">
-      <input type="checkbox" bind:checked={logSendContent.value} />
-      <span class="switch-track"></span>
-      <span class="switch-label">记录发送</span>
-    </label>
-  </div>
-
-  <!-- 第二排：发送输入（输入框始终可输入，仅发送按钮在未连接时禁用） -->
-  <div class="flex items-center gap-3 px-5 pb-3">
-    <input
-      type="text"
-      style="flex:1 1 0%;min-width:0;height:40px;"
-      placeholder="输入要发送的内容..."
-      bind:value={sendText.value}
-      onkeydown={handleKeydown}
-    />
-    <button
-      class="btn btn-primary min-w-[96px] h-10"
-      onclick={handleSend}
-      disabled={!connected.value}
-    >发送</button>
+    <!-- 发送输入（输入框始终可输入，仅发送按钮在未连接时禁用）；与上方工具条同容器同 padding -->
+    <div class="flex items-center gap-3 pb-3">
+      <input
+        type="text"
+        style="flex:1 1 0%;min-width:0;height:40px;"
+        placeholder="输入要发送的内容..."
+        bind:value={sendText.value}
+        onkeydown={handleKeydown}
+      />
+      <button
+        class="btn btn-primary min-w-[96px] h-10"
+        onclick={handleSend}
+        disabled={!connected.value}
+      >发送</button>
+    </div>
   </div>
 
   <!-- 第三、四排：文件发送 + 日志保存（可折叠，默认收起，向上展开） -->
