@@ -22,8 +22,8 @@
   --muted-foreground: #8A8580;        /* 弱化文字/标签 */
 
   /* ---- 强调色 (Accent) ---- */
-  --primary: #3F51C5;                 /* 主色：靛蓝（默认主题色） */
-  --primary-hover: #3342A8;           /* 主色 hover */
+  --primary: #0F6E56;                 /* 主色：松绿（默认主题色） */
+  --primary-hover: #0C5A48;           /* 主色 hover */
   --primary-foreground: #FFFFFF;      /* 主色上的文字 */
 
   /* ---- 功能色 ---- */

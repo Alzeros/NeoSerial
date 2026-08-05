@@ -77,8 +77,8 @@
     // 预设波特率：兜底为默认三项
     presetBaudRates.value =
       s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
-    // 主题色：兜底为 blue，并应用到 <html>（值可为预设 key 或 'custom:#RRGGBB'）
-    const tc = s.presets?.theme_color || 'blue';
+    // 主题色：兜底为 green，并应用到 <html>（值可为预设 key 或 'custom:#RRGGBB'）
+    const tc = s.presets?.theme_color || 'green';
     themeColor.value = tc;
     applyThemeColor(tc);
   }

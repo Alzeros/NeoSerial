@@ -15,7 +15,7 @@
   ];
 
   // 主题色编辑副本（打开时从 store 拷贝，取消不应用；选中即时预览）
-  let editThemeColor = $state<string>('blue');
+  let editThemeColor = $state<string>('green');
   // 日志字体编辑副本
   let editFontSize = $state(14);
   let editLineHeight = $state(1.6);

@@ -58,8 +58,8 @@ export const themeColorMeta: { key: ThemeColorKey; color: string; label: string 
   { key: 'teal', color: '#3A5A50', label: '青墨' },
   { key: 'slate', color: '#4C5A73', label: '灰蓝' },
 ];
-/** 主题色值：预设 key（如 'blue'）或自定义 'custom:#RRGGBB' */
-export const themeColor = $state<{ value: string }>({ value: 'blue' });
+/** 主题色值：预设 key（如 'green'）或自定义 'custom:#RRGGBB' */
+export const themeColor = $state<{ value: string }>({ value: 'green' });
 
 /** hex → "H S% L%" 字符串，用于 --primary-hsl 等 */
 function hexToHsl(hex: string): string {
