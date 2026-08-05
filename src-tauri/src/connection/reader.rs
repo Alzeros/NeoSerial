@@ -44,6 +44,22 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>) {
     }
 }
 
+/// 把 LineAssembler 中不换行的残尾（如 shell 的 "> " 提示符）补打为一行。
+/// 残尾没有换行符，正常切行永远等不到，需在设备输出间歇（读超时）时主动取出。
+/// 复用 flush_lines：统一处理前端 emit + 文件日志。
+fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>) {
+    let Some(tail) = assembler.flush() else {
+        return;
+    };
+    if tail.is_empty() {
+        return;
+    }
+    let ts = now_local_ts();
+    let line = LogLine::new(ts, Dir::Rx, tail, &[]);
+    pending_lines.push(line);
+    flush_lines(app_handle, pending_lines);
+}
+
 /// 启动串口读取线程。
 pub fn spawn_reader(
     mut port: PortReader,
@@ -62,9 +78,11 @@ pub fn spawn_reader(
                 Ok(n) if n > 0 => {
                     rx_bytes.fetch_add(n as u64, std::sync::atomic::Ordering::SeqCst);
                     let lines = assembler.feed(&buf[..n]);
+                    // 同一 read 批次内的所有行共用同一时间戳：保持一批输出整体一致，
+                    // 也避免同一逻辑输出（如 help 列表）各行时间戳跳动。
+                    let ts = now_local_ts();
                     for raw in lines {
-                        let ts = now_local_ts();
-                        let line = LogLine::new(ts, Dir::Rx, raw, &[]);
+                        let line = LogLine::new(ts.clone(), Dir::Rx, raw, &[]);
                         pending_lines.push(line);
                     }
 
@@ -79,11 +97,15 @@ pub fn spawn_reader(
                     let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total });
                 }
                 Ok(_) => {
-                    // 超时，继续循环检查 running
+                    // 超时：有数据也可能在等下一批，先 flush 已有行
                     flush_lines(&app_handle, &mut pending_lines);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
+                    // 超时（读超时到）：此刻通常意味着设备输出告一段落，
+                    // 把不换行的残尾（如 shell 的 "> " 提示符）也补打出来，
+                    // 避免残留行滞留到下一批、带上下一个时间戳。
                     flush_lines(&app_handle, &mut pending_lines);
+                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines);
                 }
                 Err(e) => {
                     // 共享模式下锁错误不致命，继续运行

@@ -35,12 +35,18 @@ impl LineAssembler {
 
     /// 在 pending 开头查找换行符，返回 (行内容结束位置, 换行符字节数)。
     /// 优先匹配 \r\n（2字节），再 \n / \r（1字节）。
+    ///
+    /// 注意：若 \r 为 pending 最后一个字节，不确定是 \r\n 还是 \r，
+    /// 延迟到下一次 feed 再判断，避免跨 read 边界切分时把 \r\n 拆成两行。
     fn find_newline(&self) -> Option<(usize, usize)> {
         for i in 0..self.pending.len() {
             let b = self.pending[i];
             if b == b'\r' {
-                // 检查是否 \r\n
-                if i + 1 < self.pending.len() && self.pending[i + 1] == b'\n' {
+                // \r 是最后一个字节 → 可能只是 \r\n 的前半，等更多数据
+                if i + 1 >= self.pending.len() {
+                    return None;
+                }
+                if self.pending[i + 1] == b'\n' {
                     return Some((i, 2));
                 }
                 return Some((i, 1));
@@ -53,7 +59,19 @@ impl LineAssembler {
     }
 
     /// 取出残留的半行（无换行符结尾的尾段）。若无可返回 None。
+    /// 取出前会去掉尾随的 \r / \n（这些是 deferred 的换行符残留）。
     pub fn flush(&mut self) -> Option<Vec<u8>> {
+        if self.pending.is_empty() {
+            return None;
+        }
+        // 去掉尾随的换行符：\r 可能因 find_newline 的延迟判断而留在 pending 末尾
+        while let Some(&b) = self.pending.last() {
+            if b == b'\r' || b == b'\n' {
+                self.pending.pop();
+            } else {
+                break;
+            }
+        }
         if self.pending.is_empty() {
             None
         } else {
@@ -75,12 +93,17 @@ mod tests {
 
     #[test]
     fn test_split_across_reads() {
-        // 第一次 feed 的 "AT+\r" 末尾 \r 是 CR 换行符，立即切出 "AT+"
+        // 第一次 feed 末尾的 \r 是 pending 最后一个字节 → 延迟判断，不立即切行。
         let mut a = LineAssembler::new();
         let l1 = a.feed(b"AT+\r");
-        assert_eq!(l1, vec![b"AT+".to_vec()]);
+        assert!(l1.is_empty());
+        // 第二次 feed 中 \r 与后续字节相连，逐步切出全部行。
+        // 此时 pending = "AT+\rCFUN=1,1\r\nOK\r\n"
+        // → \r(i=3) 后跟 'C' → CR 换行 → "AT+"
+        // → \r(i=9) 后跟 \n  → \r\n 换行 → "CFUN=1,1"
+        // → \r(i=2) 后跟 \n  → \r\n 换行 → "OK"
         let l2 = a.feed(b"CFUN=1,1\r\nOK\r\n");
-        assert_eq!(l2, vec![b"CFUN=1,1".to_vec(), b"OK".to_vec()]);
+        assert_eq!(l2, vec![b"AT+".to_vec(), b"CFUN=1,1".to_vec(), b"OK".to_vec()]);
     }
 
     #[test]
@@ -92,9 +115,12 @@ mod tests {
 
     #[test]
     fn test_cr_only() {
+        // 末尾的 \r 被延迟判断（因不确定是 \r 还是 \r\n 的前半），
+        // 需要 flush 才能取出最后一行。
         let mut a = LineAssembler::new();
-        let lines = a.feed(b"abc\rdef\r");
-        assert_eq!(lines, vec![b"abc".to_vec(), b"def".to_vec()]);
+        let l1 = a.feed(b"abc\rdef\r");
+        assert_eq!(l1, vec![b"abc".to_vec()]);
+        assert_eq!(a.flush(), Some(b"def".to_vec()));
     }
 
     #[test]
@@ -112,6 +138,15 @@ mod tests {
         a.feed(b"incomplete");
         assert_eq!(a.flush(), Some(b"incomplete".to_vec()));
         assert_eq!(a.flush(), None);
+    }
+
+    #[test]
+    fn test_flush_shell_prompt_tail() {
+        // 模拟设备末尾的 "> " 提示符（不换行）：feed 出完整行后，残尾应能通过 flush 取出。
+        let mut a = LineAssembler::new();
+        let lines = a.feed(b"help\r\n * help\r\n> ");
+        assert_eq!(lines, vec![b"help".to_vec(), b" * help".to_vec()]);
+        assert_eq!(a.flush(), Some(b"> ".to_vec()));
     }
 
     #[test]
