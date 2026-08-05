@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { presetBaudRates, cachedSettings, themeColor, themeColorMeta, themeColorHex, applyThemeColor, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle } from '$lib/stores';
   import { saveSettings } from '$lib/tauri';
   import type { Settings } from '$lib/types';
 
@@ -14,8 +14,8 @@
     { key: 'log', label: '日志显示' },
   ];
 
-  // 主题色编辑副本（打开时从 store 拷贝，取消不应用；选中即时预览）
-  let editThemeColor = $state<string>('green');
+  // 主题编辑副本（打开时从 store 拷贝，取消不应用；选中即时预览）
+  let editTheme = $state<string>('preset-1');
   // 日志字体编辑副本
   let editFontSize = $state(14);
   let editLineHeight = $state(1.6);
@@ -33,7 +33,7 @@
 
   export function show() {
     editBaudRates = [...presetBaudRates.value];
-    editThemeColor = themeColor.value;
+    editTheme = theme.value;
     editFontSize = logFontSize.value;
     editLineHeight = logLineHeight.value;
     editDirLabel = logDirLabelStyle.value;
@@ -43,10 +43,10 @@
     open = true;
   }
 
-  // 选中主题色：即时预览（应用到 <html>），但不落盘；取消则恢复原值
-  function selectThemeColor(value: string) {
-    editThemeColor = value;
-    applyThemeColor(value);
+  // 选中主题：即时预览（应用到 <html>），但不落盘；取消则恢复原值
+  function selectTheme(value: string) {
+    editTheme = value;
+    applyTheme(value);
   }
 
   // 字号/行高：即时预览
@@ -62,18 +62,6 @@
   function changeDirLabel(v: 'short' | 'full') {
     editDirLabel = v;
     logDirLabelStyle.value = v;
-  }
-
-  // 自定义色：用原生颜色选择器，选后存为 'custom:#RRGGBB'
-  function selectCustomColor(e: Event) {
-    const input = e.target as HTMLInputElement;
-    const hex = input.value.toUpperCase();
-    selectThemeColor(`custom:${hex}`);
-  }
-
-  // 当前是否自定义色
-  function isCustom(value: string): boolean {
-    return value.startsWith('custom:');
   }
 
   function addBaud() {
@@ -98,8 +86,8 @@
     const userAdded = editBaudRates.filter((b) => !isDefault(b));
     const rates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
     presetBaudRates.value = rates;
-    // 主题色：预览值落盘到 store（<html> 已在选中时应用）
-    themeColor.value = editThemeColor;
+    // 主题：预览值落盘到 store（<html> 已在选中时应用）
+    theme.value = editTheme;
     // 日志字体：预览值落盘到 store
     logFontSize.value = editFontSize;
     logLineHeight.value = editLineHeight;
@@ -110,7 +98,7 @@
       const next: Settings = {
         ...base,
         ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel },
-        presets: { baud_rates: rates, theme_color: editThemeColor },
+        presets: { baud_rates: rates, theme: editTheme },
       };
       try {
         await saveSettings(next);
@@ -123,8 +111,8 @@
   }
 
   function handleCancel() {
-    // 取消：恢复打开前的主题色与字体（撤销预览）
-    applyThemeColor(themeColor.value);
+    // 取消：恢复打开前的主题与字体（撤销预览）
+    applyTheme(theme.value);
     applyLogFont(logFontSize.value, logLineHeight.value);
     logDirLabelStyle.value = origDirLabel;
     open = false;
@@ -206,43 +194,29 @@
               <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={addBaud}>添加</button>
             </div>
           {:else if activeSection === 'appearance'}
-            <!-- 外观：主题色 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">主题色</div>
+            <!-- 外观：主题预设 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">主题</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              选择应用图标的强调色，点击即时预览。
+              选择应用的整体配色方案，点击即时预览。
             </div>
-            <div class="flex items-start gap-3">
-              {#each themeColorMeta as t}
-                <div class="flex flex-col items-center gap-1">
-                  <span class="text-[11px] text-[var(--muted-foreground)]">{t.label}</span>
-                  <button
-                    class="w-8 h-8 rounded-full border-2 transition-transform cursor-pointer {editThemeColor === t.key
-                      ? 'border-[var(--foreground)] scale-110'
-                      : 'border-transparent hover:scale-105'}"
-                    style="background: {t.color};"
-                    title={t.label}
-                    onclick={() => selectThemeColor(t.key)}
-                  ></button>
-                </div>
-              {/each}
-              <!-- 自定义色：点击触发隐藏的 color input -->
-              <div class="flex flex-col items-center gap-1">
-                <span class="text-[11px] text-[var(--muted-foreground)]">自定义</span>
-                <label
-                  class="relative w-8 h-8 rounded-full border-2 transition-transform cursor-pointer flex items-center justify-center {isCustom(editThemeColor)
-                    ? 'border-[var(--foreground)] scale-110'
-                    : 'border-transparent hover:scale-105'}"
-                  style={isCustom(editThemeColor) ? `background: ${themeColorHex(editThemeColor)};` : 'background: conic-gradient(from 0deg, #ff0000, #ffff00, #00ff00, #00ffff, #0000ff, #ff00ff, #ff0000);'}
-                  title="自定义颜色"
+            <div class="grid grid-cols-2 gap-3">
+              {#each themeMeta as t}
+                <button
+                  class="flex items-center gap-3 rounded-lg border-2 p-3 transition-all cursor-pointer {editTheme === t.key
+                    ? 'border-[var(--primary)]'
+                    : 'border-[var(--border)] hover:border-[var(--border-strong)]'}"
+                  onclick={() => selectTheme(t.key)}
                 >
-                  <input
-                    type="color"
-                    class="absolute inset-0 opacity-0 cursor-pointer"
-                    value={isCustom(editThemeColor) ? themeColorHex(editThemeColor) : '#3F51C5'}
-                    oninput={selectCustomColor}
-                  />
-                </label>
-              </div>
+                  <!-- 预览色块：背景色 + 强调色圆点 -->
+                  <div class="relative w-10 h-10 rounded-md flex-shrink-0" style="background: {t.bg};">
+                    <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {t.accent};"></div>
+                  </div>
+                  <div class="flex flex-col items-start">
+                    <span class="text-[13px] font-medium text-[var(--foreground)]">{t.label}</span>
+                    <span class="text-[11px] text-[var(--muted-foreground)]">{t.accent}</span>
+                  </div>
+                </button>
+              {/each}
             </div>
           {:else if activeSection === 'log'}
             <!-- 日志显示：字号 + 行高 -->

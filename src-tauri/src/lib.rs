@@ -11,7 +11,7 @@ use commands::connection::{connect, disconnect, list_ports, reset_stats};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands};
 use commands::logging::{start_logging, stop_logging, is_logging};
-use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config};
+use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
 
 use state::AppState;
 
@@ -70,6 +70,8 @@ pub fn run() {
             sequence_stop,
             save_sequence_config,
             load_sequence_config,
+            save_sequence_auto,
+            load_sequence_auto,
 
         ])
         .run(tauri::generate_context!())

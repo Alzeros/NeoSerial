@@ -159,6 +159,36 @@ pub fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>, Stri
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
+/// 自动保存序列配置到默认路径（%APPDATA%/neoserial/sequence.json）。
+/// 前端数据变化时自动调用，无需用户手动选择路径。
+#[tauri::command]
+pub fn save_sequence_auto(data: Vec<serde_json::Value>) -> Result<(), String> {
+    let appdata = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let dir = appdata.join("neoserial");
+    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+    let path = dir.join("sequence.json");
+    let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+    std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+/// 自动加载序列配置（从 %APPDATA%/neoserial/sequence.json）。
+/// 文件不存在时返回空数组，前端用默认模块。
+#[tauri::command]
+pub fn load_sequence_auto() -> Result<Vec<serde_json::Value>, String> {
+    let appdata = std::env::var("APPDATA")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let path = appdata.join("neoserial").join("sequence.json");
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+    serde_json::from_str(&text).map_err(|e| e.to_string())
+}
+
 #[derive(serde::Deserialize)]
 pub struct SequenceCommand {
     pub enabled: bool,

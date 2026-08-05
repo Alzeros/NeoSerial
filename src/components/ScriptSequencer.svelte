@@ -105,7 +105,7 @@
     }
   }
 
-  import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, sequenceRun, sequenceStop, send } from '$lib/tauri';
+  import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, loadSequenceAuto, saveSequenceAuto, sequenceRun, sequenceStop, send } from '$lib/tauri';
   import { connected } from '$lib/stores';
 
   // 单行发送：点编号按钮即发送该行（用本行 hex/enter 设置）
@@ -178,6 +178,47 @@
       console.error('加载配置失败:', e);
     }
   }
+
+  // ---- 自动加载 & 自动保存 ----
+  // 启动时从默认路径加载；数据变化时防抖自动保存
+  let autoSaveLoaded = $state(false);
+  let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+
+  async function autoLoad() {
+    try {
+      const modules = await loadSequenceAuto();
+      if (modules.length > 0) {
+        scriptModules.length = 0;
+        scriptModules.push(...modules);
+        activeScriptModule.value = 0;
+        activeScriptPage.value = 0;
+      }
+    } catch (e) {
+      console.error('自动加载序列配置失败:', e);
+    } finally {
+      autoSaveLoaded = true;
+    }
+  }
+
+  // 防抖自动保存：数据变化 800ms 后写盘
+  $effect(() => {
+    // 深度追踪 scriptModules 的变化
+    JSON.stringify(scriptModules);
+    if (!autoSaveLoaded) return;
+    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    autoSaveTimer = setTimeout(async () => {
+      try {
+        await saveSequenceAuto(scriptModules);
+      } catch (e) {
+        console.error('自动保存序列配置失败:', e);
+      }
+    }, 800);
+  });
+
+  // 组件挂载时自动加载
+  $effect(() => {
+    if (!autoSaveLoaded) autoLoad();
+  });
 
   // 清空需二次确认：点"清空"只弹确认浮层，确认后才真正清空
   let confirmClear = $state<{ open: boolean }>({ open: false });
@@ -592,7 +633,7 @@
       <button
         class="h-7 -ml-2 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] transition-colors"
         onclick={handleSaveConfig}
-      >保存</button>
+      >另存为</button>
       <button
         class="h-7 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] transition-colors"
         onclick={handleLoadConfig}

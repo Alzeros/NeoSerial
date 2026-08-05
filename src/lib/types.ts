@@ -94,7 +94,7 @@ export interface Settings {
   error_keywords: string[];
   presets: {
     baud_rates: number[];
-    theme_color: string;
+    theme: string;
   };
 }
 

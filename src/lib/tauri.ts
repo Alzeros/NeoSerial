@@ -115,6 +115,27 @@ export async function loadSequenceConfig(path: string): Promise<ScriptModule[]> 
   }));
 }
 
+/** 自动保存序列配置到默认路径（%APPDATA%/neoserial/sequence.json）。 */
+export async function saveSequenceAuto(data: ScriptModule[]): Promise<void> {
+  await invoke('save_sequence_auto', { data });
+}
+
+/** 自动加载序列配置（从 %APPDATA%/neoserial/sequence.json）。文件不存在返回空数组。 */
+export async function loadSequenceAuto(): Promise<ScriptModule[]> {
+  const raw = await invoke<unknown[]>('load_sequence_auto');
+  if (raw.length === 0) return [];
+  const isModule = (r: unknown): r is ScriptModule =>
+    typeof r === 'object' && r !== null && 'pages' in r && 'id' in r;
+  if (isModule(raw[0])) {
+    return raw as ScriptModule[];
+  }
+  // 旧格式迁移
+  return [defaultScriptModule('快捷指令')].map((m) => ({
+    ...m,
+    pages: raw as unknown as ScriptPage[],
+  }));
+}
+
 // ============ 文件对话框 ============
 
 export async function openFileDialog(title?: string, filters?: { name: string; extensions: string[] }[]): Promise<string | null> {

@@ -1,47 +1,52 @@
 /* ============================================================
-   NeoSerial — 现代纸质风格 (Warm Neutral Paper Theme)
-   设计哲学：模拟自然纸张的暖灰底 + 油墨印刷的深褐字，
-   柔和阴影与圆角营造"高端数字笔记本"质感。
+   NeoSerial — 主题预设系统
+   4 套完整色板，通过 html[data-theme="preset-N"] 切换。
+   :root 定义预设 1（暖米白 + 青绿）为默认值。
    ============================================================ */
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+/* ===== 预设 1 · 暖米白 + 青绿（默认） ===== */
 :root {
-  /* ---- 纸张色阶 (Paper) ---- */
-  --background: #F5F2EB;              /* 主背景：暖灰米白，模拟自然纸张 */
-  --background-elevated: #FCFAF5;     /* 卡片/抬升面：比背景略亮 */
-  --background-input: #FFFFFF;        /* 输入框/下拉：最亮的纸白 */
-  --background-data: #FBFAF6;         /* 数据区：最干净的纸白，视觉重心 */
-  --background-deep: #F4F1E8;         /* 底座：比面板背景略深 2~3%，形成主操作区底座 */
+  --background: #F4F1E9;
+  --background-elevated: #FBFAF6;
+  --background-input: #FFFFFF;
+  --background-data: #FBFAF6;
+  --background-deep: #EFEBE0;
 
-  /* ---- 墨水色 (Ink) ---- */
-  --foreground: #2D2D2D;              /* 主文字：深灰褐，模拟油墨 */
-  --foreground-secondary: #5C5C5C;    /* 次要文字 */
-  --muted-foreground: #8A8580;        /* 弱化文字/标签 */
+  --foreground: #3A3A32;
+  --foreground-secondary: #6A665A;
+  --muted-foreground: #8A8676;
 
-  /* ---- 强调色 (Accent) ---- */
-  --primary: #0F6E56;                 /* 主色：松绿（默认主题色） */
-  --primary-hover: #0C5A48;           /* 主色 hover */
-  --primary-foreground: #FFFFFF;      /* 主色上的文字 */
+  --primary: #0F6E56;
+  --primary-hover: #0C5A46;
+  --primary-active: #094A39;
+  --primary-foreground: #FFFFFF;
 
-  /* ---- 功能色 ---- */
-  --rx: #2E7D5B;                      /* 接收：深绿，沉稳不刺眼 */
-  --tx: #3B5B8A;                      /* 发送：深蓝 */
-  --error: #B0413E;                   /* 错误：低饱和砖红 */
-  --error-hover: #9A3936;             /* 错误 hover：略深砖红（实心危险按钮用） */
-  --warning: #B5852D;                 /* 警告：琥珀 */
+  --rx: #3F8F5C;
+  --tx: #3B5B8A;
+  --error: #B5473A;
+  --error-hover: #9A3A30;
+  --warning: #C48A2E;
 
-  /* ---- 边框 ---- */
-  --border: rgba(0, 0, 0, 0.08);      /* 极细低对比，模拟纸张折痕 */
+  --border: #E4E0D4;
   --border-subtle: rgba(0, 0, 0, 0.05);
   --border-strong: rgba(0, 0, 0, 0.14);
 
-  /* ---- 柔和阴影 (Soft Shadow) ---- */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
   --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
   --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  --overlay-hover: rgba(0, 0, 0, 0.04);
+  --overlay-track: rgba(0, 0, 0, 0.16);
+  --overlay-scrollbar: rgba(0, 0, 0, 0.14);
+  --overlay-scrollbar-hover: rgba(0, 0, 0, 0.24);
+  --focus-ring: rgba(15, 110, 86, 0.15);
+  --danger-overlay: rgba(181, 71, 58, 0.08);
+  --danger-overlay-hover: rgba(181, 71, 58, 0.15);
+  --noise-opacity: 0.025;
 
   /* ---- 圆角 ---- */
   --radius: 10px;
@@ -57,69 +62,226 @@
                "Microsoft YaHei", "Hiragino Sans GB", sans-serif;
   --font-mono: "SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Microsoft YaHei", monospace;
 
-  /* ---- Tailwind HSL 映射（供 bg-background 等语义类使用，与纸质色对齐） ---- */
-  --background-hsl: 38 23% 94%;       /* #F5F2EB */
-  --foreground-hsl: 0 0% 18%;         /* #2D2D2D */
-  --primary-hsl: 230 53% 51%;         /* #3F51C5 */
+  /* ---- Tailwind HSL 映射 ---- */
+  --background-hsl: 40 25% 93%;
+  --foreground-hsl: 60 8% 21%;
+  --primary-hsl: 167 76% 25%;
   --primary-foreground-hsl: 0 0% 100%;
-  --muted-foreground-hsl: 30 10% 52%; /* #8A8580 */
-  --border-hsl: 0 0% 0%;              /* 配合 alpha 使用 */
+  --muted-foreground-hsl: 47 8% 50%;
+  --border-hsl: 43 24% 86%;
   --input-hsl: 0 0% 100%;
-  --ring-hsl: 230 53% 51%;
-  --secondary-hsl: 38 23% 96%;
-  --secondary-foreground-hsl: 0 0% 18%;
-  --destructive-hsl: 2 49% 47%;
+  --ring-hsl: 167 76% 25%;
+  --secondary-hsl: 40 25% 96%;
+  --secondary-foreground-hsl: 60 8% 21%;
+  --destructive-hsl: 6 50% 47%;
   --destructive-foreground-hsl: 0 0% 100%;
-  --muted-hsl: 38 18% 92%;
-  --accent-hsl: 230 53% 51%;
+  --muted-hsl: 40 18% 92%;
+  --accent-hsl: 167 76% 25%;
   --accent-foreground-hsl: 0 0% 100%;
   --popover-hsl: 0 0% 100%;
-  --popover-foreground-hsl: 0 0% 18%;
+  --popover-foreground-hsl: 60 8% 21%;
   --card-hsl: 40 33% 98%;
-  --card-foreground-hsl: 0 0% 18%;
-  --rx-hsl: 146 47% 33%;              /* #2E7D5B */
-  --tx-hsl: 214 41% 38%;              /* #3B5B8A */
-  --system-hsl: 38 10% 52%;
+  --card-foreground-hsl: 60 8% 21%;
+  --rx-hsl: 140 38% 40%;
+  --tx-hsl: 214 41% 38%;
+  --system-hsl: 47 8% 50%;
 }
 
-/* ============================================================
-   主题色切换：html[data-theme-color="..."] 覆盖主色衍生变量。
-   5 种预设，默认 blue(#4A5FE8) 已在 :root 定义。
-   ============================================================ */
-html[data-theme-color="green"] {
-  --primary: #0F6E56;
-  --primary-hover: #0C5A48;
-  --primary-hsl: 167 76% 24%;
-  --ring-hsl: 167 76% 24%;
-  --accent-hsl: 167 76% 24%;
-}
-html[data-theme-color="orange"] {
-  --primary: #B4653F;
-  --primary-hover: #9A5535;
-  --primary-hsl: 19 49% 48%;
-  --ring-hsl: 19 49% 48%;
-  --accent-hsl: 19 49% 48%;
-}
-html[data-theme-color="teal"] {
+/* ===== 预设 2 · 浅灰白 + 深墨绿 ===== */
+html[data-theme="preset-2"] {
+  --background: #EFEFEC;
+  --background-elevated: #FFFFFF;
+  --background-input: #FFFFFF;
+  --background-data: #FFFFFF;
+  --background-deep: #E8E8E4;
+
+  --foreground: #4A4A46;
+  --foreground-secondary: #6B6B65;
+  --muted-foreground: #8B8B85;
+
   --primary: #3A5A50;
   --primary-hover: #2F4A42;
+  --primary-active: #24382F;
+  --primary-foreground: #FFFFFF;
+
+  --rx: #3F8F5C;
+  --tx: #4A5A6A;
+  --error: #A8483C;
+  --error-hover: #8A3A30;
+  --warning: #B8862E;
+
+  --border: #DCDCD7;
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --border-strong: rgba(0, 0, 0, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  --overlay-hover: rgba(0, 0, 0, 0.04);
+  --overlay-track: rgba(0, 0, 0, 0.16);
+  --overlay-scrollbar: rgba(0, 0, 0, 0.14);
+  --overlay-scrollbar-hover: rgba(0, 0, 0, 0.24);
+  --focus-ring: rgba(58, 90, 80, 0.15);
+  --danger-overlay: rgba(168, 72, 60, 0.08);
+  --danger-overlay-hover: rgba(168, 72, 60, 0.15);
+  --noise-opacity: 0.015;
+
+  --background-hsl: 60 4% 93%;
+  --foreground-hsl: 60 2% 28%;
   --primary-hsl: 156 22% 29%;
+  --primary-foreground-hsl: 0 0% 100%;
+  --muted-foreground-hsl: 60 3% 54%;
+  --border-hsl: 60 8% 86%;
+  --input-hsl: 0 0% 100%;
   --ring-hsl: 156 22% 29%;
+  --secondary-hsl: 60 4% 96%;
+  --secondary-foreground-hsl: 60 2% 28%;
+  --destructive-hsl: 6 47% 45%;
+  --destructive-foreground-hsl: 0 0% 100%;
+  --muted-hsl: 60 4% 92%;
   --accent-hsl: 156 22% 29%;
+  --accent-foreground-hsl: 0 0% 100%;
+  --popover-hsl: 0 0% 100%;
+  --popover-foreground-hsl: 60 2% 28%;
+  --card-hsl: 0 0% 100%;
+  --card-foreground-hsl: 60 2% 28%;
+  --rx-hsl: 140 38% 40%;
+  --tx-hsl: 210 17% 36%;
+  --system-hsl: 60 3% 54%;
 }
-html[data-theme-color="slate"] {
-  --primary: #4C5A73;
-  --primary-hover: #3F4A60;
-  --primary-hsl: 218 21% 38%;
-  --ring-hsl: 218 21% 38%;
-  --accent-hsl: 218 21% 38%;
+
+/* ===== 预设 3 · 深色导航 + 青绿高亮（暗色模式） ===== */
+html[data-theme="preset-3"] {
+  --background: #1B2430;
+  --background-elevated: #232E3C;
+  --background-input: #283445;
+  --background-data: #232E3C;
+  --background-deep: #161E2A;
+
+  --foreground: #E5EAEE;
+  --foreground-secondary: #D0D8E0;
+  --muted-foreground: #B8C2CC;
+
+  --primary: #1D9E75;
+  --primary-hover: #17835F;
+  --primary-active: #12684C;
+  --primary-foreground: #FFFFFF;
+
+  --rx: #3FB37A;
+  --tx: #6B9FD9;
+  --error: #E0655A;
+  --error-hover: #C05048;
+  --warning: #E0A83E;
+
+  --border: #344150;
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-strong: rgba(255, 255, 255, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.3);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.5);
+
+  --overlay-hover: rgba(255, 255, 255, 0.06);
+  --overlay-track: rgba(255, 255, 255, 0.16);
+  --overlay-scrollbar: rgba(255, 255, 255, 0.14);
+  --overlay-scrollbar-hover: rgba(255, 255, 255, 0.24);
+  --focus-ring: rgba(29, 158, 117, 0.2);
+  --danger-overlay: rgba(224, 101, 90, 0.1);
+  --danger-overlay-hover: rgba(224, 101, 90, 0.18);
+  --noise-opacity: 0;
+
+  --background-hsl: 216 28% 15%;
+  --foreground-hsl: 210 18% 92%;
+  --primary-hsl: 160 68% 37%;
+  --primary-foreground-hsl: 0 0% 100%;
+  --muted-foreground-hsl: 210 16% 76%;
+  --border-hsl: 213 21% 26%;
+  --input-hsl: 213 24% 21%;
+  --ring-hsl: 160 68% 37%;
+  --secondary-hsl: 213 24% 21%;
+  --secondary-foreground-hsl: 210 18% 92%;
+  --destructive-hsl: 5 68% 62%;
+  --destructive-foreground-hsl: 0 0% 100%;
+  --muted-hsl: 213 24% 18%;
+  --accent-hsl: 160 68% 37%;
+  --accent-foreground-hsl: 0 0% 100%;
+  --popover-hsl: 213 24% 21%;
+  --popover-foreground-hsl: 210 18% 92%;
+  --card-hsl: 213 24% 21%;
+  --card-foreground-hsl: 210 18% 92%;
+  --rx-hsl: 150 48% 48%;
+  --tx-hsl: 210 58% 64%;
+  --system-hsl: 210 16% 76%;
 }
-html[data-theme-color="blue"] {
-  --primary: #3F51C5;
-  --primary-hover: #3342A8;
-  --primary-hsl: 230 53% 51%;
-  --ring-hsl: 230 53% 51%;
-  --accent-hsl: 230 53% 51%;
+
+/* ===== 预设 4 · 暖砂色 + 赤陶橙 ===== */
+html[data-theme="preset-4"] {
+  --background: #F2E9DD;
+  --background-elevated: #FBF6EE;
+  --background-input: #FFFFFF;
+  --background-data: #FBF6EE;
+  --background-deep: #EDE3D3;
+
+  --foreground: #5C5142;
+  --foreground-secondary: #7A6F5E;
+  --muted-foreground: #9C8F78;
+
+  --primary: #B4653F;
+  --primary-hover: #9A5433;
+  --primary-active: #7F4529;
+  --primary-foreground: #FFFFFF;
+
+  --rx: #5C9A5E;
+  --tx: #5A6B8A;
+  --error: #B5473A;
+  --error-hover: #9A3A30;
+  --warning: #C99A3E;
+
+  --border: #E0D2BC;
+  --border-subtle: rgba(0, 0, 0, 0.05);
+  --border-strong: rgba(0, 0, 0, 0.14);
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.06);
+  --shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+
+  --overlay-hover: rgba(0, 0, 0, 0.04);
+  --overlay-track: rgba(0, 0, 0, 0.16);
+  --overlay-scrollbar: rgba(0, 0, 0, 0.14);
+  --overlay-scrollbar-hover: rgba(0, 0, 0, 0.24);
+  --focus-ring: rgba(180, 101, 63, 0.15);
+  --danger-overlay: rgba(181, 71, 58, 0.08);
+  --danger-overlay-hover: rgba(181, 71, 58, 0.15);
+  --noise-opacity: 0.025;
+
+  --background-hsl: 34 53% 91%;
+  --foreground-hsl: 33 17% 31%;
+  --primary-hsl: 19 49% 48%;
+  --primary-foreground-hsl: 0 0% 100%;
+  --muted-foreground-hsl: 38 16% 54%;
+  --border-hsl: 36 33% 81%;
+  --input-hsl: 0 0% 100%;
+  --ring-hsl: 19 49% 48%;
+  --secondary-hsl: 34 53% 96%;
+  --secondary-foreground-hsl: 33 17% 31%;
+  --destructive-hsl: 6 50% 47%;
+  --destructive-foreground-hsl: 0 0% 100%;
+  --muted-hsl: 34 30% 90%;
+  --accent-hsl: 19 49% 48%;
+  --accent-foreground-hsl: 0 0% 100%;
+  --popover-hsl: 0 0% 100%;
+  --popover-foreground-hsl: 33 17% 31%;
+  --card-hsl: 34 45% 97%;
+  --card-foreground-hsl: 33 17% 31%;
+  --rx-hsl: 122 26% 48%;
+  --tx-hsl: 218 21% 45%;
+  --system-hsl: 38 16% 54%;
+}
+
+/* 暗色主题：禁用纸张噪点纹理 */
+html[data-theme="preset-3"] body {
+  background-image: none;
 }
 
 * {
@@ -199,20 +361,20 @@ body {
 
 /* 清空按钮：平时次要样式，悬停变浅红底+红字（同断开按钮风格） */
 .btn-clear-hover:hover:not(:disabled) {
-  background: rgba(176, 65, 62, 0.08);
+  background: var(--danger-overlay);
   color: var(--error);
   border-color: var(--error);
 }
 
 /* 断开按钮：用错误色（砖红）做警示，但保持次要按钮的轻盈感（浅红底+红字+红边） */
 .btn-danger {
-  background: rgba(176, 65, 62, 0.08);
+  background: var(--danger-overlay);
   color: var(--error);
   border-color: var(--error);
 }
 
 .btn-danger:hover:not(:disabled) {
-  background: rgba(176, 65, 62, 0.15);
+  background: var(--danger-overlay-hover);
   border-color: var(--error);
 }
 
@@ -235,7 +397,7 @@ body {
 }
 
 .btn-ghost:hover:not(:disabled) {
-  background: rgba(0, 0, 0, 0.04);
+  background: var(--overlay-hover);
   box-shadow: none;
 }
 
@@ -365,7 +527,7 @@ select option {
   width: 34px;
   height: 20px;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.16);
+  background: var(--overlay-track);
   transition: background 0.2s ease;
   flex-shrink: 0;
 }
@@ -444,12 +606,12 @@ input[type="checkbox"]:not(.switch input) {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.14);
+  background: var(--overlay-scrollbar);
   border-radius: 4px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: rgba(0, 0, 0, 0.24);
+  background: var(--overlay-scrollbar-hover);
 }
 
 /* ============================================================

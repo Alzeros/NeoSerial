@@ -49,81 +49,21 @@ export const rxBytes = $state<{ value: number }>({ value: 0 });
 /** 预设波特率：连接栏下拉用，默认 9600/115200/921600，用户可在设置中增删 */
 export const presetBaudRates = $state<{ value: number[] }>({ value: [9600, 115200, 921600] });
 
-/** 主题色：5 种预设，默认 blue(#4A5FE8)。切换时通过 html[data-theme-color] 覆盖 --primary */
-export type ThemeColorKey = 'green' | 'orange' | 'teal' | 'slate' | 'blue';
-export const themeColorMeta: { key: ThemeColorKey; color: string; label: string }[] = [
-  { key: 'blue', color: '#3F51C5', label: '靛蓝' },
-  { key: 'green', color: '#0F6E56', label: '松绿' },
-  { key: 'orange', color: '#B4653F', label: '橙棕' },
-  { key: 'teal', color: '#3A5A50', label: '青墨' },
-  { key: 'slate', color: '#4C5A73', label: '灰蓝' },
+/** 主题预设：4 套完整色板，默认 preset-1（暖米白 + 青绿） */
+export type ThemeKey = 'preset-1' | 'preset-2' | 'preset-3' | 'preset-4';
+export const themeMeta: { key: ThemeKey; label: string; bg: string; accent: string }[] = [
+  { key: 'preset-1', label: '暖米白', bg: '#F4F1E9', accent: '#0F6E56' },
+  { key: 'preset-2', label: '浅灰白', bg: '#EFEFEC', accent: '#3A5A50' },
+  { key: 'preset-3', label: '暗色', bg: '#1B2430', accent: '#1D9E75' },
+  { key: 'preset-4', label: '暖砂', bg: '#F2E9DD', accent: '#B4653F' },
 ];
-/** 主题色值：预设 key（如 'green'）或自定义 'custom:#RRGGBB' */
-export const themeColor = $state<{ value: string }>({ value: 'green' });
+/** 当前主题 key */
+export const theme = $state<{ value: string }>({ value: 'preset-1' });
 
-/** hex → "H S% L%" 字符串，用于 --primary-hsl 等 */
-function hexToHsl(hex: string): string {
-  const m = hex.replace('#', '');
-  const r = parseInt(m.slice(0, 2), 16) / 255;
-  const g = parseInt(m.slice(2, 4), 16) / 255;
-  const b = parseInt(m.slice(4, 6), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    if (max === r) h = ((g - b) / d + (g < b ? 6 : 0));
-    else if (max === g) h = (b - r) / d + 2;
-    else h = (r - g) / d + 4;
-    h /= 6;
-  }
-  return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
-}
-
-/** hex 略深一点作为 hover */
-function darkenHex(hex: string, amount = 0.12): string {
-  const m = hex.replace('#', '');
-  let r = parseInt(m.slice(0, 2), 16);
-  let g = parseInt(m.slice(2, 4), 16);
-  let b = parseInt(m.slice(4, 6), 16);
-  r = Math.round(r * (1 - amount));
-  g = Math.round(g * (1 - amount));
-  b = Math.round(b * (1 - amount));
-  return '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join('');
-}
-
-/** 应用主题色到 <html>。
- *  预设 key → 设 data-theme-color 属性，CSS 规则覆盖变量。
- *  custom:hex → 设 data-theme-color="custom" + 内联覆盖 --primary 等变量。 */
-export function applyThemeColor(value: string) {
+/** 应用主题到 <html>：设置 data-theme 属性，CSS 规则自动切换整套色板 */
+export function applyTheme(value: string) {
   if (typeof document === 'undefined') return;
-  const el = document.documentElement;
-  if (value.startsWith('custom:')) {
-    const hex = value.slice(7);
-    const hsl = hexToHsl(hex);
-    el.setAttribute('data-theme-color', 'custom');
-    el.style.setProperty('--primary', hex);
-    el.style.setProperty('--primary-hover', darkenHex(hex));
-    el.style.setProperty('--primary-hsl', hsl);
-    el.style.setProperty('--ring-hsl', hsl);
-    el.style.setProperty('--accent-hsl', hsl);
-  } else {
-    // 预设：清除可能的自定义内联变量，靠 CSS 规则
-    el.style.removeProperty('--primary');
-    el.style.removeProperty('--primary-hover');
-    el.style.removeProperty('--primary-hsl');
-    el.style.removeProperty('--ring-hsl');
-    el.style.removeProperty('--accent-hsl');
-    el.setAttribute('data-theme-color', value);
-  }
-}
-
-/** 取主题色当前实际 hex（用于色块高亮/预览） */
-export function themeColorHex(value: string): string {
-  if (value.startsWith('custom:')) return value.slice(7);
-  const meta = themeColorMeta.find((t) => t.key === value);
-  return meta?.color ?? '#3F51C5';
+  document.documentElement.setAttribute('data-theme', value);
 }
 
 // ============ 文件日志 ============

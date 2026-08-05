@@ -109,24 +109,24 @@ pub struct PresetSettings {
     /// 用户自定义的预设波特率，会追加到连接栏波特率下拉中。
     #[serde(default = "default_baud_rates")]
     pub baud_rates: Vec<u32>,
-    /// 主题色 key：blue/green/orange/teal/slate，默认 blue(#4A5FE8)
-    #[serde(default = "default_theme_color")]
-    pub theme_color: String,
+    /// 主题预设 key：preset-1/preset-2/preset-3/preset-4，默认 preset-1
+    #[serde(default = "default_theme")]
+    pub theme: String,
 }
 
 fn default_baud_rates() -> Vec<u32> {
     vec![9600, 115200, 921600]
 }
 
-fn default_theme_color() -> String {
-    "blue".into()
+fn default_theme() -> String {
+    "preset-1".into()
 }
 
 impl Default for PresetSettings {
     fn default() -> Self {
         PresetSettings {
             baud_rates: default_baud_rates(),
-            theme_color: default_theme_color(),
+            theme: default_theme(),
         }
     }
 }

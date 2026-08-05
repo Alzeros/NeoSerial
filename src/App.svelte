@@ -22,8 +22,8 @@
     logLineHeight,
     logDirLabelStyle,
     applyLogFont,
-    themeColor,
-    applyThemeColor,
+    theme,
+    applyTheme,
     rxBytes,
     scriptPanelOpen,
     scriptPanelWidth,
@@ -77,10 +77,10 @@
     // 预设波特率：兜底为默认三项
     presetBaudRates.value =
       s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
-    // 主题色：兜底为 green，并应用到 <html>（值可为预设 key 或 'custom:#RRGGBB'）
-    const tc = s.presets?.theme_color || 'green';
-    themeColor.value = tc;
-    applyThemeColor(tc);
+    // 主题：兜底为 preset-1，并应用到 <html>
+    const tk = s.presets?.theme || 'preset-1';
+    theme.value = tk;
+    applyTheme(tk);
   }
 
   // 从当前 UI 状态构建可保存的 Settings（基于缓存，避免丢字段）
@@ -110,7 +110,7 @@
       },
       presets: {
         baud_rates: presetBaudRates.value,
-        theme_color: themeColor.value,
+        theme: theme.value,
       },
     };
   }
