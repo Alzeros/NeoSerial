@@ -53,6 +53,13 @@
   $effect(() => {
     refreshPorts();
   });
+
+  // 未连接时定时轮询串口列表（每 2 秒），检测热插拔
+  $effect(() => {
+    if (connected.value) return;
+    const timer = setInterval(refreshPorts, 2000);
+    return () => clearInterval(timer);
+  });
 </script>
 
 <div class="layout-fixed flex items-end border-b px-5 py-4" style="background: var(--background-elevated); border-color: var(--border);">

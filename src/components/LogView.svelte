@@ -1,11 +1,13 @@
 <script lang="ts">
-  import { autoScroll, hexDisplay, logLines, logSendContent, logDirLabelStyle, showTimestamp } from '$lib/stores';
+  import { autoScroll, hexDisplay, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
   let scrollContainer: HTMLDivElement;
 
   $effect(() => {
-    if (autoScroll.value && scrollContainer && logLines.length > 0) {
+    // 依赖 logVersion（始终递增）而非 logLines.length（缓冲区满后不变）
+    logVersion.value;
+    if (autoScroll.value && scrollContainer) {
       requestAnimationFrame(() => {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
       });
