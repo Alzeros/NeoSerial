@@ -132,6 +132,7 @@
     scriptRunState.round = 1;
     scriptRunState.startedAt = Date.now();
     scriptRunState.finished = '';
+    scriptRunning.value = true;
     try {
       await sequenceRun(page.commands, scriptRunCount.value, scriptLoopInterval.value);
     } catch (e) {

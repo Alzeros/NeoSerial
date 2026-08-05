@@ -52,10 +52,10 @@ export const presetBaudRates = $state<{ value: number[] }>({ value: [9600, 11520
 /** 主题预设：4 套完整色板，默认 preset-1（暖米白 + 青绿） */
 export type ThemeKey = 'preset-1' | 'preset-2' | 'preset-3' | 'preset-4';
 export const themeMeta: { key: ThemeKey; label: string; bg: string; accent: string }[] = [
-  { key: 'preset-1', label: '暖米白', bg: '#F4F1E9', accent: '#0F6E56' },
-  { key: 'preset-2', label: '浅灰白', bg: '#EFEFEC', accent: '#3A5A50' },
-  { key: 'preset-3', label: '暗色', bg: '#1B2430', accent: '#1D9E75' },
-  { key: 'preset-4', label: '暖砂', bg: '#F2E9DD', accent: '#B4653F' },
+  { key: 'preset-1', label: '暖白青', bg: '#F4F1E9', accent: '#0F6E56' },
+  { key: 'preset-2', label: '雾灰松', bg: '#EFEFEC', accent: '#3A5A50' },
+  { key: 'preset-3', label: '深海夜航', bg: '#1B2430', accent: '#1D9E75' },
+  { key: 'preset-4', label: '暖砂陶', bg: '#F2E9DD', accent: '#B4653F' },
 ];
 /** 当前主题 key */
 export const theme = $state<{ value: string }>({ value: 'preset-1' });
