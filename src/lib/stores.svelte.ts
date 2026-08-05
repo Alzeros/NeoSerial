@@ -29,6 +29,8 @@ export const displayMode = $state<{ value: 'ascii' | 'hex' }>({ value: 'ascii' }
 export const showTimestamp = $state<{ value: boolean }>({ value: true });
 export const autoScroll = $state<{ value: boolean }>({ value: true });
 export const logVersion = $state<{ value: number }>({ value: 0 });
+/** LogView 滚动容器的 DOM 引用，供 App.svelte 的回调函数使用 */
+export const scrollContainerRef = $state<{ el: HTMLDivElement | null }>({ el: null });
 
 export function appendLogLine(line: LogLine) {
   if (paused.value) return;
@@ -36,7 +38,7 @@ export function appendLogLine(line: LogLine) {
   if (logLines.length > MAX_LOG_LINES) {
     logLines.splice(0, logLines.length - MAX_LOG_LINES);
   }
-  logVersion.value++; // 始终递增，确保 effect 能触发
+  logVersion.value++;
 }
 
 export function clearLogLines() {

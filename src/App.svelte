@@ -49,7 +49,9 @@
     onTxUpdate,
   } from '$lib/tauri';
 
-  function handleRxLine(line: LogLine) {
+  async function handleRxLine(line: LogLine) {
+    // 自动滚动由 LogView 内部 $effect + requestAnimationFrame 处理
+    // 这里只负责把数据塞进 logLines，无需再 tick + 读 scrollHeight
     appendLogLine(line);
   }
 

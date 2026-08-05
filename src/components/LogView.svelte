@@ -1,17 +1,39 @@
 <script lang="ts">
-  import { autoScroll, hexDisplay, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp } from '$lib/stores';
+  import { hexDisplay, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, scrollContainerRef } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
   let scrollContainer: HTMLDivElement;
-
+  // 同步给 App.svelte 用的容器引用（兜底 + 兼容旧调用）
   $effect(() => {
-    // 依赖 logVersion（始终递增）而非 logLines.length（缓冲区满后不变）
+    scrollContainerRef.el = scrollContainer;
+    return () => {
+      if (scrollContainerRef.el === scrollContainer) {
+        scrollContainerRef.el = null;
+      }
+    };
+  });
+
+  /**
+   * 自动滚动：日志有更新就跳到最新一条（无条件跟随）
+   * - $effect 依赖 logVersion（每次 appendLogLine 都 +1，必然触发）
+   * - 直接设置 scrollTop：Svelte 5 中 $effect 在 DOM 提交后运行，scrollHeight 已是新值
+   * - 再补一次 requestAnimationFrame 兜底，确保任何布局时序下都滚到底
+   * - 不再受 autoScroll 开关限制：settings.json 曾持久化 auto_scroll=false 且界面无开关可重开，
+   *   导致日志更新后视图停在顶部。按设计意图，有更新就无条件跳到最新。
+   */
+  $effect(() => {
+    // 明确读取以建立依赖：logVersion 每次 appendLogLine 都 +1
     logVersion.value;
-    if (autoScroll.value && scrollContainer) {
-      requestAnimationFrame(() => {
+    if (!scrollContainer) return;
+
+    // 立即滚到底
+    scrollContainer.scrollTop = scrollContainer.scrollHeight;
+    // 下一帧兜底一次，防止浏览器尚未完成布局导致读取到旧 scrollHeight
+    requestAnimationFrame(() => {
+      if (scrollContainer) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
-      });
-    }
+      }
+    });
   });
 
   function renderLine(line: LogLine): string {
