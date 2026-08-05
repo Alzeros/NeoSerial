@@ -114,11 +114,31 @@
     }
   }
 
+  // IME 组合确认 Enter 的补发标记：中文输入法下，首次 Enter 常被用于确认候选词上屏，
+  // 此时 keydown 的 e.key 是 'Process' 而非 'Enter'，会吞掉一次发送意图。
+  // 记录后用 compositionend 补发，让"第一次按 Enter"也能发出去。
+  let imeEnterPending = false;
+
   function handleKeydown(e: KeyboardEvent) {
+    // 输入法组合中：e.key 为 'Process'，普通 Enter 判断不命中。
+    // 但 e.code 保留物理键位，可精确识别 Enter（不会把空格/方向键选词误判为 Enter）。
+    // 首次 Enter 通常被输入法用于确认上屏，记录下来，待组合结束后补发。
+    if (e.isComposing) {
+      if (e.code === 'Enter') imeEnterPending = true;
+      return;
+    }
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
+  }
+
+  // IME 组合确认结束：文本已上屏，若此前是以 Enter 结束，则补发一次。
+  function handleCompositionEnd() {
+    if (!imeEnterPending) return;
+    imeEnterPending = false;
+    // 下一帧再取 sendText：compositionend 后 DOM value 与 bind 已完成同步
+    requestAnimationFrame(() => handleSend());
   }
 
   // 文件发送 / 日志保存 折叠区：默认收起，点击标题展开
@@ -180,6 +200,7 @@
         placeholder="输入要发送的内容..."
         bind:value={sendText.value}
         onkeydown={handleKeydown}
+        oncompositionend={handleCompositionEnd}
       />
       <button
         class="btn btn-primary min-w-[96px] h-10"
