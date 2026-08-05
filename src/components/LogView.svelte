@@ -97,20 +97,23 @@
 <div class="h-full overflow-hidden flex flex-col" style="background: var(--background-data);">
   <div
     bind:this={scrollContainer}
-    class="flex-1 overflow-y-auto overflow-x-auto font-mono px-5 py-4"
+    class="flex-1 overflow-y-auto overflow-x-auto font-mono px-3 py-4"
     style="font-size: var(--log-font-size); line-height: var(--log-line-height);"
   >
     {#each logLines as line, i (i)}
-      <div class="flex hover:bg-[rgba(255,255,255,0.03)] px-2 py-px gap-4">
-        <!-- 方向标记：记录发送开关关闭时，隐去标签列，内容朝左对齐（Tx 此时本就不显示） -->
-        {#if logSendContent.value}
-          <span class="shrink-0 text-right font-bold {dirColor(line.dir)}">
-            {dirLabel(line.dir)}
-          </span>
-        {/if}
-        <!-- 时间戳 -->
-        {#if showTimestamp.value}
-          <span class="shrink-0 text-[var(--muted-foreground)] tabular-nums">{line.ts}</span>
+      <div class="flex hover:bg-[rgba(255,255,255,0.03)] px-1 py-px">
+        <!-- 方向 + 时间戳：包在一个框里，右边框与日志内容分隔 -->
+        {#if logSendContent.value || showTimestamp.value}
+          <div class="flex items-baseline gap-2 shrink-0 pr-2 mr-2 border-r border-[var(--border)]">
+            {#if logSendContent.value}
+              <span class="text-right font-bold {dirColor(line.dir)}">
+                {dirLabel(line.dir)}
+              </span>
+            {/if}
+            {#if showTimestamp.value}
+              <span class="text-[var(--muted-foreground)] tabular-nums">{line.ts}</span>
+            {/if}
+          </div>
         {/if}
         <!-- 内容 -->
         <span class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
