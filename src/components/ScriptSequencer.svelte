@@ -643,7 +643,7 @@
           <span class="text-[12px] text-[var(--muted-foreground)]">次数</span>
           <input
             type="number"
-            class="no-spin tnum rounded border border-[var(--border)] bg-[var(--background-input)] text-[13px] text-right focus-visible:outline-none focus-visible:border-[var(--primary)]"
+            class="no-spin tnum rounded border border-[var(--border)] bg-[var(--background-input)] text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
             style="height: 32px; width: 52px; padding: 0 8px;"
             bind:value={scriptRunCount.value}
             min="1"
@@ -655,7 +655,7 @@
           <span class="text-[12px] text-[var(--muted-foreground)]">间隔</span>
           <input
             type="number"
-            class="no-spin tnum rounded border border-[var(--border)] bg-[var(--background-input)] text-[13px] text-right focus-visible:outline-none focus-visible:border-[var(--primary)]"
+            class="no-spin tnum rounded border border-[var(--border)] bg-[var(--background-input)] text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
             style="height: 32px; width: 60px; padding: 0 8px;"
             bind:value={scriptLoopInterval.value}
             min="0"
