@@ -4,6 +4,8 @@
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, SlidersHorizontal, Info } from 'lucide-svelte';
   import { scriptPanelOpen, toggleScriptPanel } from '$lib/stores';
   import SettingsDialog from '$components/SettingsDialog.svelte';
+  // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
+  import appIcon from '$assets/icon.png';
 
   const appWindow = getCurrentWindow();
 
@@ -193,6 +195,7 @@
       onclick={(e) => e.stopPropagation()}
     >
       <div class="px-6 py-5 text-center">
+        <img src={appIcon} alt="NeoSerial" class="w-16 h-16 mx-auto mb-3 rounded-lg shadow-sm" />
         <div class="text-[15px] font-semibold text-[var(--foreground)] mb-1">NeoSerial</div>
         <div class="text-[13px] text-[var(--muted-foreground)] mb-4">串口通信调试工具</div>
         <div class="text-[13px] text-[var(--muted-foreground)]">

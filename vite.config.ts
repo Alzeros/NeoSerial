@@ -8,6 +8,7 @@ export default defineConfig({
     alias: {
       $lib: path.resolve('./src/lib'),
       $components: path.resolve('./src/components'),
+      $assets: path.resolve('./src/assets'),
     },
     extensions: ['.mjs', '.js', '.ts', '.svelte.ts', '.svelte', '.json'],
   },
