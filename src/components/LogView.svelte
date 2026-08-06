@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { ChevronUp, ChevronDown, X } from 'lucide-svelte';
   import { hexDisplay, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, scrollContainerRef } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
@@ -15,26 +16,176 @@
 
   /**
    * 自动滚动：日志有更新就跳到最新一条（无条件跟随）
-   * - $effect 依赖 logVersion（每次 appendLogLine 都 +1，必然触发）
-   * - 直接设置 scrollTop：Svelte 5 中 $effect 在 DOM 提交后运行，scrollHeight 已是新值
-   * - 再补一次 requestAnimationFrame 兜底，确保任何布局时序下都滚到底
-   * - 不再受 autoScroll 开关限制：settings.json 曾持久化 auto_scroll=false 且界面无开关可重开，
-   *   导致日志更新后视图停在顶部。按设计意图，有更新就无条件跳到最新。
+   * 搜索打开时暂停自动滚动，避免与搜索定位冲突。
    */
   $effect(() => {
-    // 明确读取以建立依赖：logVersion 每次 appendLogLine 都 +1
     logVersion.value;
     if (!scrollContainer) return;
-
-    // 立即滚到底
+    if (searchOpen) return;
     scrollContainer.scrollTop = scrollContainer.scrollHeight;
-    // 下一帧兜底一次，防止浏览器尚未完成布局导致读取到旧 scrollHeight
     requestAnimationFrame(() => {
       if (scrollContainer) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
       }
     });
   });
+
+  // ============ 搜索 ============
+  let searchOpen = $state(false);
+  let searchQuery = $state('');
+  let searchCaseSensitive = $state(false);
+  let searchInput: HTMLInputElement;
+  /** 匹配行的索引列表（logLines 中的下标） */
+  let matchIndices = $state<number[]>([]);
+  /** 当前定位的匹配在 matchIndices 中的下标 */
+  let currentMatch = $state(0);
+  // 上一轮的查询条件，用于区分"查询变了"和"只是 logLines 变了"
+  let lastQuery = '';
+  let lastCs = false;
+  let lastHex = false;
+
+  const matchSet = $derived(new Set(matchIndices));
+
+  function openSearch() {
+    searchOpen = true;
+    requestAnimationFrame(() => {
+      searchInput?.focus();
+      searchInput?.select();
+    });
+  }
+
+  function closeSearch() {
+    searchOpen = false;
+    searchQuery = '';
+    matchIndices = [];
+    currentMatch = 0;
+  }
+
+  function handleGlobalKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
+      e.preventDefault();
+      openSearch();
+    }
+    if (e.key === 'Escape' && searchOpen) {
+      closeSearch();
+    }
+    if (searchOpen && e.key === 'F3') {
+      e.preventDefault();
+      if (e.shiftKey) prevMatch(); else nextMatch();
+    }
+  }
+
+  function handleSearchInputKeydown(e: KeyboardEvent) {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (e.shiftKey) prevMatch(); else nextMatch();
+    }
+  }
+
+  function onSearchInput() {
+    currentMatch = 0;
+    requestAnimationFrame(() => scrollToMatch());
+  }
+
+  function nextMatch() {
+    if (matchIndices.length === 0) return;
+    currentMatch = (currentMatch + 1) % matchIndices.length;
+    scrollToMatch();
+  }
+
+  function prevMatch() {
+    if (matchIndices.length === 0) return;
+    currentMatch = (currentMatch - 1 + matchIndices.length) % matchIndices.length;
+    scrollToMatch();
+  }
+
+  function scrollToMatch() {
+    const lineIdx = matchIndices[currentMatch];
+    if (lineIdx === undefined) return;
+    const el = scrollContainer?.querySelector(`[data-idx="${lineIdx}"]`);
+    el?.scrollIntoView({ block: 'center' });
+  }
+
+  /** 重新计算匹配行。查询/大小写/显示模式变化时重置到第一个匹配；
+   *  仅 logLines 变化时保留当前位置（夹紧到有效范围）。 */
+  $effect(() => {
+    const q = searchQuery;
+    const cs = searchCaseSensitive;
+    const lines = logLines;
+    const hex = hexDisplay.value;
+
+    if (!q) {
+      matchIndices = [];
+      currentMatch = 0;
+      lastQuery = '';
+      lastCs = cs;
+      lastHex = hex;
+      return;
+    }
+
+    const queryChanged = q !== lastQuery || cs !== lastCs || hex !== lastHex;
+    lastQuery = q;
+    lastCs = cs;
+    lastHex = hex;
+
+    const needle = cs ? q : q.toLowerCase();
+    const indices: number[] = [];
+    for (let i = 0; i < lines.length; i++) {
+      const text = hex ? lines[i].hex : lines[i].ascii;
+      const haystack = cs ? text : text.toLowerCase();
+      if (haystack.includes(needle)) {
+        indices.push(i);
+      }
+    }
+    matchIndices = indices;
+
+    if (queryChanged) {
+      currentMatch = indices.length > 0 ? 0 : -1;
+      if (indices.length > 0) {
+        requestAnimationFrame(() => scrollToMatch());
+      }
+    } else if (currentMatch >= indices.length) {
+      currentMatch = Math.max(0, indices.length - 1);
+    }
+  });
+
+  /** 把文本按搜索词切分为片段，标记匹配段用于高亮渲染。 */
+  function highlightSegments(text: string): { text: string; match: boolean }[] {
+    const q = searchQuery;
+    if (!q) return [{ text, match: false }];
+    const flags = searchCaseSensitive ? 'g' : 'gi';
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    let regex: RegExp;
+    try {
+      regex = new RegExp(escaped, flags);
+    } catch {
+      return [{ text, match: false }];
+    }
+    const segments: { text: string; match: boolean }[] = [];
+    let lastIndex = 0;
+    let m: RegExpExecArray | null;
+    while ((m = regex.exec(text)) !== null) {
+      if (m.index > lastIndex) {
+        segments.push({ text: text.slice(lastIndex, m.index), match: false });
+      }
+      segments.push({ text: m[0], match: true });
+      lastIndex = m.index + m[0].length;
+      if (m.index === regex.lastIndex) regex.lastIndex++;
+    }
+    if (lastIndex < text.length) {
+      segments.push({ text: text.slice(lastIndex), match: false });
+    }
+    if (segments.length === 0) {
+      return [{ text, match: false }];
+    }
+    return segments;
+  }
+
+  function isCurrentMatch(i: number): boolean {
+    return matchIndices[currentMatch] === i;
+  }
+
+  // ============ 渲染 ============
 
   function renderLine(line: LogLine): string {
     if (hexDisplay.value) {
@@ -93,15 +244,68 @@
   }
 </script>
 
+<svelte:window on:keydown={handleGlobalKeydown} />
+
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
-<div class="h-full overflow-hidden flex flex-col" style="background: var(--background-data);">
+<div class="relative h-full overflow-hidden flex flex-col" style="background: var(--background-data);">
+  <!-- 搜索栏：右上角浮动，与浏览器 find bar 类似 -->
+  {#if searchOpen}
+    <div
+      class="absolute top-0 right-0 z-20 flex items-center gap-1 px-2 py-1.5 border-b border-l rounded-bl-md shadow-md"
+      style="background: var(--background-elevated); border-color: var(--border);"
+    >
+      <input
+        bind:this={searchInput}
+        bind:value={searchQuery}
+        onkeydown={handleSearchInputKeydown}
+        oninput={onSearchInput}
+        placeholder="搜索日志..."
+        style="width: 160px; height: 28px; font-size: 13px; padding: 0 8px; border-radius: var(--radius-sm);"
+      />
+      <button
+        class="flex items-center justify-center w-7 h-7 rounded text-[13px] font-medium transition-colors {searchCaseSensitive
+          ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+          : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+        onclick={() => (searchCaseSensitive = !searchCaseSensitive)}
+        title="区分大小写"
+      >Aa</button>
+      <button
+        class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        onclick={prevMatch}
+        disabled={matchIndices.length === 0}
+        title="上一个 (Shift+Enter)"
+      ><ChevronUp size={15} /></button>
+      <button
+        class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        onclick={nextMatch}
+        disabled={matchIndices.length === 0}
+        title="下一个 (Enter)"
+      ><ChevronDown size={15} /></button>
+      <span class="text-[12px] text-[var(--muted-foreground)] tabular-nums min-w-[48px] text-center">
+        {matchIndices.length > 0 ? `${currentMatch + 1}/${matchIndices.length}` : '0/0'}
+      </span>
+      <button
+        class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors"
+        onclick={closeSearch}
+        title="关闭 (Esc)"
+      ><X size={15} /></button>
+    </div>
+  {/if}
+
   <div
     bind:this={scrollContainer}
     class="flex-1 overflow-y-auto overflow-x-auto font-mono px-3 py-4"
     style="font-size: var(--log-font-size); line-height: var(--log-line-height);"
   >
     {#each logLines as line, i (i)}
-      <div class="flex hover:bg-[rgba(255,255,255,0.03)] px-1 py-px">
+      <div
+        data-idx={i}
+        class="flex px-1 py-px {matchSet.has(i)
+          ? (isCurrentMatch(i)
+            ? 'bg-[rgba(196,138,46,0.18)]'
+            : 'bg-[rgba(196,138,46,0.06)]')
+          : 'hover:bg-[rgba(255,255,255,0.03)]'}"
+      >
         <!-- 方向 + 时间戳：包在一个框里，右边框与日志内容分隔 -->
         {#if logSendContent.value || showTimestamp.value}
           <div class="flex items-baseline gap-2 shrink-0 pr-2 mr-2 border-r border-[var(--border)]">
@@ -115,9 +319,19 @@
             {/if}
           </div>
         {/if}
-        <!-- 内容 -->
+        <!-- 内容：搜索匹配时高亮关键词片段 -->
         <span class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
-          {renderLine(line)}
+          {#if searchQuery && matchSet.has(i)}
+            {#each highlightSegments(renderLine(line)) as seg}
+              {#if seg.match}
+                <mark style="background: rgba(196,138,46,0.35); color: inherit; border-radius: 2px; padding: 0 1px;">{seg.text}</mark>
+              {:else}
+                {seg.text}
+              {/if}
+            {/each}
+          {:else}
+            {renderLine(line)}
+          {/if}
         </span>
       </div>
     {/each}
