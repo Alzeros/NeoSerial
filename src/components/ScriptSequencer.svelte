@@ -8,6 +8,7 @@
     reorderScriptRow,
     removeScriptPage,
     removeScriptRow,
+    scriptCurrentRow,
     scriptLoopInterval,
     scriptModules,
     scriptRunCount,
@@ -136,7 +137,16 @@
     try {
       await sequenceRun(page.commands, scriptRunCount.value, scriptLoopInterval.value);
     } catch (e) {
+      // 启动失败（如未连接串口、序列已在运行）：复位 UI 运行态。
+      // 后端在失败路径已复位 SEQUENCE_RUNNING 标志，这里把前端状态同步回去，
+      // 否则 scriptRunning 卡在 true，停止按钮失效、也无法再次运行。
       console.error('序列执行失败:', e);
+      scriptRunning.value = false;
+      scriptCurrentRow.value = -1;
+      scriptRunState.finished = '';
+      scriptRunState.sent = 0;
+      scriptRunState.total = 0;
+      scriptRunState.round = 1;
     }
   }
 
@@ -375,7 +385,7 @@
     return Math.round(sum / 100) / 10;
   });
   // 能否运行：至少勾选一条
-  const canRun = $derived(enabledRows > 0 && !scriptRunning.value);
+  const canRun = $derived(connected.value && enabledRows > 0 && !scriptRunning.value);
 
   // 结束态淡回：done/aborted 后 3 秒切回就绪态展示
   let finishedVisible = $state(false);
@@ -665,7 +675,7 @@
           class="btn btn-primary h-9 leading-none inline-flex items-center gap-1.5"
           onclick={handleRun}
           disabled={!canRun}
-          title={canRun ? '运行' : '未勾选任何指令'}
+          title={!connected.value ? '未连接串口' : (enabledRows === 0 ? '未勾选任何指令' : '运行')}
         >
           <span class="text-[12px]">▶</span>运行
         </button>

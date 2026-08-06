@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronUp, ChevronDown, X } from 'lucide-svelte';
-  import { hexDisplay, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, scrollContainerRef } from '$lib/stores';
+  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, scrollContainerRef } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
   let scrollContainer: HTMLDivElement;
@@ -43,6 +43,7 @@
   let lastQuery = '';
   let lastCs = false;
   let lastHex = false;
+  let lastEnc = 'ascii';
 
   const matchSet = $derived(new Set(matchIndices));
 
@@ -106,13 +107,15 @@
     el?.scrollIntoView({ block: 'center' });
   }
 
-  /** 重新计算匹配行。查询/大小写/显示模式变化时重置到第一个匹配；
+  /** 重新计算匹配行。查询/大小写/显示模式/编码变化时重置到第一个匹配；
    *  仅 logLines 变化时保留当前位置（夹紧到有效范围）。 */
   $effect(() => {
     const q = searchQuery;
     const cs = searchCaseSensitive;
     const lines = logLines;
-    const hex = hexDisplay.value;
+    const hex = displayMode.value === 'hex';
+    // 编码变化也会改变 renderLine 输出，纳入依赖触发重算
+    const enc = textEncoding.value;
 
     if (!q) {
       matchIndices = [];
@@ -120,18 +123,20 @@
       lastQuery = '';
       lastCs = cs;
       lastHex = hex;
+      lastEnc = enc;
       return;
     }
 
-    const queryChanged = q !== lastQuery || cs !== lastCs || hex !== lastHex;
+    const queryChanged = q !== lastQuery || cs !== lastCs || hex !== lastHex || enc !== lastEnc;
     lastQuery = q;
     lastCs = cs;
     lastHex = hex;
+    lastEnc = enc;
 
     const needle = cs ? q : q.toLowerCase();
     const indices: number[] = [];
     for (let i = 0; i < lines.length; i++) {
-      const text = hex ? lines[i].hex : lines[i].ascii;
+      const text = renderLine(lines[i]);
       const haystack = cs ? text : text.toLowerCase();
       if (haystack.includes(needle)) {
         indices.push(i);
@@ -187,11 +192,41 @@
 
   // ============ 渲染 ============
 
+  /** 解码器缓存：按编码 label 复用 TextDecoder，避免每条日志都新建（开销小但没必要） */
+  const decoderCache = new Map<string, TextDecoder>();
+  function getDecoder(label: string): TextDecoder {
+    let d = decoderCache.get(label);
+    if (!d) {
+      d = new TextDecoder(label, { fatal: false });
+      decoderCache.set(label, d);
+    }
+    return d;
+  }
+
+  /**
+   * 解码原始字节为文本显示。根据 textEncoding 选择编码：
+   * - 'ascii'：只保留可打印 ASCII（0x20-0x7E），过滤控制字符——即 LogLine.ascii
+   * - 'utf8'：UTF-8 解码，非法字节用 � 替换，过滤控制字符
+   * - 'gbk'：GBK 解码（TextDecoder label 'gbk'，WebView2/Chromium 支持）
+   */
   function renderLine(line: LogLine): string {
-    if (hexDisplay.value) {
+    if (displayMode.value === 'hex') {
       return renderHex(line);
     }
-    return line.ascii;
+    if (textEncoding.value === 'ascii') {
+      return line.ascii;
+    }
+    const enc = textEncoding.value === 'gbk' ? 'gbk' : 'utf-8';
+    const s = getDecoder(enc).decode(new Uint8Array(line.raw));
+    // 过滤控制字符（C0/C1 + DEL），避免 CR/LF/TAB 扰乱日志行排版。
+    // 用 charCodeAt 判断：0x20 空格、0x7E 以内可打印，0x7F DEL 及 C1 区(0x80-0x9F)过滤，
+    // 中文等可打印 Unicode（码点 >0x9F）保留。
+    return Array.from(s)
+      .filter((c) => {
+        const code = c.codePointAt(0)!;
+        return code >= 0x20 && code !== 0x7f && !(code >= 0x80 && code <= 0x9f);
+      })
+      .join('');
   }
 
   /**

@@ -89,6 +89,7 @@ export interface Settings {
     log_font_size: number;
     log_line_height: number;
     log_dir_label: string;
+    text_encoding: 'Ascii' | 'Utf8' | 'Gbk';
   };
   command_groups: CommandGroup[];
   error_keywords: string[];

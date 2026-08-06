@@ -1,13 +1,16 @@
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager};
 
 use crate::state::AppState;
 use crate::connection::WriteCommand;
+use crate::buffer::log_line::{Dir, LogLine};
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
+use crate::util::log_format::{DisplayConfig, format_line_for_file};
+use crate::util::time_fmt::now_local_ts;
 
 #[tauri::command]
 pub fn send(
     state: State<'_, AppState>,
-    _app_handle: tauri::AppHandle,
+    app_handle: tauri::AppHandle,
     text: String,
     ending: String,
     is_hex: bool,
@@ -33,11 +36,48 @@ pub fn send(
 
     let len = data.len();
 
-    // 通过 channel 发送给写线程；tx-line 回显统一在 writer 线程完成
-    handle.write_tx.send(WriteCommand::Send(data))
+    // 乐观回显：入队前先 emit tx-line + 写文件日志。
+    // 串口写入受驱动延迟影响（USB 延迟定时器，实测每条 20-60ms 甚至更久），
+    // 若等写入完成再回显，界面会显得卡顿。这里发起即回显，写线程静默写。
+    emit_tx_line(&app_handle, data.clone());
+
+    // 通过 channel 发送给写线程（SendSilent：写线程只写不 emit，避免重复回显）
+    handle.write_tx.send(WriteCommand::SendSilent(data))
         .map_err(|e| format!("发送队列写入失败: {}", e))?;
 
     Ok(len)
+}
+
+/// 发送方向的即时回显 + 文件日志。与脚本序列（sequence.rs）共用同一逻辑。
+/// - log_send=false 时不回显也不记录（"记录发送"开关）
+/// - 与 write 线程解耦：发起即打时间戳，不受串口写阻塞影响
+fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
+    let (cfg, sender) = match app_handle.try_state::<AppState>() {
+        Some(state) => {
+            let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
+                show_timestamp: s.ui.show_timestamp,
+                log_send: s.ui.log_send,
+            });
+            let sender = state
+                .line_sender
+                .lock()
+                .ok()
+                .and_then(|ls| ls.as_ref().cloned());
+            (cfg, sender)
+        }
+        None => (None, None),
+    };
+    let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
+    if log_send {
+        let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[]);
+        let _ = app_handle.emit("tx-line", line.clone());
+        if let (Some(c), Some(tx)) = (cfg, sender) {
+            let formatted = format_line_for_file(&line, &c, false);
+            if !formatted.is_empty() {
+                let _ = tx.send(formatted);
+            }
+        }
+    }
 }
 
 #[tauri::command]

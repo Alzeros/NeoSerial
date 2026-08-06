@@ -37,11 +37,22 @@ pub fn sequence_run(
         return Err("序列已在运行中".to_string());
     }
 
-    // 从连接句柄取出写通道 sender，移入异步线程
-    let write_tx = {
-        let conn = state.connection.lock().map_err(|e| e.to_string())?;
-        let handle = conn.as_ref().ok_or("未连接串口")?;
-        handle.write_tx.clone()
+    // 从连接句柄取出写通道 sender，移入异步线程。
+    // 注意：上面 swap(true) 已把运行标志置位，但只有线程启动后才会在末尾重置。
+    // 若此处获取连接失败提前 return Err，标志会泄漏为 true，导致再也无法运行/停止。
+    // 因此任何失败路径都必须先把标志复位。
+    let write_tx = match state.connection.lock() {
+        Ok(conn) => match conn.as_ref() {
+            Some(handle) => handle.write_tx.clone(),
+            None => {
+                SEQUENCE_RUNNING.store(false, Ordering::SeqCst);
+                return Err("未连接串口".to_string());
+            }
+        },
+        Err(e) => {
+            SEQUENCE_RUNNING.store(false, Ordering::SeqCst);
+            return Err(e.to_string());
+        }
     };
 
     thread::spawn(move || {

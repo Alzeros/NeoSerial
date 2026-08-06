@@ -31,9 +31,12 @@ pub fn spawn_writer(
                         WriteCommand::SendSilent(data) => (data, false),
                         WriteCommand::Close => break,
                     };
-                    // write_all + flush：确保数据立即通过 USB 传输。
-                    // 不 flush 时小数据包可能滞留在驱动缓冲区，导致首次发送无响应。
-                    match port.write_all(&data).and_then(|_| port.flush()) {
+                    // write_all：把数据交给驱动缓冲区即返回，不主动 flush。
+                    // flush()（Windows FlushFileBuffers）会等待所有数据物理发送完毕；
+                    // 对端设备未及时接收或 USB 转串口驱动等待确认时，flush 会阻塞数百毫秒
+                    // 甚至数十秒（实测 14s），导致快速连续发送被拖成几秒一条。
+                    // 数据进入驱动缓冲区后硬件会立即开始发送，小数据包无需 flush 也能及时到达。
+                    match port.write_all(&data) {
                         Ok(_) => {
                             let total = tx_bytes.fetch_add(data.len() as u64, std::sync::atomic::Ordering::SeqCst) + data.len() as u64;
                             let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total });

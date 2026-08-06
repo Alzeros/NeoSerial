@@ -16,6 +16,15 @@ pub enum DisplayMode {
     Hex,
 }
 
+/// 文本模式的编码方式。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "PascalCase")]
+pub enum TextEncoding {
+    Ascii,
+    Utf8,
+    Gbk,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum DataBits {
@@ -82,6 +91,13 @@ pub struct UiSettings {
     /// 方向标签样式："short"=Tx/Rx，"full"=发送/接收
     #[serde(default = "default_log_dir_label")]
     pub log_dir_label: String,
+    /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
+    #[serde(default = "default_text_encoding")]
+    pub text_encoding: TextEncoding,
+}
+
+fn default_text_encoding() -> TextEncoding {
+    TextEncoding::Ascii
 }
 
 fn default_log_font_size() -> u32 {
@@ -168,6 +184,7 @@ impl Settings {
                 log_font_size: default_log_font_size(),
                 log_line_height: default_log_line_height(),
                 log_dir_label: default_log_dir_label(),
+                text_encoding: default_text_encoding(),
             },
             command_groups: vec![CommandGroup::default_group()],
             error_keywords: vec![
@@ -268,6 +285,7 @@ impl LegacySettings {
                 log_font_size: def.ui.log_font_size,
                 log_line_height: def.ui.log_line_height,
                 log_dir_label: def.ui.log_dir_label,
+                text_encoding: default_text_encoding(),
             },
             command_groups: vec![CommandGroup {
                 name: "默认".into(),

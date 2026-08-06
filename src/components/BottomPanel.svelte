@@ -5,7 +5,7 @@
     clearLogLines,
     fileSendPath,
     fileSendProgress,
-    hexDisplay,
+    displayMode,
     hexSend,
     lineEnding,
     logSendContent,
@@ -14,6 +14,7 @@
     paused,
     sendText,
     showTimestamp,
+    appendLogLine,
   } from '$lib/stores';
   import { openFileDialog, saveFileDialog, sendFile, startLogging, stopLogging } from '$lib/tauri';
   import { onMount } from 'svelte';
@@ -28,13 +29,35 @@
     };
   });
 
+  // 发送节流：30ms 最小间隔（约 33 次/秒），防止极端连按刷爆 IPC/串口
+  let lastSendTime = 0;
+  // 必须用 $state：发送中按钮要禁用+显示"..."。若用普通 let，finally 里设回 false
+  // 不会触发 Svelte 重渲染，按钮会永远卡在"..."禁用态。
+  let pendingSend = $state(false);
+  let sendErrorFlash = $state(false);
+
   async function handleSend() {
     if (!sendText.value.trim()) return;
+    if (!connected.value) return;
+
+    const now = Date.now();
+    // 节流：30ms 内的重复调用直接忽略
+    if (now - lastSendTime < 30) return;
+    lastSendTime = now;
+
+    // 防重入：上一次 invoke 还没返回时忽略
+    if (pendingSend) return;
+    pendingSend = true;
+
     try {
       await send(sendText.value, lineEnding.value, hexSend.value);
       // 发送后保留输入内容，便于重复发送/修改后再发
     } catch (e) {
       console.error('发送失败:', e);
+      sendErrorFlash = true;
+      setTimeout(() => (sendErrorFlash = false), 300);
+    } finally {
+      pendingSend = false;
     }
   }
 
@@ -114,17 +137,16 @@
     }
   }
 
-  // IME 组合确认 Enter 的补发标记：中文输入法下，首次 Enter 常被用于确认候选词上屏，
-  // 此时 keydown 的 e.key 是 'Process' 而非 'Enter'，会吞掉一次发送意图。
-  // 记录后用 compositionend 补发，让"第一次按 Enter"也能发出去。
-  let imeEnterPending = false;
+  // IME 状态：用于诊断和调试。组合中按 Enter 也立即发送（不补发），
+  // 因为中文用户回车 = 发送意图，候选词确认走空格即可。
+  let isComposing = $state(false);
 
   function handleKeydown(e: KeyboardEvent) {
-    // 输入法组合中：e.key 为 'Process'，普通 Enter 判断不命中。
-    // 但 e.code 保留物理键位，可精确识别 Enter（不会把空格/方向键选词误判为 Enter）。
-    // 首次 Enter 通常被输入法用于确认上屏，记录下来，待组合结束后补发。
-    if (e.isComposing) {
-      if (e.code === 'Enter') imeEnterPending = true;
+    // Enter 键：无论是否在 IME 组合中都触发发送。
+    // 中文输入法下 e.key 是 'Process' 不是 'Enter'，所以用 e.code 判断物理键位。
+    if (e.code === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSend();
       return;
     }
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -133,12 +155,11 @@
     }
   }
 
-  // IME 组合确认结束：文本已上屏，若此前是以 Enter 结束，则补发一次。
+  function handleCompositionStart() {
+    isComposing = true;
+  }
   function handleCompositionEnd() {
-    if (!imeEnterPending) return;
-    imeEnterPending = false;
-    // 下一帧再取 sendText：compositionend 后 DOM value 与 bind 已完成同步
-    requestAnimationFrame(() => handleSend());
+    isComposing = false;
   }
 
   // 文件发送 / 日志保存 折叠区：默认收起，点击标题展开
@@ -158,7 +179,7 @@
       {/if}
       <div class="ml-auto flex items-center gap-4 flex-shrink-0">
         <label data-m-hexdisp class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" bind:checked={hexDisplay.value} />
+          <input type="checkbox" checked={displayMode.value === 'hex'} onchange={(e) => (displayMode.value = (e.target as HTMLInputElement).checked ? 'hex' : 'ascii')} />
           <span class="switch-track"></span>
           <span class="switch-label">HEX显示</span>
         </label>
@@ -200,13 +221,14 @@
         placeholder="输入要发送的内容..."
         bind:value={sendText.value}
         onkeydown={handleKeydown}
+        oncompositionstart={handleCompositionStart}
         oncompositionend={handleCompositionEnd}
       />
       <button
-        class="btn btn-primary min-w-[96px] h-10"
+        class="btn btn-primary min-w-[96px] h-10 transition-all {sendErrorFlash ? 'bg-[var(--error)] border-[var(--error)]' : ''}"
         onclick={handleSend}
-        disabled={!connected.value}
-      >发送</button>
+        disabled={!connected.value || pendingSend}
+      >{pendingSend ? '...' : '发送'}</button>
     </div>
   </div>
 

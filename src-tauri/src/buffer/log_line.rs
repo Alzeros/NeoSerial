@@ -10,7 +10,8 @@ pub enum Dir {
     Tx,
 }
 
-/// 日志流中的一行。预存 raw/ascii/hex 三份，切换显示模式时无需重新转换。
+/// 日志流中的一行。预存 raw/ascii/hex 三份；文本编码转换在前端用 TextDecoder 做，
+/// 这样 ASCII/UTF-8/GBK 切换无需后端参与（零 IPC 往返）。
 #[derive(Clone, Debug, Serialize)]
 pub struct LogLine {
     pub ts: String,
@@ -28,7 +29,9 @@ impl LogLine {
         let hex = format_hex_dump(&raw);
         let is_error = match dir {
             Dir::Rx => {
-                let lower = ascii.to_lowercase();
+                // 用 UTF-8 lossy 解码做错误关键词匹配（中文关键词也能命中），
+                // 只在此处局部计算，不存储。
+                let lower = String::from_utf8_lossy(&raw).to_lowercase();
                 error_keywords
                     .iter()
                     .any(|kw| lower.contains(&kw.to_lowercase()))

@@ -102,7 +102,7 @@ pub fn spawn_connection(
         FlowControl::Hardware => serialport::FlowControl::Hardware,
     };
 
-    let port = serialport::new(&params.port, params.baud_rate)
+    let mut port = serialport::new(&params.port, params.baud_rate)
         .data_bits(data_bits)
         .parity(parity)
         .stop_bits(stop_bits)
@@ -110,6 +110,12 @@ pub fn spawn_connection(
         .timeout(std::time::Duration::from_millis(50))
         .open()
         .map_err(|e| format!("打开串口失败: {}", e))?;
+
+    // 通信模组的 USB 虚拟串口常以 DTR/RTS 作为"DTE 已连接"信号。
+    // 若未拉高，部分模组会认为主机未就绪而拒绝处理收到的数据，导致
+    // 串口写入被驱动阻塞数秒（实测 write_all 卡 4-14s）。连接建立后显式拉高。
+    let _ = port.write_data_terminal_ready(true);
+    let _ = port.write_request_to_send(true);
 
     let running = Arc::new(AtomicBool::new(true));
     let tx_bytes = Arc::new(AtomicU64::new(0));

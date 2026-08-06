@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding } from '$lib/stores';
   import { saveSettings } from '$lib/tauri';
   import type { Settings } from '$lib/types';
 
@@ -20,8 +20,11 @@
   let editFontSize = $state(14);
   let editLineHeight = $state(1.6);
   let editDirLabel = $state<'short' | 'full'>('short');
+  // 文本模式编码编辑副本（ASCII/UTF-8/GBK）
+  let editTextEncoding = $state<'ascii' | 'utf8' | 'gbk'>('ascii');
   // 打开前的原值（取消时恢复，因部分预览直接改了 store）
   let origDirLabel: 'short' | 'full' = 'short';
+  let origTextEncoding: 'ascii' | 'utf8' | 'gbk' = 'ascii';
 
   // 内置默认波特率：不可删除，只能在此基础上增删用户自定义项
   const DEFAULT_BAUD_RATES = [9600, 115200, 921600];
@@ -38,6 +41,8 @@
     editLineHeight = logLineHeight.value;
     editDirLabel = logDirLabelStyle.value;
     origDirLabel = logDirLabelStyle.value;
+    editTextEncoding = textEncoding.value;
+    origTextEncoding = textEncoding.value;
     newBaud = '';
     activeSection = 'general';
     open = true;
@@ -92,12 +97,13 @@
     logFontSize.value = editFontSize;
     logLineHeight.value = editLineHeight;
     logDirLabelStyle.value = editDirLabel;
+    textEncoding.value = editTextEncoding;
     // 落盘：基于缓存 settings 透传，仅更新 presets 与 ui 字体
     const base = cachedSettings.value;
     if (base) {
       const next: Settings = {
         ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel },
+        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
         presets: { baud_rates: rates, theme: editTheme },
       };
       try {
@@ -115,6 +121,7 @@
     applyTheme(theme.value);
     applyLogFont(logFontSize.value, logLineHeight.value);
     logDirLabelStyle.value = origDirLabel;
+    textEncoding.value = origTextEncoding;
     open = false;
   }
 </script>
@@ -219,7 +226,29 @@
               {/each}
             </div>
           {:else if activeSection === 'log'}
-            <!-- 日志显示：字号 + 行高 -->
+            <!-- 日志显示：编码 + 字号 + 行高 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">文本编码</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              HEX显示关闭时的文本模式解码方式。
+            </div>
+            <div class="flex items-center gap-3 mb-5">
+              <span class="w-16 text-[13px] text-[var(--foreground)]">编码</span>
+              <div class="flex gap-2">
+                {#each [
+                  { v: 'ascii', l: 'ASCII' },
+                  { v: 'utf8', l: 'UTF-8' },
+                  { v: 'gbk', l: 'GBK' },
+                ] as enc}
+                  <button
+                    class="px-3 py-1 rounded-md border text-[13px] transition-colors {editTextEncoding === enc.v
+                      ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                      : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                    onclick={() => (editTextEncoding = enc.v as 'ascii' | 'utf8' | 'gbk')}
+                  >{enc.l}</button>
+                {/each}
+              </div>
+            </div>
+
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志字体</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
               调节日志区文字大小与行间距，即时预览。

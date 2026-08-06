@@ -13,7 +13,8 @@
     connected,
     connectionParams,
     currentPort,
-    hexDisplay,
+    displayMode,
+    textEncoding,
     lineEnding,
     logLines,
     logSendContent,
@@ -67,7 +68,8 @@
     lineEnding.value = s.ui.line_ending;
     showTimestamp.value = s.ui.show_timestamp;
     autoScroll.value = s.ui.auto_scroll;
-    hexDisplay.value = s.ui.display_mode === 'Hex';
+    displayMode.value = s.ui.display_mode === 'Hex' ? 'hex' : 'ascii';
+    textEncoding.value = (s.ui?.text_encoding || 'Ascii') === 'Utf8' ? 'utf8' : (s.ui?.text_encoding || 'Ascii') === 'Gbk' ? 'gbk' : 'ascii';
     logSendContent.value = s.ui.log_send;
     // 日志区字体：兜底默认 14px / 1.6
     const fs = s.ui?.log_font_size ?? 14;
@@ -101,7 +103,8 @@
       },
       ui: {
         ...base.ui,
-        display_mode: hexDisplay.value ? 'Hex' : 'Ascii',
+        display_mode: displayMode.value === 'hex' ? 'Hex' : 'Ascii',
+        text_encoding: textEncoding.value === 'utf8' ? 'Utf8' : textEncoding.value === 'gbk' ? 'Gbk' : 'Ascii',
         line_ending: lineEnding.value,
         auto_scroll: autoScroll.value,
         show_timestamp: showTimestamp.value,

@@ -26,6 +26,8 @@ const MAX_LOG_LINES = 10_000;
 export const logLines = $state<LogLine[]>([]);
 export const paused = $state<{ value: boolean }>({ value: false });
 export const displayMode = $state<{ value: 'ascii' | 'hex' }>({ value: 'ascii' });
+/** 文本模式的编码方式：'ascii' | 'utf8' | 'gbk'，默认 ascii */
+export const textEncoding = $state<{ value: 'ascii' | 'utf8' | 'gbk' }>({ value: 'ascii' });
 export const showTimestamp = $state<{ value: boolean }>({ value: true });
 export const autoScroll = $state<{ value: boolean }>({ value: true });
 export const logVersion = $state<{ value: number }>({ value: 0 });
@@ -102,7 +104,6 @@ export const fileSendPath = $state<{ value: string | null }>({ value: null });
 export const fileSendProgress = $state<{ value: number }>({ value: 0 });
 
 // ============ 工具栏 ============
-export const hexDisplay = $state<{ value: boolean }>({ value: false });
 
 // ============ 脚本序列面板 ============
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });
