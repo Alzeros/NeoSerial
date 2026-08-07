@@ -22,6 +22,8 @@
     logFontSize,
     logLineHeight,
     logDirLabelStyle,
+    logFontLatin,
+    logFontCJK,
     applyLogFont,
     theme,
     applyTheme,
@@ -74,9 +76,13 @@
     // 日志区字体：兜底默认 14px / 1.6
     const fs = s.ui?.log_font_size ?? 14;
     const lh = s.ui?.log_line_height ?? 1.6;
+    const fLatin = s.ui?.log_font_latin ?? 'default';
+    const fCjk = s.ui?.log_font_cjk ?? 'default';
     logFontSize.value = fs;
     logLineHeight.value = lh;
-    applyLogFont(fs, lh);
+    logFontLatin.value = fLatin;
+    logFontCJK.value = fCjk;
+    applyLogFont(fs, lh, fLatin, fCjk);
     logDirLabelStyle.value = (s.ui?.log_dir_label === 'full') ? 'full' : 'short';
     // 预设波特率：兜底为默认三项
     presetBaudRates.value =
@@ -112,6 +118,8 @@
         log_font_size: logFontSize.value,
         log_line_height: logLineHeight.value,
         log_dir_label: logDirLabelStyle.value,
+        log_font_latin: logFontLatin.value,
+        log_font_cjk: logFontCJK.value,
       },
       presets: {
         baud_rates: presetBaudRates.value,

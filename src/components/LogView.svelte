@@ -329,8 +329,8 @@
 
   <div
     bind:this={scrollContainer}
-    class="flex-1 overflow-y-auto overflow-x-auto font-mono px-3 py-4"
-    style="font-size: var(--log-font-size); line-height: var(--log-line-height);"
+    class="flex-1 overflow-y-auto overflow-x-auto px-3 py-4"
+    style="font-family: var(--log-font-family); font-size: var(--log-font-size); line-height: var(--log-line-height);"
   >
     {#each logLines as line, i (i)}
       <div

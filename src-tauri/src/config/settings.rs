@@ -91,6 +91,12 @@ pub struct UiSettings {
     /// 方向标签样式："short"=Tx/Rx，"full"=发送/接收
     #[serde(default = "default_log_dir_label")]
     pub log_dir_label: String,
+    /// 日志区英文字体族：'default' 或 CSS font-family 值，默认 'default'
+    #[serde(default = "default_log_font_latin")]
+    pub log_font_latin: String,
+    /// 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值
+    #[serde(default = "default_log_font_cjk")]
+    pub log_font_cjk: String,
     /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
     #[serde(default = "default_text_encoding")]
     pub text_encoding: TextEncoding,
@@ -110,6 +116,14 @@ fn default_log_line_height() -> f64 {
 
 fn default_log_dir_label() -> String {
     "short".into()
+}
+
+fn default_log_font_latin() -> String {
+    "default".into()
+}
+
+fn default_log_font_cjk() -> String {
+    "default".into()
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -184,6 +198,8 @@ impl Settings {
                 log_font_size: default_log_font_size(),
                 log_line_height: default_log_line_height(),
                 log_dir_label: default_log_dir_label(),
+                log_font_latin: default_log_font_latin(),
+                log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
             },
             command_groups: vec![CommandGroup::default_group()],
@@ -285,6 +301,8 @@ impl LegacySettings {
                 log_font_size: def.ui.log_font_size,
                 log_line_height: def.ui.log_line_height,
                 log_dir_label: def.ui.log_dir_label,
+                log_font_latin: default_log_font_latin(),
+                log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
             },
             command_groups: vec![CommandGroup {

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { saveSettings } from '$lib/tauri';
   import type { Settings } from '$lib/types';
 
@@ -20,11 +20,16 @@
   let editFontSize = $state(14);
   let editLineHeight = $state(1.6);
   let editDirLabel = $state<'short' | 'full'>('short');
+  // 字体族编辑副本：'default' 或 CSS font-family 值（英文/中文分别设置）
+  let editFontLatin = $state<string>('default');
+  let editFontCJK = $state<string>('default');
   // 文本模式编码编辑副本（ASCII/UTF-8/GBK）
   let editTextEncoding = $state<'ascii' | 'utf8' | 'gbk'>('ascii');
   // 打开前的原值（取消时恢复，因部分预览直接改了 store）
   let origDirLabel: 'short' | 'full' = 'short';
   let origTextEncoding: 'ascii' | 'utf8' | 'gbk' = 'ascii';
+  let origFontLatin: string = 'default';
+  let origFontCJK: string = 'default';
 
   // 内置默认波特率：不可删除，只能在此基础上增删用户自定义项
   const DEFAULT_BAUD_RATES = [9600, 115200, 921600];
@@ -41,6 +46,10 @@
     editLineHeight = logLineHeight.value;
     editDirLabel = logDirLabelStyle.value;
     origDirLabel = logDirLabelStyle.value;
+    editFontLatin = logFontLatin.value;
+    editFontCJK = logFontCJK.value;
+    origFontLatin = logFontLatin.value;
+    origFontCJK = logFontCJK.value;
     editTextEncoding = textEncoding.value;
     origTextEncoding = textEncoding.value;
     newBaud = '';
@@ -54,19 +63,29 @@
     applyTheme(value);
   }
 
-  // 字号/行高：即时预览
+  // 字号/行高：即时预览（带上当前英文/中文字体）
   function changeFontSize(v: number) {
     editFontSize = v;
-    applyLogFont(v, editLineHeight);
+    applyLogFont(v, editLineHeight, editFontLatin, editFontCJK);
   }
   function changeLineHeight(v: number) {
     editLineHeight = v;
-    applyLogFont(editFontSize, v);
+    applyLogFont(editFontSize, v, editFontLatin, editFontCJK);
   }
   // 方向标签样式：即时预览
   function changeDirLabel(v: 'short' | 'full') {
     editDirLabel = v;
     logDirLabelStyle.value = v;
+  }
+  // 英文字体：选预设即时预览
+  function selectFontLatin(value: string) {
+    editFontLatin = value;
+    applyLogFont(editFontSize, editLineHeight, value, editFontCJK);
+  }
+  // 中文字体：选预设即时预览
+  function selectFontCJK(value: string) {
+    editFontCJK = value;
+    applyLogFont(editFontSize, editLineHeight, editFontLatin, value);
   }
 
   function addBaud() {
@@ -97,13 +116,15 @@
     logFontSize.value = editFontSize;
     logLineHeight.value = editLineHeight;
     logDirLabelStyle.value = editDirLabel;
+    logFontLatin.value = editFontLatin;
+    logFontCJK.value = editFontCJK;
     textEncoding.value = editTextEncoding;
     // 落盘：基于缓存 settings 透传，仅更新 presets 与 ui 字体
     const base = cachedSettings.value;
     if (base) {
       const next: Settings = {
         ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
+        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
         presets: { baud_rates: rates, theme: editTheme },
       };
       try {
@@ -119,8 +140,10 @@
   function handleCancel() {
     // 取消：恢复打开前的主题与字体（撤销预览）
     applyTheme(theme.value);
-    applyLogFont(logFontSize.value, logLineHeight.value);
+    applyLogFont(logFontSize.value, logLineHeight.value, logFontLatin.value, logFontCJK.value);
     logDirLabelStyle.value = origDirLabel;
+    logFontLatin.value = origFontLatin;
+    logFontCJK.value = origFontCJK;
     textEncoding.value = origTextEncoding;
     open = false;
   }
@@ -251,7 +274,35 @@
 
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志字体</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-              调节日志区文字大小与行间距，即时预览。
+              英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。
+            </div>
+
+            <!-- 英文字体 -->
+            <div class="flex items-center gap-3 mb-4">
+              <span class="w-16 text-[13px] text-[var(--foreground)]">英文字体</span>
+              <select
+                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                value={editFontLatin}
+                onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
+              >
+                {#each logFontLatinPresets as p}
+                  <option value={p.value}>{p.label}</option>
+                {/each}
+              </select>
+            </div>
+
+            <!-- 中文字体 -->
+            <div class="flex items-center gap-3 mb-4">
+              <span class="w-16 text-[13px] text-[var(--foreground)]">中文字体</span>
+              <select
+                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                value={editFontCJK}
+                onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
+              >
+                {#each logFontCJKPresets as p}
+                  <option value={p.value}>{p.label}</option>
+                {/each}
+              </select>
             </div>
 
             <!-- 字号 -->
@@ -298,10 +349,11 @@
             </div>
 
             <!-- 预览 -->
-            <div class="mt-4 p-3 rounded border" style="border-color: var(--border); background: var(--background-data); font-family: var(--font-mono); font-size: {editFontSize}px; line-height: {editLineHeight};">
+            <div class="mt-4 p-3 rounded border" style="border-color: var(--border); background: var(--background-data); font-family: var(--log-font-family); font-size: {editFontSize}px; line-height: {editLineHeight};">
               <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.362 AT</div>
               <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.484 OK</div>
               <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.545 AT+CSQ</div>
+              <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.612 模块就绪</div>
             </div>
           {/if}
         </div>

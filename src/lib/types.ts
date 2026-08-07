@@ -89,6 +89,10 @@ export interface Settings {
     log_font_size: number;
     log_line_height: number;
     log_dir_label: string;
+    /** 日志区英文字体族：'default' 或 CSS font-family 值 */
+    log_font_latin: string;
+    /** 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值 */
+    log_font_cjk: string;
     text_encoding: 'Ascii' | 'Utf8' | 'Gbk';
   };
   command_groups: CommandGroup[];

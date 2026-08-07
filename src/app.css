@@ -55,6 +55,8 @@
   /* ---- 日志区字体（可在设置中调节） ---- */
   --log-font-size: 14px;
   --log-line-height: 1.6;
+  /* 日志区字体族：空值时回退到 --font-mono（由 applyLogFont 写入） */
+  --log-font-family: var(--font-mono);
 
   /* ---- 字体 ---- */
   --font-serif: "Iowan Old Style", "SF Pro Display", Georgia, "Times New Roman", serif;
@@ -569,7 +571,7 @@ input[type="checkbox"]:not(.switch input) {
 .log-container {
   background: var(--background-data);
   color: var(--foreground);
-  font-family: var(--font-mono);
+  font-family: var(--log-font-family);
   font-size: 13px;
   line-height: 1.8;
   letter-spacing: 0.3px;

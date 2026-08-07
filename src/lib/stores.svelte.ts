@@ -82,13 +82,53 @@ export const logFontSize = $state<{ value: number }>({ value: 14 });
 export const logLineHeight = $state<{ value: number }>({ value: 1.6 });
 /** 方向标签样式：'short'=Tx/Rx，'full'=发送/接收 */
 export const logDirLabelStyle = $state<{ value: 'short' | 'full' }>({ value: 'short' });
+/** 日志区英文字体族。'default' = 用默认 monospace 栈 */
+export const logFontLatin = $state<{ value: string }>({ value: 'default' });
+/** 日志区中文字体族。'default' = 不单独指定，沿用英文字体栈回退 */
+export const logFontCJK = $state<{ value: string }>({ value: 'default' });
 
-/** 应用日志区字体到 <html>，CSS 变量覆盖即生效 */
-export function applyLogFont(size: number, lineH: number) {
+/** 英文字体预设：等宽字体，用于 ASCII/HEX 字节对齐 */
+export const logFontLatinPresets: { key: string; label: string; value: string }[] = [
+  { key: 'default', label: '默认', value: 'default' },
+  { key: 'consolas', label: 'Consolas', value: 'Consolas' },
+  { key: 'cascadia', label: 'Cascadia Code', value: '"Cascadia Code"' },
+  { key: 'jetbrains', label: 'JetBrains Mono', value: '"JetBrains Mono"' },
+  { key: 'courier', label: 'Courier New', value: '"Courier New"' },
+];
+/** 中文字体预设：渲染中文内容，不影响英文/HEX 对齐 */
+export const logFontCJKPresets: { key: string; label: string; value: string }[] = [
+  { key: 'default', label: '跟随英文', value: 'default' },
+  { key: 'yahei', label: '微软雅黑', value: '"Microsoft YaHei", "微软雅黑"' },
+  { key: 'dengxian', label: '等线', value: '"DengXian", "等线"' },
+  { key: 'simsun', label: '宋体', value: 'SimSun, "宋体"' },
+  { key: 'kaiti', label: '楷体', value: 'KaiTi, "楷体"' },
+  { key: 'sarasa', label: '更纱黑体', value: '"Sarasa Mono SC", "Sarasa Gothic SC"' },
+];
+
+/** 把英文/中文字体值拼成 CSS font-family 回退栈。
+ *  - latin='default' 时用内置 monospace 栈
+ *  - cjk='default' 时不追加中文回退（沿用 latin 栈的中文能力）
+ *  - 末尾兜底 monospace */
+function buildFontStack(latin: string, cjk: string): string {
+  const latinStack = latin && latin !== 'default'
+    ? latin
+    : '"SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace';
+  if (cjk && cjk !== 'default') {
+    return `${latinStack}, ${cjk}`;
+  }
+  return latinStack;
+}
+
+/** 应用日志区字体到 <html>：字号/行高/字体族，CSS 变量覆盖即生效。
+ *  latin/cjk 为 'default' 或缺省时取默认值，中文不单独指定则跟随英文栈。 */
+export function applyLogFont(size: number, lineH: number, latin?: string, cjk?: string) {
   if (typeof document === 'undefined') return;
   const el = document.documentElement;
   el.style.setProperty('--log-font-size', `${size}px`);
   el.style.setProperty('--log-line-height', String(lineH));
+  // 始终写入完整栈：default 时也用默认栈覆盖，保证取消/切换时回到干净状态
+  const stack = buildFontStack(latin ?? 'default', cjk ?? 'default');
+  el.style.setProperty('--log-font-family', stack);
 }
 export const logSendContent = $state<{ value: boolean }>({ value: true });
 
