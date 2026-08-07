@@ -106,17 +106,22 @@ export const logFontCJKPresets: { key: string; label: string; value: string }[] 
 ];
 
 /** 把英文/中文字体值拼成 CSS font-family 回退栈。
- *  - latin='default' 时用内置 monospace 栈
+ *  - latin='default' 时用内置等宽字体列表
  *  - cjk='default' 时不追加中文回退（沿用 latin 栈的中文能力）
- *  - 末尾兜底 monospace */
+ *  - monospace 始终作为最终兜底放最末尾：通用关键字会"吃掉"任何字符，
+ *    若放在 cjk 前面会导致中文字体回退被截断（英文选默认时中文改了不生效） */
 function buildFontStack(latin: string, cjk: string): string {
-  const latinStack = latin && latin !== 'default'
-    ? latin
-    : '"SF Mono", "JetBrains Mono", "Cascadia Code", Consolas, "Courier New", monospace';
-  if (cjk && cjk !== 'default') {
-    return `${latinStack}, ${cjk}`;
+  const parts: string[] = [];
+  if (latin && latin !== 'default') {
+    parts.push(latin);
+  } else {
+    parts.push('"SF Mono"', '"JetBrains Mono"', '"Cascadia Code"', 'Consolas', '"Courier New"');
   }
-  return latinStack;
+  if (cjk && cjk !== 'default') {
+    parts.push(cjk);
+  }
+  parts.push('monospace');
+  return parts.join(', ');
 }
 
 /** 应用日志区字体到 <html>：字号/行高/字体族，CSS 变量覆盖即生效。

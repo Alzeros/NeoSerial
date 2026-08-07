@@ -1,18 +1,24 @@
 <script lang="ts">
+  import { getVersion } from '@tauri-apps/api/app';
+  import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { saveSettings } from '$lib/tauri';
   import type { Settings } from '$lib/types';
+  // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
+  import appIcon from '$assets/icon.png';
 
   let open = $state(false);
 
   // 左侧导航：当前激活的设置项
-  type Section = 'general' | 'appearance' | 'log';
-  let activeSection = $state<Section>('general');
+  type Section = 'about' | 'general' | 'appearance';
+  let activeSection = $state<Section>('about');
   const sections: { key: Section; label: string }[] = [
+    { key: 'about', label: '关于' },
     { key: 'general', label: '通用' },
     { key: 'appearance', label: '外观' },
-    { key: 'log', label: '日志显示' },
   ];
+  // 应用版本号（打开关于页时懒加载）
+  let version = $state<{ value: string }>({ value: '' });
 
   // 主题编辑副本（打开时从 store 拷贝，取消不应用；选中即时预览）
   let editTheme = $state<string>('preset-1');
@@ -39,7 +45,7 @@
   let editBaudRates = $state<number[]>([]);
   let newBaud = $state('');
 
-  export function show() {
+  export function show(section: Section = 'about') {
     editBaudRates = [...presetBaudRates.value];
     editTheme = theme.value;
     editFontSize = logFontSize.value;
@@ -53,8 +59,14 @@
     editTextEncoding = textEncoding.value;
     origTextEncoding = textEncoding.value;
     newBaud = '';
-    activeSection = 'general';
+    activeSection = section;
     open = true;
+    // 进入关于页时懒加载版本号（仅首次拉取，失败兜底）
+    if (section === 'about' && !version.value) {
+      getVersion()
+        .then((v) => (version.value = v))
+        .catch(() => (version.value = '0.1.3'));
+    }
   }
 
   // 选中主题：即时预览（应用到 <html>），但不落盘；取消则恢复原值
@@ -164,12 +176,17 @@
       style="background: var(--background-elevated); border-color: var(--border);"
       onclick={(e) => e.stopPropagation()}
     >
-      <!-- 标题 -->
-      <div class="px-6 py-4 border-b border-[var(--border)]">
+      <!-- 标题 + 关闭按钮 -->
+      <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
         <div class="text-[15px] font-semibold text-[var(--foreground)]">设置</div>
+        <button
+          class="flex items-center justify-center w-7 h-7 -mr-2 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+          onclick={handleCancel}
+          title="关闭 (Esc)"
+        ><X size={16} /></button>
       </div>
 
-      <!-- 左右分栏：左导航 + 右内容（固定高度，避免切换设置项时弹窗跳动） -->
+      <!-- 左右分栏：左导航 + 右内容（固定高度，内容多时右栏独立滚动） -->
       <div class="flex" style="height: 340px;">
         <!-- 左侧导航 -->
         <nav class="w-[120px] flex-shrink-0 border-r border-[var(--border)] py-2">
@@ -185,7 +202,17 @@
 
         <!-- 右侧内容区（独立滚动） -->
         <div class="flex-1 overflow-y-auto px-6 py-5">
-          {#if activeSection === 'general'}
+          {#if activeSection === 'about'}
+            <!-- 关于：图标 + 应用名 + 版本 -->
+            <div class="flex flex-col items-center justify-center text-center" style="min-height: 280px;">
+              <img src={appIcon} alt="NeoSerial" class="w-16 h-16 mb-3 rounded-lg shadow-sm" />
+              <div class="text-[15px] font-semibold text-[var(--foreground)] mb-1">NeoSerial</div>
+              <div class="text-[13px] text-[var(--muted-foreground)] mb-4">串口通信调试工具</div>
+              <div class="text-[13px] text-[var(--muted-foreground)]">
+                版本 <span class="text-[var(--foreground)] font-medium">{version.value || '0.1.3'}</span>
+              </div>
+            </div>
+          {:else if activeSection === 'general'}
             <!-- 通用：预设波特率 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">预设波特率</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
@@ -223,33 +250,11 @@
               />
               <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={addBaud}>添加</button>
             </div>
-          {:else if activeSection === 'appearance'}
-            <!-- 外观：主题预设 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">主题</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              选择应用的整体配色方案，点击即时预览。
-            </div>
-            <div class="grid grid-cols-2 gap-3">
-              {#each themeMeta as t}
-                <button
-                  class="flex items-center gap-3 rounded-lg border-2 p-3 transition-all cursor-pointer {editTheme === t.key
-                    ? 'border-[var(--primary)]'
-                    : 'border-[var(--border)] hover:border-[var(--border-strong)]'}"
-                  onclick={() => selectTheme(t.key)}
-                >
-                  <!-- 预览色块：背景色 + 强调色圆点 -->
-                  <div class="relative w-10 h-10 rounded-md flex-shrink-0" style="background: {t.bg};">
-                    <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {t.accent};"></div>
-                  </div>
-                  <div class="flex flex-col items-start">
-                    <span class="text-[13px] font-medium text-[var(--foreground)]">{t.label}</span>
-                    <span class="text-[11px] text-[var(--muted-foreground)]">{t.accent}</span>
-                  </div>
-                </button>
-              {/each}
-            </div>
-          {:else if activeSection === 'log'}
-            <!-- 日志显示：编码 + 字号 + 行高 -->
+
+            <!-- 分隔：日志显示 -->
+            <div class="my-5 border-t border-[var(--border)]"></div>
+
+            <!-- 文本编码 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">文本编码</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
               HEX显示关闭时的文本模式解码方式。
@@ -272,6 +277,7 @@
               </div>
             </div>
 
+            <!-- 日志字体 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志字体</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
               英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。
@@ -354,6 +360,31 @@
               <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.484 OK</div>
               <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.545 AT+CSQ</div>
               <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.612 模块就绪</div>
+            </div>
+          {:else if activeSection === 'appearance'}
+            <!-- 外观：主题预设 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">主题</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              选择应用的整体配色方案，点击即时预览。
+            </div>
+            <div class="grid grid-cols-2 gap-3">
+              {#each themeMeta as t}
+                <button
+                  class="flex items-center gap-3 rounded-lg border-2 p-3 transition-all cursor-pointer {editTheme === t.key
+                    ? 'border-[var(--primary)]'
+                    : 'border-[var(--border)] hover:border-[var(--border-strong)]'}"
+                  onclick={() => selectTheme(t.key)}
+                >
+                  <!-- 预览色块：背景色 + 强调色圆点 -->
+                  <div class="relative w-10 h-10 rounded-md flex-shrink-0" style="background: {t.bg};">
+                    <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {t.accent};"></div>
+                  </div>
+                  <div class="flex flex-col items-start">
+                    <span class="text-[13px] font-medium text-[var(--foreground)]">{t.label}</span>
+                    <span class="text-[11px] text-[var(--muted-foreground)]">{t.accent}</span>
+                  </div>
+                </button>
+              {/each}
             </div>
           {/if}
         </div>
