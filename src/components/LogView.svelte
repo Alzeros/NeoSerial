@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { ChevronUp, ChevronDown, X } from 'lucide-svelte';
+  import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
   import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, scrollContainerRef } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
@@ -34,6 +34,7 @@
   let searchOpen = $state(false);
   let searchQuery = $state('');
   let searchCaseSensitive = $state(false);
+  let searchWholeWord = $state(false);
   let searchInput: HTMLInputElement;
   /** 匹配行的索引列表（logLines 中的下标） */
   let matchIndices = $state<number[]>([]);
@@ -42,10 +43,32 @@
   // 上一轮的查询条件，用于区分"查询变了"和"只是 logLines 变了"
   let lastQuery = '';
   let lastCs = false;
+  let lastWw = false;
   let lastHex = false;
   let lastEnc = 'ascii';
 
   const matchSet = $derived(new Set(matchIndices));
+
+  /**
+   * 共享搜索正则：行匹配(testRe, 无 g)与高亮(globalRe, 有 g)共用同一 pattern，
+   * 避免两套逻辑各算各的导致"匹配命中行但高亮没描边"。全字匹配用 \b 包裹。
+   * 查询词首尾本身为非词字符时 \b 不成立，会命中不了——这是 VSCode 同款行为，
+   * 遇此情况用户应关闭全字匹配。
+   */
+  const searchMatcher = $derived.by(() => {
+    if (!searchQuery) return null;
+    const escaped = searchQuery.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const pattern = searchWholeWord ? `\\b${escaped}\\b` : escaped;
+    const flags = searchCaseSensitive ? '' : 'i';
+    try {
+      return {
+        testRe: new RegExp(pattern, flags),
+        globalRe: new RegExp(pattern, flags + 'g')
+      };
+    } catch {
+      return null;
+    }
+  });
 
   function openSearch() {
     searchOpen = true;
@@ -107,38 +130,41 @@
     el?.scrollIntoView({ block: 'center' });
   }
 
-  /** 重新计算匹配行。查询/大小写/显示模式/编码变化时重置到第一个匹配；
+  /** 重新计算匹配行。查询/大小写/全字/显示模式/编码变化时重置到第一个匹配；
    *  仅 logLines 变化时保留当前位置（夹紧到有效范围）。 */
   $effect(() => {
     const q = searchQuery;
     const cs = searchCaseSensitive;
+    const ww = searchWholeWord;
     const lines = logLines;
     const hex = displayMode.value === 'hex';
     // 编码变化也会改变 renderLine 输出，纳入依赖触发重算
     const enc = textEncoding.value;
+    const matcher = searchMatcher;
 
-    if (!q) {
+    if (!q || !matcher) {
       matchIndices = [];
       currentMatch = 0;
       lastQuery = '';
       lastCs = cs;
+      lastWw = ww;
       lastHex = hex;
       lastEnc = enc;
       return;
     }
 
-    const queryChanged = q !== lastQuery || cs !== lastCs || hex !== lastHex || enc !== lastEnc;
+    const queryChanged = q !== lastQuery || cs !== lastCs || ww !== lastWw || hex !== lastHex || enc !== lastEnc;
     lastQuery = q;
     lastCs = cs;
+    lastWw = ww;
     lastHex = hex;
     lastEnc = enc;
 
-    const needle = cs ? q : q.toLowerCase();
+    const { testRe } = matcher;
     const indices: number[] = [];
     for (let i = 0; i < lines.length; i++) {
       const text = renderLine(lines[i]);
-      const haystack = cs ? text : text.toLowerCase();
-      if (haystack.includes(needle)) {
+      if (testRe.test(text)) {
         indices.push(i);
       }
     }
@@ -154,18 +180,10 @@
     }
   });
 
-  /** 把文本按搜索词切分为片段，标记匹配段用于高亮渲染。 */
-  function highlightSegments(text: string): { text: string; match: boolean }[] {
-    const q = searchQuery;
-    if (!q) return [{ text, match: false }];
-    const flags = searchCaseSensitive ? 'g' : 'gi';
-    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    let regex: RegExp;
-    try {
-      regex = new RegExp(escaped, flags);
-    } catch {
-      return [{ text, match: false }];
-    }
+  /** 把文本按搜索词切分为片段，标记匹配段用于高亮渲染。
+   *  使用共享正则 searchMatcher.globalRe，与行匹配同一 pattern，保证高亮范围与命中行一致。 */
+  function highlightSegments(text: string, regex: RegExp): { text: string; match: boolean }[] {
+    regex.lastIndex = 0;
     const segments: { text: string; match: boolean }[] = [];
     let lastIndex = 0;
     let m: RegExpExecArray | null;
@@ -305,6 +323,13 @@
         title="区分大小写"
       >Aa</button>
       <button
+        class="flex items-center justify-center w-7 h-7 rounded transition-colors {searchWholeWord
+          ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+          : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+        onclick={() => (searchWholeWord = !searchWholeWord)}
+        title="全字匹配"
+      ><WholeWord size={15} /></button>
+      <button
         class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         onclick={prevMatch}
         disabled={matchIndices.length === 0}
@@ -356,8 +381,8 @@
         {/if}
         <!-- 内容：搜索匹配时高亮关键词片段 -->
         <span class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
-          {#if searchQuery && matchSet.has(i)}
-            {#each highlightSegments(renderLine(line)) as seg}
+          {#if searchQuery && matchSet.has(i) && searchMatcher}
+            {#each highlightSegments(renderLine(line), searchMatcher.globalRe) as seg}
               {#if seg.match}
                 <mark style="background: rgba(196,138,46,0.35); color: inherit; border-radius: 2px; padding: 0 1px;">{seg.text}</mark>
               {:else}
