@@ -77,6 +77,10 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle) -> Result<(
         "connection-state",
         crate::connection::ConnectionState { connected: false, port: None },
     );
+    // 更新 registry:com/connected 清空(辅助发现机制,失败忽略)
+    if let Some(reg) = shared.registry.as_ref() {
+        let _ = reg.update_com(None, None, false);
+    }
     Ok(())
 }
 
@@ -109,12 +113,18 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
                 let mut conn = shared.connection.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
                 *conn = Some(handle);
             }
+            // 更新 registry 的 com/connected(锁已释放,避免持锁做文件 IO)
+            // update_com 失败忽略:registry 只是辅助发现机制,不该阻塞 connect
+            if let Some(reg) = shared.registry.as_ref() {
+                let _ = reg.update_com(Some(req.port.clone()), Some(req.baud_rate), true);
+            }
             Ok(ConnectResp { ok: true, mode: Some(mode.into()) })
         }
         Err(e) => {
             let lower = e.to_lowercase();
             let port_busy = lower.contains("access is denied")
                 || lower.contains("being used by another process")
+                || lower.contains("accessdenied")
                 || lower.contains("permission");
             if port_busy {
                 Err(ErrorResp::new("端口被占用,可能上次连接未完全释放,请稍后重试"))

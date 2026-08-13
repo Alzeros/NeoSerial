@@ -2,6 +2,7 @@ use std::sync::{Arc, Mutex};
 
 use crate::buffer::rx_history::RxHistory;
 use crate::connection::ConnectionHandle;
+use crate::mcp::registry::RegistryHandle;
 
 /// MCP handler 与 Tauri command 共享的状态。
 /// 关键:connection 必须与 AppState.connection 是**同一个 Arc** clone,
@@ -11,4 +12,6 @@ pub struct McpShared {
     pub app_handle: tauri::AppHandle,
     pub rx_history: Arc<RxHistory>,
     pub connection: Arc<Mutex<Option<ConnectionHandle>>>,
+    /// registry 句柄,供 connect/disconnect 工具更新 com/connected。None 时跳过更新。
+    pub registry: Option<RegistryHandle>,
 }

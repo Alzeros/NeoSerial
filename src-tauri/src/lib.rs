@@ -30,14 +30,7 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = AppState::new(handle.clone());
-            // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)
-            let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
-                app_handle: handle.clone(),
-                rx_history: state.rx_history.clone(),
-                connection: state.connection.clone(),
-            });
-            app.manage(state);
-            // 选端口 + 登记 registry
+            // 选端口 + 登记 registry(先于 McpShared,以便注入同一 registry clone)
             let port = match mcp::server::pick_port() {
                 Ok(p) => p,
                 Err(e) => {
@@ -49,6 +42,15 @@ pub fn run() {
                 }
             };
             let registry = mcp::registry::RegistryHandle::register(port).ok();
+            // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)
+            // registry 是同一 clone,供 connect/disconnect 工具调 update_com
+            let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
+                app_handle: handle.clone(),
+                rx_history: state.rx_history.clone(),
+                connection: state.connection.clone(),
+                registry: registry.clone(),
+            });
+            app.manage(state);
             // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
             let shared_clone = mcp_shared.clone();
             tauri::async_runtime::spawn(async move {
