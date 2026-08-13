@@ -32,12 +32,15 @@ pub struct SerialParams {
     pub flow_control: FlowControl,
 }
 
-/// 连接句柄 — 持有写线程的 sender 和运行标志。
+/// 连接句柄 — 持有写线程的 sender、运行标志、线程退出通知。
 pub struct ConnectionHandle {
     pub running: Arc<AtomicBool>,
     pub tx_bytes: Arc<AtomicU64>,
     pub rx_bytes: Arc<AtomicU64>,
     pub write_tx: Sender<WriteCommand>,
+    /// reader/writer 线程退出通知。monitoring 线程 join 完两者后置 true+notify_all。
+    /// disconnect 持锁 wait_timeout 等它,保证旧连接释放完才返回(消重连竞态)。
+    pub exit: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
 }
 
 /// 发送给前端的 Tx 更新事件。
@@ -120,6 +123,7 @@ pub fn spawn_connection(
     let running = Arc::new(AtomicBool::new(true));
     let tx_bytes = Arc::new(AtomicU64::new(0));
     let rx_bytes = Arc::new(AtomicU64::new(0));
+    let exit = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
 
     // 创建写通道
     let (write_tx, write_rx) = bounded::<WriteCommand>(64);
@@ -129,6 +133,7 @@ pub fn spawn_connection(
         tx_bytes: tx_bytes.clone(),
         rx_bytes: rx_bytes.clone(),
         write_tx,
+        exit: exit.clone(),
     };
 
     // 尝试克隆端口，失败则降级为共享模式
@@ -188,11 +193,17 @@ pub fn spawn_connection(
     let port_name = params.port.clone();
     let app_handle_clone = app_handle.clone();
     let running_clone = running.clone();
+    let exit_clone = exit.clone();
     std::thread::spawn(move || {
         // 阻塞等待两个线程真正退出
         let _ = reader_handle.join();
         let _ = writer_handle.join();
         running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+        // 通知 disconnect:线程已退净,可安全返回(供下一次 connect)
+        if let Ok(mut e) = exit_clone.0.lock() {
+            *e = true;
+            exit_clone.1.notify_all();
+        }
         let _ = app_handle_clone.emit("connection-state", ConnectionState {
             connected: false,
             port: Some(port_name),
