@@ -51,7 +51,7 @@ pub fn send(
 /// 发送方向的即时回显 + 文件日志。与脚本序列（sequence.rs）共用同一逻辑。
 /// - log_send=false 时不回显也不记录（"记录发送"开关）
 /// - 与 write 线程解耦：发起即打时间戳，不受串口写阻塞影响
-fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
+pub fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
     let (cfg, sender) = match app_handle.try_state::<AppState>() {
         Some(state) => {
             let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
