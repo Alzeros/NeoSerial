@@ -140,4 +140,42 @@ mod tests {
         let (rows, _) = h.since(0);
         assert!(rows.is_empty());
     }
+
+    use std::time::Duration;
+    use tokio::time::timeout;
+
+    // 验证"先查后等、醒来重查"模式:等待时被 push 唤醒,重查能拿到新行。
+    #[tokio::test]
+    async fn test_notify_wakes_waiter() {
+        let h = std::sync::Arc::new(RxHistory::new(100));
+        // 先查:此刻无数据,seq0=0
+        let (rows, seq0) = h.since(0);
+        assert!(rows.is_empty());
+        // 异步等 notify,带 1s 超时(避免永远挂起)
+        let notified = h.notify().notified();
+        // 另一线程 50ms 后 push
+        let h2 = h.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(50));
+            h2.push(rx(b"late"));
+        });
+        // 等待被唤醒(应在 ~50ms 后,push 调 notify_waiters)
+        timeout(Duration::from_secs(1), notified).await.expect("notify 未唤醒");
+        // 醒来重查
+        let (rows2, _) = h.since(seq0);
+        assert_eq!(rows2.len(), 1);
+        assert_eq!(rows2[0].1.ascii, "late");
+    }
+
+    // 验证超时路径:无人 push 时 timeout 正常到期,不漏唤醒也不死等。
+    #[tokio::test]
+    async fn test_timeout_when_no_push() {
+        let h = RxHistory::new(100);
+        let seq0 = h.latest_seq();
+        let notified = h.notify().notified();
+        let r = timeout(Duration::from_millis(50), notified).await;
+        assert!(r.is_err(), "无 push 时应超时");
+        let (rows, _) = h.since(seq0);
+        assert!(rows.is_empty());
+    }
 }
