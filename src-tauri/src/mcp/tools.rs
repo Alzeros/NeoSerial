@@ -5,7 +5,7 @@ use tauri::Emitter;
 use tokio::time::timeout;
 
 use crate::commands::send::emit_tx_line;
-use crate::connection::WriteCommand;
+use crate::connection::{spawn_connection, SerialParams, WriteCommand};
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
 
 use super::state::McpShared;
@@ -78,6 +78,77 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle) -> Result<(
         crate::connection::ConnectionState { connected: false, port: None },
     );
     Ok(())
+}
+
+/// 连接串口(复用 spawn_connection + 端口占用文案)。
+/// spawn_connection 内部会 emit connection-state/connection-mode,前端原样接收。
+pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, ErrorResp> {
+    let params = SerialParams {
+        port: req.port.clone(),
+        baud_rate: req.baud_rate,
+        data_bits: parse_data_bits(&req.data_bits),
+        parity: parse_parity(&req.parity),
+        stop_bits: if req.stop_bits == 2 {
+            crate::config::settings::StopBits::Two
+        } else {
+            crate::config::settings::StopBits::One
+        },
+        flow_control: parse_flow_control(&req.flow_control),
+    };
+    // 已连接则报错(单连接)
+    {
+        let conn = shared.connection.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        if conn.is_some() {
+            return Err(ErrorResp::new("已连接,请先 disconnect"));
+        }
+    }
+    match spawn_connection(params, shared.app_handle.clone()) {
+        Ok(handle) => {
+            let mode = "independent"; // spawn_connection 内部决定,此处简化
+            {
+                let mut conn = shared.connection.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+                *conn = Some(handle);
+            }
+            Ok(ConnectResp { ok: true, mode: Some(mode.into()) })
+        }
+        Err(e) => {
+            let lower = e.to_lowercase();
+            let port_busy = lower.contains("access is denied")
+                || lower.contains("being used by another process")
+                || lower.contains("permission");
+            if port_busy {
+                Err(ErrorResp::new("端口被占用,可能上次连接未完全释放,请稍后重试"))
+            } else {
+                Err(ErrorResp::new(e))
+            }
+        }
+    }
+}
+
+fn parse_data_bits(s: &str) -> crate::config::settings::DataBits {
+    use crate::config::settings::DataBits;
+    match s {
+        "Five" => DataBits::Five,
+        "Six" => DataBits::Six,
+        "Seven" => DataBits::Seven,
+        _ => DataBits::Eight,
+    }
+}
+fn parse_parity(s: &str) -> crate::config::settings::Parity {
+    use crate::config::settings::Parity;
+    match s {
+        "Odd" => Parity::Odd,
+        "Even" => Parity::Even,
+        _ => Parity::None,
+    }
+}
+fn parse_flow_control(s: &str) -> crate::config::settings::FlowControl {
+    use crate::config::settings::FlowControl;
+    match s {
+        "Software" => FlowControl::Software,
+        "Hardware" => FlowControl::Hardware,
+        _ => FlowControl::None,
+    }
 }
 
 // ============ get_status ============

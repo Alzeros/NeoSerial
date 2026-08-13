@@ -52,6 +52,7 @@ fn write_all(path: &Path, entries: &[RegistryEntry]) -> Result<(), String> {
 }
 
 /// 持有本实例 pid 与 registry 路径,封装登记/更新/心跳/注销。
+#[derive(Clone)]
 pub struct RegistryHandle {
     pid: u32,
     port: u16,

@@ -29,7 +29,43 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            app.manage(AppState::new(handle));
+            let state = AppState::new(handle.clone());
+            // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)
+            let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
+                app_handle: handle.clone(),
+                rx_history: state.rx_history.clone(),
+                connection: state.connection.clone(),
+            });
+            app.manage(state);
+            // 选端口 + 登记 registry
+            let port = match mcp::server::pick_port() {
+                Ok(p) => p,
+                Err(e) => {
+                    log::error!("MCP 端口分配失败: {}", e);
+                    // 端口分配失败不阻断主程序,只是 MCP 不可用
+                    #[cfg(debug_assertions)]
+                    app.get_webview_window("main").unwrap().open_devtools();
+                    return Ok(());
+                }
+            };
+            let registry = mcp::registry::RegistryHandle::register(port).ok();
+            // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
+            let shared_clone = mcp_shared.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = mcp::server::run_server(shared_clone, port).await {
+                    log::error!("MCP server 退出: {}", e);
+                }
+            });
+            // 心跳:每 5s 更新 registry(若登记成功)
+            if let Some(reg) = registry.clone() {
+                tauri::async_runtime::spawn(async move {
+                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+                    loop {
+                        interval.tick().await;
+                        let _ = reg.heartbeat();
+                    }
+                });
+            }
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
             Ok(())

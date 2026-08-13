@@ -36,16 +36,16 @@ impl RxHistory {
 
     /// 返回 seq > after_seq 的所有行(从旧到新)+ 当前最大序号。
     pub fn since(&self, after_seq: u64) -> (Vec<(u64, LogLine)>, u64) {
-        let latest = self.seq.load(Ordering::SeqCst);
         let rows = match self.inner.lock() {
-            Ok(buf) => buf
-                .snapshot()
-                .into_iter()
-                .filter(|(s, _)| *s > after_seq)
-                .collect(),
-            Err(_) => Vec::new(),
+            Ok(buf) => {
+                let snap = buf.snapshot();
+                let latest = snap.last().map(|(s, _)| *s).unwrap_or_else(|| self.seq.load(Ordering::SeqCst));
+                let filtered: Vec<_> = snap.into_iter().filter(|(s, _)| *s > after_seq).collect();
+                (filtered, latest)
+            }
+            Err(_) => (Vec::new(), self.seq.load(Ordering::SeqCst)),
         };
-        (rows, latest)
+        rows
     }
 
     /// 当前最大序号(无数据返回 0)。
