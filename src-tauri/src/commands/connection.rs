@@ -93,10 +93,16 @@ pub fn disconnect(
     Ok(())
 }
 
+/// 内部:列出可用串口名。供 Tauri command 和 MCP 工具共用。
+pub fn list_ports_inner() -> Vec<String> {
+    serialport::available_ports()
+        .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub fn list_ports() -> Result<Vec<String>, String> {
-    let ports = serialport::available_ports().map_err(|e| e.to_string())?;
-    Ok(ports.into_iter().map(|p| p.port_name).collect())
+    Ok(list_ports_inner())
 }
 
 /// 清零收发字节统计。把累计器置 0，并 emit tx-update/rx-update = 0 让前端同步。

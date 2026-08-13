@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod connection;
 mod logging;
+mod mcp;
 mod state;
 mod util;
 
