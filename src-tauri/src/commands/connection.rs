@@ -44,7 +44,22 @@ pub fn connect(
         flow_control,
     };
 
-    let handle = spawn_connection(params, app_handle)?;
+    let handle = match spawn_connection(params, app_handle) {
+        Ok(h) => h,
+        Err(e) => {
+            // 端口被占用类:Windows "Access is denied" / "being used by another process"
+            // 常因上次连接线程未完全释放。disconnect 已持锁等线程退出,此为驱动层极端延迟兜底。
+            let lower = e.to_lowercase();
+            let port_busy = lower.contains("access is denied")
+                || lower.contains("being used by another process")
+                || lower.contains("accessdenied")
+                || lower.contains("permission");
+            if port_busy {
+                return Err("端口被占用,可能上次连接未完全释放,请稍后重试".to_string());
+            }
+            return Err(e);
+        }
+    };
 
     let mut conn = state.connection.lock().map_err(|e| e.to_string())?;
     *conn = Some(handle);
@@ -57,15 +72,24 @@ pub fn disconnect(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
-    let mut conn = state.connection.lock().map_err(|e| e.to_string())?;
-    if let Some(handle) = conn.take() {
+    let handle = {
+        let mut conn = state.connection.lock().map_err(|e| e.to_string())?;
+        conn.take()
+    };
+    if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
         handle.running.store(false, std::sync::atomic::Ordering::SeqCst);
-        let _ = app_handle.emit("connection-state", crate::connection::ConnectionState {
-            connected: false,
-            port: None,
-        });
+        // 持锁(此处已释放 conn,用 handle.exit 的内部锁)等线程退出。
+        if let Ok(mut e) = handle.exit.0.lock() {
+            if !*e {
+                let _ = handle.exit.1.wait_timeout(e, std::time::Duration::from_secs(1));
+            }
+        }
     }
+    let _ = app_handle.emit("connection-state", crate::connection::ConnectionState {
+        connected: false,
+        port: None,
+    });
     Ok(())
 }
 
