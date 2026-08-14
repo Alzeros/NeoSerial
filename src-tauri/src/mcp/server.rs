@@ -46,19 +46,21 @@ const SEND_AND_READ: &str = "send_and_read";
 const SEND: &str = "send";
 const GET_HISTORY_SINCE: &str = "get_history_since";
 
-pub struct CmserialHandler {
+pub struct NeoserialHandler {
     shared: Arc<McpShared>,
 }
 
-impl CmserialHandler {
+impl NeoserialHandler {
     pub fn new(shared: Arc<McpShared>) -> Self {
-        CmserialHandler { shared }
+        NeoserialHandler { shared }
     }
 }
 
-impl ServerHandler for CmserialHandler {
+impl ServerHandler for NeoserialHandler {
     fn get_info(&self) -> ServerInfo {
-        ServerInfo::new(ServerCapabilities::builder().enable_tools().build())
+        // server name 设为 NeoSerial(应用名),否则 rmcp 默认用 from_build_env 显示 "rmcp"。
+        let info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        info.with_server_info(rmcp::model::Implementation::new("NeoSerial", env!("CARGO_PKG_VERSION")))
     }
 
     fn list_tools(
@@ -245,7 +247,7 @@ fn content_text(json: Value) -> CallToolResult {
 pub async fn run_server(shared: Arc<McpShared>, port: u16) -> Result<(), String> {
     let shared_for_factory = shared.clone();
     let service = StreamableHttpService::new(
-        move || Ok(CmserialHandler::new(shared_for_factory.clone())),
+        move || Ok(NeoserialHandler::new(shared_for_factory.clone())),
         Arc::new(LocalSessionManager::default()),
         StreamableHttpServerConfig::default(),
     );

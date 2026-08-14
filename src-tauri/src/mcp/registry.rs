@@ -12,7 +12,7 @@ pub fn registry_path() -> PathBuf {
     appdata.join("neoserial").join("mcp-registry.json")
 }
 
-/// 一个 cmserial 实例的 registry 条目。
+/// 一个 neoserial 实例的 registry 条目。
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
     pub pid: u32,
@@ -132,7 +132,7 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.subsec_nanos())
             .unwrap_or(0);
-        dir.join(format!("cmserial-mcp-test-{}.json", nano))
+        dir.join(format!("neoserial-mcp-test-{}.json", nano))
     }
 
     #[test]
