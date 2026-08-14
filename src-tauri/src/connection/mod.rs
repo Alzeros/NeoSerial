@@ -61,9 +61,12 @@ pub struct RxUpdate {
 
 /// 连接状态变化事件。
 #[derive(Clone, Serialize)]
+/// 连接状态变化事件。
 pub struct ConnectionState {
     pub connected: bool,
     pub port: Option<String>,
+    /// 波特率(连接成功时带;断开为 None)。供前端回填端口/波特率下拉框。
+    pub baud_rate: Option<u32>,
 }
 
 /// 错误事件。
@@ -214,13 +217,15 @@ pub fn spawn_connection(
         let _ = app_handle_clone.emit("connection-state", ConnectionState {
             connected: false,
             port: Some(port_name),
+            baud_rate: None,
         });
     });
 
     // 发送连接成功事件
     let _ = app_handle.emit("connection-state", ConnectionState {
         connected: true,
-        port: Some(params.port),
+        port: Some(params.port.clone()),
+        baud_rate: Some(params.baud_rate),
     });
 
     Ok((handle, mode_str))

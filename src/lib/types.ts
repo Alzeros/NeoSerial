@@ -14,6 +14,8 @@ export interface LogLine {
 export interface ConnectionState {
   connected: boolean;
   port: string | null;
+  /** 波特率(连接成功时带;断开为 null)。供回填波特率下拉框。 */
+  baud_rate: number | null;
 }
 
 export interface TxUpdate {

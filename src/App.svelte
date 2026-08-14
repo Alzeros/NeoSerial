@@ -166,6 +166,12 @@
     const unlistenState = onConnectionState((s) => {
       connected.value = s.connected;
       currentPort.value = s.port;
+      // 连接成功时回填端口/波特率下拉框——MCP connect 走后端,顶部的 connectionParams
+      // 不会自动更新,这里同步避免"连了 COM2 但下拉框还显 COM1"。
+      if (s.connected) {
+        if (s.port) connectionParams.port = s.port;
+        if (s.baud_rate) connectionParams.baudRate = s.baud_rate;
+      }
       // 断开时把当前 UI 设置落盘
       if (!s.connected) {
         persistSettings();

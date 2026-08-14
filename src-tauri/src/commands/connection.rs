@@ -89,6 +89,7 @@ pub fn disconnect(
     let _ = app_handle.emit("connection-state", crate::connection::ConnectionState {
         connected: false,
         port: None,
+        baud_rate: None,
     });
     Ok(())
 }

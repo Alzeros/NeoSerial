@@ -75,7 +75,7 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle) -> Result<(
     }
     let _ = app_handle.emit(
         "connection-state",
-        crate::connection::ConnectionState { connected: false, port: None },
+        crate::connection::ConnectionState { connected: false, port: None, baud_rate: None },
     );
     // 更新 registry:com/connected 清空(辅助发现机制,失败忽略)
     if let Some(reg) = shared.registry.as_ref() {
