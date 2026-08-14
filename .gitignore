@@ -41,3 +41,9 @@ shot*.ps1
 
 # workbuddy 工作区(AI 审查工具)
 .workbuddy/
+
+# 本机 cargo 镜像配置(自用,不入远端)
+.cargo/
+
+# 本地 AI 约定文档
+CLAUDE.md
