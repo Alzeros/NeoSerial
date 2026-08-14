@@ -414,44 +414,31 @@
               {/each}
             </div>
           {:else if activeSection === 'mcp'}
-            <!-- MCP 服务：自动启动开关 + 连接指令 -->
+            <!-- MCP 服务：自动启动 + 端口 + 连接指令 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-              内嵌 MCP server 让 Claude Code 经由 NeoSerial 操作串口（不占端口）。
-            </div>
-            <label class="flex items-center gap-3 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                class="h-4 w-4 rounded accent-[var(--primary)]"
-                bind:checked={editMcpAutoStart}
-              />
-              <span class="text-[13px] text-[var(--foreground)]">打开软件时自动启动 MCP server</span>
-            </label>
-            <div class="text-[12px] text-[var(--muted-foreground)] mt-1 ml-7 mb-5">
-              关闭后启动时不占用端口（需重启软件生效）。
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              内嵌 MCP server，支持 Claude Code 等 agent 经由 NeoSerial 操作串口。
             </div>
 
-            <!-- 监听端口 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">监听端口</div>
-            <div class="flex items-center gap-2 mb-1">
-              <input
-                type="number"
-                class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
-                bind:value={editMcpPort}
-                min="1024"
-                max="65535"
-              />
-              <span class="text-[12px] text-[var(--muted-foreground)]">默认 34594,被占自动递增</span>
-            </div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-5">
-              <code class="px-1 rounded bg-[var(--border-subtle)]">claude mcp add</code> 配实际端口一次,后续会话自动连接。端口被占时自动 +1 找下一个(变了要重配,但默认端口没规律极少冲突)。
+            <div class="space-y-3 mb-4">
+              <!-- 自动启动 + 端口并排，紧凑 -->
+              <div class="flex items-center gap-4">
+                <label class="flex items-center gap-2 cursor-pointer select-none">
+                  <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editMcpAutoStart} />
+                  <span class="text-[13px] text-[var(--foreground)]">开机自启</span>
+                </label>
+                <label class="flex items-center gap-2">
+                  <span class="text-[13px] text-[var(--foreground)]">端口</span>
+                  <input type="number" class="w-20 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
+                </label>
+              </div>
             </div>
 
-            <!-- 当前运行状态 + 连接指令 -->
             {#if mcpStatus.running && mcpStatus.port}
-              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">连接 Claude Code</div>
+              <!-- 运行中：复制连接命令 -->
+              <div class="mb-1.5 text-[13px] font-medium text-[var(--foreground)]">连接 MCP 客户端</div>
               <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
-                MCP server 运行中，端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。在终端执行一次即可,后续会话自动连接：
+                端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。Claude Code 中粘贴执行，或在终端运行：
               </div>
               <div class="flex items-center gap-2">
                 <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
@@ -466,8 +453,8 @@
                 >{mcpCopied ? '已复制' : '复制'}</button>
               </div>
             {:else}
-              <div class="text-[12px] text-[var(--muted-foreground)] mt-4 px-3 py-2 rounded bg-[var(--border-subtle)]">
-                MCP server 未运行{!editMcpAutoStart ? '（已关闭自动启动）' : `（端口 ${editMcpPort} 可能被占用,改端口或释放占用后重启）`}。
+              <div class="text-[12px] text-[var(--muted-foreground)] px-3 py-2 rounded bg-[var(--border-subtle)]">
+                MCP 未运行{!editMcpAutoStart ? '（已关闭自启）' : `（端口 ${editMcpPort} 被占，改端口后重启）`}
               </div>
             {/if}
           {/if}
