@@ -180,7 +180,7 @@ fn default_mcp_auto_start() -> bool {
 }
 
 fn default_mcp_port() -> u16 {
-    23334
+    34594
 }
 
 impl Default for McpSettings {

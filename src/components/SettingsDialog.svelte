@@ -47,8 +47,8 @@
   let newBaud = $state('');
   // MCP 自动启动编辑副本（从 cachedSettings 拷贝；改后重启生效）
   let editMcpAutoStart = $state(true);
-  // MCP 端口编辑副本（默认 23334;改后需重新 claude mcp add）
-  let editMcpPort = $state(23334);
+  // MCP 端口编辑副本（默认 34594;被占自动递增。改后需重新 claude mcp add）
+  let editMcpPort = $state(34594);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -68,7 +68,7 @@
     origTextEncoding = textEncoding.value;
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
-    editMcpPort = cachedSettings.value?.mcp?.port ?? 23334;
+    editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
     mcpCopied = false;
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
@@ -441,10 +441,10 @@
                 min="1024"
                 max="65535"
               />
-              <span class="text-[12px] text-[var(--muted-foreground)]">默认 23334,固定端口</span>
+              <span class="text-[12px] text-[var(--muted-foreground)]">默认 34594,被占自动递增</span>
             </div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-5">
-              固定端口让 <code class="px-1 rounded bg-[var(--border-subtle)]">claude mcp add</code> 配一次永久有效。改端口后需重新配置 Claude Code,端口被占时 MCP 不启动。
+              <code class="px-1 rounded bg-[var(--border-subtle)]">claude mcp add</code> 配实际端口一次,后续会话自动连接。端口被占时自动 +1 找下一个(变了要重配,但默认端口没规律极少冲突)。
             </div>
 
             <!-- 当前运行状态 + 连接指令 -->
