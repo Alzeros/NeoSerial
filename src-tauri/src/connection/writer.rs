@@ -6,6 +6,7 @@ use crossbeam_channel::Receiver;
 use tauri::{Emitter, Manager};
 
 use crate::buffer::log_line::{Dir, LogLine};
+use crate::buffer::rx_history::RxHistory;
 use crate::connection::WriteCommand;
 use crate::connection::port_wrapper::PortWriter;
 use crate::state::AppState;
@@ -19,6 +20,8 @@ pub fn spawn_writer(
     running: Arc<AtomicBool>,
     tx_bytes: Arc<AtomicU64>,
     app_handle: tauri::AppHandle,
+    rx_history: Arc<RxHistory>,
+    port_name: String,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         while running.load(std::sync::atomic::Ordering::SeqCst) {
@@ -39,7 +42,7 @@ pub fn spawn_writer(
                     match port.write_all(&data) {
                         Ok(_) => {
                             let total = tx_bytes.fetch_add(data.len() as u64, std::sync::atomic::Ordering::SeqCst) + data.len() as u64;
-                            let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total });
+                            let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
 
                             if emit_line {
                                 // 从 state 读取显示配置和文件日志 sender
@@ -62,6 +65,10 @@ pub fn spawn_writer(
                                 if log_send {
                                     let line = LogLine::new(now_local_ts(), Dir::Tx, data.clone(), &[]);
                                     let _ = app_handle.emit("tx-line", line.clone());
+                                    // 喂 per-connection 收发历史(tx)。Send 分支(send_file)不经 emit_tx_line,
+                                    // 这里补 push,让 get_history_since 也能看到文件发送的 Tx。
+                                    // SendSilent 不走这(其 Tx 由 emit_tx_line 已 push)。
+                                    rx_history.push(Dir::Tx, line.clone());
                                     if let (Some(c), Some(tx)) = (cfg, sender) {
                                         let formatted = format_line_for_file(&line, &c, false);
                                         if !formatted.is_empty() {

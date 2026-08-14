@@ -114,11 +114,12 @@ pub fn reset_stats(
     app_handle: tauri::AppHandle,
 ) -> Result<(), String> {
     let conn = state.connection.lock().map_err(|e| e.to_string())?;
+    let port = conn.as_ref().map(|h| h.port.clone()).unwrap_or_default();
     if let Some(handle) = conn.as_ref() {
         handle.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
         handle.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
     }
-    let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total: 0 });
-    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total: 0 });
+    let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total: 0, port: port.clone() });
+    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total: 0, port });
     Ok(())
 }

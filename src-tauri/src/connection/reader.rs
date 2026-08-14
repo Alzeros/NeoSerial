@@ -13,12 +13,12 @@ use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
 /// 把积攒的行 flush 出去：emit rx-line 给前端 + 送文件日志（若正在记录）。
-fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>) {
+fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_history: &RxHistory) {
     if lines.is_empty() {
         return;
     }
-    // 一次性从 state 取出文件日志 sender、显示配置、rx 历史
-    let (cfg, sender, rx_history) = match app_handle.try_state::<AppState>() {
+    // 一次性从 state 取出文件日志 sender、显示配置（全局共享,不从 connection 取）
+    let (cfg, sender) = match app_handle.try_state::<AppState>() {
         Some(state) => {
             let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
                 show_timestamp: s.ui.show_timestamp,
@@ -29,10 +29,9 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>) {
                 .lock()
                 .ok()
                 .and_then(|ls| ls.as_ref().cloned());
-            let rx_history = state.rx_history.clone();
-            (cfg, sender, rx_history)
+            (cfg, sender)
         }
-        None => (None, None, Arc::new(RxHistory::new(0))),
+        None => (None, None),
     };
 
     for line in lines.drain(..) {
@@ -51,7 +50,7 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>) {
 /// 把 LineAssembler 中不换行的残尾（如 shell 的 "> " 提示符）补打为一行。
 /// 残尾没有换行符，正常切行永远等不到，需在设备输出间歇（读超时）时主动取出。
 /// 复用 flush_lines：统一处理前端 emit + 文件日志。
-fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>) {
+fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory) {
     let Some(tail) = assembler.flush() else {
         return;
     };
@@ -61,7 +60,7 @@ fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHand
     let ts = now_local_ts();
     let line = LogLine::new(ts, Dir::Rx, tail, &[]);
     pending_lines.push(line);
-    flush_lines(app_handle, pending_lines);
+    flush_lines(app_handle, pending_lines, rx_history);
 }
 
 /// 启动串口读取线程。
@@ -70,6 +69,8 @@ pub fn spawn_reader(
     running: Arc<AtomicBool>,
     rx_bytes: Arc<AtomicU64>,
     app_handle: tauri::AppHandle,
+    rx_history: Arc<RxHistory>,
+    port_name: String,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 1024];
@@ -92,24 +93,24 @@ pub fn spawn_reader(
 
                     // 批量 emit：攒够 16 行或超过 5ms
                     if pending_lines.len() >= 16 || last_emit.elapsed() > std::time::Duration::from_millis(5) {
-                        flush_lines(&app_handle, &mut pending_lines);
+                        flush_lines(&app_handle, &mut pending_lines, &rx_history);
                         last_emit = Instant::now();
                     }
 
                     // 定期发送 rx-update 事件
                     let total = rx_bytes.load(std::sync::atomic::Ordering::SeqCst);
-                    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total });
+                    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total, port: port_name.clone() });
                 }
                 Ok(_) => {
                     // 超时：有数据也可能在等下一批，先 flush 已有行
-                    flush_lines(&app_handle, &mut pending_lines);
+                    flush_lines(&app_handle, &mut pending_lines, &rx_history);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     // 超时（读超时到）：此刻通常意味着设备输出告一段落，
                     // 把不换行的残尾（如 shell 的 "> " 提示符）也补打出来，
                     // 避免残留行滞留到下一批、带上下一个时间戳。
-                    flush_lines(&app_handle, &mut pending_lines);
-                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines);
+                    flush_lines(&app_handle, &mut pending_lines, &rx_history);
+                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history);
                 }
                 Err(e) => {
                     // 共享模式下锁错误不致命，继续运行
@@ -130,6 +131,6 @@ pub fn spawn_reader(
             }
         }
         // 线程退出前把残余行 flush
-        flush_lines(&app_handle, &mut pending_lines);
+        flush_lines(&app_handle, &mut pending_lines, &rx_history);
     })
 }

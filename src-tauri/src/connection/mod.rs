@@ -10,6 +10,7 @@ use crossbeam_channel::{bounded, Sender};
 use serde::Serialize;
 use tauri::Emitter;
 
+use crate::buffer::rx_history::RxHistory;
 use crate::config::settings::{DataBits, FlowControl, Parity, StopBits};
 
 /// 发送到写线程的命令。
@@ -45,18 +46,23 @@ pub struct ConnectionHandle {
     pub port: String,
     /// 连接的波特率,供 get_status 返回。
     pub baud: u32,
+    /// 该连接的独立收发历史。reader push Rx,emit_tx_line/writer push Tx,
+    /// MCP send_and_read/get_history_since 查询。per-connection 隔离,不串数据。
+    pub rx_history: Arc<RxHistory>,
 }
 
 /// 发送给前端的 Tx 更新事件。
 #[derive(Clone, Serialize)]
 pub struct TxUpdate {
     pub total: u64,
+    pub port: String,
 }
 
 /// 发送给前端的 Rx 更新事件。
 #[derive(Clone, Serialize)]
 pub struct RxUpdate {
     pub total: u64,
+    pub port: String,
 }
 
 /// 连接状态变化事件。
@@ -132,6 +138,7 @@ pub fn spawn_connection(
     let tx_bytes = Arc::new(AtomicU64::new(0));
     let rx_bytes = Arc::new(AtomicU64::new(0));
     let exit = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
+    let rx_history = Arc::new(RxHistory::new(10_000));
 
     // 创建写通道
     let (write_tx, write_rx) = bounded::<WriteCommand>(64);
@@ -144,6 +151,7 @@ pub fn spawn_connection(
         exit: exit.clone(),
         port: params.port.clone(),
         baud: params.baud_rate,
+        rx_history: rx_history.clone(),
     };
 
     // 尝试克隆端口，失败则降级为共享模式
@@ -159,6 +167,8 @@ pub fn spawn_connection(
                 running.clone(),
                 rx_bytes.clone(),
                 app_handle.clone(),
+                rx_history.clone(),
+                params.port.clone(),
             );
 
             let w_handle = writer::spawn_writer(
@@ -167,6 +177,8 @@ pub fn spawn_connection(
                 running.clone(),
                 tx_bytes.clone(),
                 app_handle.clone(),
+                rx_history.clone(),
+                params.port.clone(),
             );
             
             (r_handle, w_handle, "independent".to_string())
@@ -182,6 +194,8 @@ pub fn spawn_connection(
                 running.clone(),
                 rx_bytes.clone(),
                 app_handle.clone(),
+                rx_history.clone(),
+                params.port.clone(),
             );
 
             let w_handle = writer::spawn_writer(
@@ -190,6 +204,8 @@ pub fn spawn_connection(
                 running.clone(),
                 tx_bytes.clone(),
                 app_handle.clone(),
+                rx_history.clone(),
+                params.port.clone(),
             );
             
             (r_handle, w_handle, "shared".to_string())
