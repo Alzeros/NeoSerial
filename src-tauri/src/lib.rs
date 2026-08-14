@@ -42,9 +42,9 @@ struct McpStatusResp {
 /// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
 /// 返回 RegistryHandle(供 connect/disconnect 工具调 update_com)。
 fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registry::RegistryHandle> {
-    // 从设置读固定端口(默认 23333),不递增——被占则失败提示用户改端口
+    // 从设置读固定端口(默认 34594),不递增——被占则失败提示用户改端口
     let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(23333);
-    let port = match mcp::server::bind_port(port) {
+    let (port, listener) = match mcp::server::bind_port(port) {
         Ok(p) => p,
         Err(e) => {
             log::error!("MCP 端口 {} bind 失败: {}", port, e);
@@ -66,7 +66,7 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
     let shared_clone = mcp_shared.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = mcp::server::run_server(shared_clone, port).await {
+        if let Err(e) = mcp::server::run_server(shared_clone, listener).await {
             log::error!("MCP server 退出: {}", e);
         }
     });
@@ -91,7 +91,7 @@ pub fn run() {
         .plugin(tauri_plugin_shell::init())
         .setup(|app| {
             let handle = app.handle().clone();
-            let state = AppState::new(handle.clone());
+            let mut state = AppState::new(handle.clone());
             // 清理 registry 中前次/崩溃残留的死 pid 条目(无论是否起 MCP)
             mcp::registry::cleanup_dead();
             // 读 MCP 配置:是否启动时自动起 MCP server
@@ -101,6 +101,7 @@ pub fn run() {
             } else {
                 None
             };
+            state.registry = registry;
             app.manage(state);
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
@@ -148,6 +149,16 @@ pub fn run() {
             load_sequence_auto,
 
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app, event| {
+            // 进程退出时注销 registry,避免残留条目让 agent 发现后连接失败
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = app.try_state::<AppState>() {
+                    if let Some(reg) = &state.registry {
+                        let _ = reg.unregister();
+                    }
+                }
+            }
+        });
 }

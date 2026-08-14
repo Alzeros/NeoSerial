@@ -25,14 +25,12 @@ fn schema(json: serde_json::Value) -> Arc<JsonObject> {
 
 /// 从 start_port 起递增找空闲端口,上限 start_port+20。
 /// 默认端口用没规律的值(34594)降低冲突概率;被占才递增兜底。
-/// 成功返回绑定的端口;全被占返回错误。
-pub fn bind_port(start_port: u16) -> Result<u16, String> {
+/// 成功返回 (端口号, 已绑定的 TcpListener);全被占返回错误。
+/// 返回 listener 而非端口号,避免 drop 后 rebind 的 TOCTOU 竞态。
+pub fn bind_port(start_port: u16) -> Result<(u16, std::net::TcpListener), String> {
     for port in start_port..start_port.saturating_add(20) {
         match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(listener) => {
-                drop(listener);
-                return Ok(port);
-            }
+            Ok(listener) => return Ok((port, listener)),
             Err(_) => continue,
         }
     }
@@ -109,7 +107,7 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 GET_STATUS,
-                "查询当前连接状态与 rx 序号。无参数。返回 { ok, connected, rx_seq }。",
+                "查询当前连接状态与 rx 序号。无参数。返回 { ok, connected, port, baud, tx_bytes, rx_bytes, seq }。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {},
@@ -245,8 +243,10 @@ fn content_text(json: Value) -> CallToolResult {
 }
 
 /// 起 MCP streamable HTTP server,bind 127.0.0.1:port/mcp。
+/// 接收已绑定的 std TcpListener(由 bind_port 返回),转 tokio listener 避免竞态。
 /// 在 lib.rs setup 里用 tauri::async_runtime::spawn 调用。
-pub async fn run_server(shared: Arc<McpShared>, port: u16) -> Result<(), String> {
+pub async fn run_server(shared: Arc<McpShared>, listener: std::net::TcpListener) -> Result<(), String> {
+    let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
     let shared_for_factory = shared.clone();
     let service = StreamableHttpService::new(
         move || Ok(NeoserialHandler::new(shared_for_factory.clone())),
@@ -254,11 +254,12 @@ pub async fn run_server(shared: Arc<McpShared>, port: u16) -> Result<(), String>
         StreamableHttpServerConfig::default(),
     );
     let app = axum::Router::new().nest_service("/mcp", service);
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", port))
-        .await
-        .map_err(|e| format!("bind 127.0.0.1:{} 失败: {}", port, e))?;
+    // from_std 接管已绑定的 listener,不会重新 bind
+    listener.set_nonblocking(true).map_err(|e| format!("set_nonblocking 失败: {}", e))?;
+    let tokio_listener = tokio::net::TcpListener::from_std(listener)
+        .map_err(|e| format!("from_std 失败: {}", e))?;
     log::info!("MCP server listening on 127.0.0.1:{}/mcp", port);
-    axum::serve(listener, app)
+    axum::serve(tokio_listener, app)
         .await
         .map_err(|e| format!("axum serve 失败: {}", e))?;
     Ok(())

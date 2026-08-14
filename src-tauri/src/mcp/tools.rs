@@ -107,8 +107,7 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
         }
     }
     match spawn_connection(params, shared.app_handle.clone()) {
-        Ok(handle) => {
-            let mode = "independent"; // spawn_connection 内部决定,此处简化
+        Ok((handle, mode)) => {
             {
                 let mut conn = shared.connection.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
                 *conn = Some(handle);
@@ -118,7 +117,7 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
             if let Some(reg) = shared.registry.as_ref() {
                 let _ = reg.update_com(Some(req.port.clone()), Some(req.baud_rate), true);
             }
-            Ok(ConnectResp { ok: true, mode: Some(mode.into()) })
+            Ok(ConnectResp { ok: true, mode: Some(mode) })
         }
         Err(e) => {
             let lower = e.to_lowercase();
@@ -169,24 +168,34 @@ pub struct StatusResp {
     pub connected: bool,
     pub port: Option<String>,
     pub baud: Option<u32>,
+    pub tx_bytes: Option<u64>,
+    pub rx_bytes: Option<u64>,
     /// 收发历史当前最大序号(tx+rx 共用同一计数器)。
     pub seq: u64,
 }
 
 pub fn get_status(shared: &McpShared) -> StatusResp {
     let conn = shared.connection.lock().ok();
-    let (connected, port, baud) = match conn {
+    let (connected, port, baud, tx_bytes, rx_bytes) = match conn {
         Some(g) => match g.as_ref() {
-            Some(_h) => (true, None, None), // port/baud 不在 ConnectionHandle,见下注
-            None => (false, None, None),
+            Some(h) => (
+                true,
+                Some(h.port.clone()),
+                Some(h.baud),
+                Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+                Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+            ),
+            None => (false, None, None, None, None),
         },
-        None => (false, None, None),
+        None => (false, None, None, None, None),
     };
     StatusResp {
         ok: true,
         connected,
         port,
         baud,
+        tx_bytes,
+        rx_bytes,
         seq: shared.rx_history.latest_seq(),
     }
 }

@@ -41,6 +41,10 @@ pub struct ConnectionHandle {
     /// reader/writer 线程退出通知。monitoring 线程 join 完两者后置 true+notify_all。
     /// disconnect 持锁 wait_timeout 等它,保证旧连接释放完才返回(消重连竞态)。
     pub exit: Arc<(std::sync::Mutex<bool>, std::sync::Condvar)>,
+    /// 连接的串口名(如 "COM3"),供 get_status 返回。
+    pub port: String,
+    /// 连接的波特率,供 get_status 返回。
+    pub baud: u32,
 }
 
 /// 发送给前端的 Tx 更新事件。
@@ -75,7 +79,8 @@ pub struct ConnectionMode {
     pub mode: String,
 }
 
-/// 建立串口连接。成功返回 ConnectionHandle，失败返回错误信息。
+/// 建立串口连接。成功返回 (ConnectionHandle, mode_str)，失败返回错误信息。
+/// mode_str: "independent"(独立句柄) 或 "shared"(共享端口降级)。
 ///
 /// 策略：
 /// 1. 首先尝试 port.try_clone()，为读/写线程各持有一个独立句柄（无锁，性能最优）
@@ -83,7 +88,7 @@ pub struct ConnectionMode {
 pub fn spawn_connection(
     params: SerialParams,
     app_handle: tauri::AppHandle,
-) -> Result<ConnectionHandle, String> {
+) -> Result<(ConnectionHandle, String), String> {
     let data_bits = match params.data_bits {
         DataBits::Five => serialport::DataBits::Five,
         DataBits::Six => serialport::DataBits::Six,
@@ -134,6 +139,8 @@ pub fn spawn_connection(
         rx_bytes: rx_bytes.clone(),
         write_tx,
         exit: exit.clone(),
+        port: params.port.clone(),
+        baud: params.baud_rate,
     };
 
     // 尝试克隆端口，失败则降级为共享模式
@@ -187,7 +194,7 @@ pub fn spawn_connection(
     };
 
     // 发送连接模式事件
-    let _ = app_handle.emit("connection-mode", ConnectionMode { mode: mode_str });
+    let _ = app_handle.emit("connection-mode", ConnectionMode { mode: mode_str.clone() });
 
     // 监控线程：等待读/写线程都退出后，清理状态并通知前端
     let port_name = params.port.clone();
@@ -216,5 +223,5 @@ pub fn spawn_connection(
         port: Some(params.port),
     });
 
-    Ok(handle)
+    Ok((handle, mode_str))
 }

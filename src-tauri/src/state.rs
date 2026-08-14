@@ -6,6 +6,7 @@ use tauri::AppHandle;
 use crate::buffer::rx_history::RxHistory;
 use crate::connection::ConnectionHandle;
 use crate::logging::file_logger::FileLogger;
+use crate::mcp::registry::RegistryHandle;
 
 /// 应用全局状态。
 pub struct AppState {
@@ -23,6 +24,8 @@ pub struct AppState {
     pub rx_history: Arc<RxHistory>,
     /// MCP server 当前监听端口(运行中 Some(port),未启动 None)。供前端显示实际连接指令。
     pub mcp_port: Mutex<Option<u16>>,
+    /// MCP registry 句柄,进程退出时调 unregister 注销。
+    pub registry: Option<RegistryHandle>,
     #[allow(dead_code)]
     pub handle: AppHandle,
 }
@@ -37,6 +40,7 @@ impl AppState {
             settings: Mutex::new(crate::config::settings::Settings::load()),
             rx_history: Arc::new(RxHistory::new(10_000)),
             mcp_port: Mutex::new(None),
+            registry: None,
             handle,
         }
     }

@@ -44,7 +44,7 @@ pub fn connect(
         flow_control,
     };
 
-    let handle = match spawn_connection(params, app_handle) {
+    let (handle, _mode) = match spawn_connection(params, app_handle) {
         Ok(h) => h,
         Err(e) => {
             // 端口被占用类:Windows "Access is denied" / "being used by another process"
