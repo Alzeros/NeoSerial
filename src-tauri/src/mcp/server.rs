@@ -145,13 +145,14 @@ impl ServerHandler for CmserialHandler {
             ),
             Tool::new(
                 GET_HISTORY_SINCE,
-                "获取指定序号之后的收发历史(tx+rx,带方向)。参数: seq(基准序号), max_lines(可选,截断最旧)。\
+                "获取指定序号之后的收发历史(tx+rx,带方向)。参数: seq(基准序号), max_lines(可选,截断最旧), is_hex(可选,默认 false 返回 ascii;true 返回 hex dump,纯 hex 数据应传 true 否则 ascii 显示空)。\
                  返回 { ok, lines: [{dir, text}], latest_seq }。dir 为 'rx' 或 'tx'。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
                         "seq": { "type": "integer", "description": "基准序号,返回 seq > 此值 的行" },
-                        "max_lines": { "type": "integer", "description": "最多返回行数,截断最旧" }
+                        "max_lines": { "type": "integer", "description": "最多返回行数,截断最旧" },
+                        "is_hex": { "type": "boolean", "default": false, "description": "true 返回 hex dump(非可打印字节不丢);纯 hex 数据需传 true" }
                     },
                     "required": ["seq"]
                 })),
@@ -201,7 +202,7 @@ impl ServerHandler for CmserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    serde_json::to_value(tools::get_history_since(&shared, req, false)).unwrap_or_default()
+                    serde_json::to_value(tools::get_history_since(&shared, req)).unwrap_or_default()
                 }
                 SEND_AND_READ => {
                     let req: tools::SendAndReadReq = match serde_json::from_value(args) {

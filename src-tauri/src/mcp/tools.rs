@@ -269,6 +269,9 @@ pub fn send(shared: &McpShared, req: SendReq) -> Result<SendResp, ErrorResp> {
 pub struct GetHistorySinceReq {
     pub seq: u64,
     pub max_lines: Option<usize>,
+    /// true 时每行 text 返回 hex dump(非可打印字节不丢);默认 false 返回 ascii。
+    /// 纯 hex 数据(如 AA 0D 0A)在 ascii 模式下会显示空,agent 应切 is_hex=true 重查。
+    pub is_hex: Option<bool>,
 }
 
 /// 历史行:方向(rx/tx)+ 文本(按 is_hex 选 ascii/hex)。
@@ -286,7 +289,8 @@ pub struct GetHistorySinceResp {
 }
 
 /// 拉取序号 > seq 的全部历史行(tx+rx,带方向)。供 agent 主动查对话流/异步 URC。
-pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq, is_hex: bool) -> GetHistorySinceResp {
+pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHistorySinceResp {
+    let is_hex = req.is_hex.unwrap_or(false);
     let (rows, latest) = shared.rx_history.since(req.seq);
     let mut lines: Vec<HistoryLine> = rows
         .into_iter()
