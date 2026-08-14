@@ -120,6 +120,46 @@ impl RegistryHandle {
     }
 }
 
+/// 清理 registry 中本机已不存活的进程条目。
+/// 启动时调一次,移除前次/崩溃残留(pid 不在存活的条目)。
+/// 不清理自身 pid(尚未登记或在运行)。
+pub fn cleanup_dead() {
+    let path = registry_path();
+    let mut all = read_all(&path);
+    let before = all.len();
+    all.retain(|e| is_pid_alive(e.pid));
+    if all.len() != before {
+        let _ = write_all(&path, &all);
+    }
+}
+
+/// 判断 pid 对应进程是否存活(Windows: OpenProcess 成功即活)。
+fn is_pid_alive(pid: u32) -> bool {
+    #[cfg(windows)]
+    {
+        use std::ffi::c_void;
+        const PROCESS_QUERY_LIMITED_INFORMATION: u32 = 0x1000;
+        extern "system" {
+            fn OpenProcess(access: u32, inherit: i32, pid: u32) -> *mut c_void;
+            fn CloseHandle(h: *mut c_void) -> i32;
+        }
+        unsafe {
+            let h = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
+            if h.is_null() {
+                return false;
+            }
+            CloseHandle(h);
+            true
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = pid;
+        // 非 Windows 平台本机自用未支持,保守返回 true(不清理)。
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,5 +223,17 @@ mod tests {
         let p = registry_path();
         assert!(p.to_string_lossy().contains("neoserial"));
         assert!(p.to_string_lossy().ends_with("mcp-registry.json"));
+    }
+
+    #[test]
+    fn test_is_pid_alive_current_process_true() {
+        // 当前测试进程本身应存活
+        assert!(is_pid_alive(std::process::id()));
+    }
+
+    #[test]
+    fn test_is_pid_alive_dead_pid_false() {
+        // 极不可能存活的 pid(Windows pid 上限远小于此)
+        assert!(!is_pid_alive(999_999_999));
     }
 }

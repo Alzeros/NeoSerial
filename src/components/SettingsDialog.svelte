@@ -10,12 +10,13 @@
   let open = $state(false);
 
   // 左侧导航：当前激活的设置项
-  type Section = 'about' | 'general' | 'appearance';
+  type Section = 'about' | 'general' | 'appearance' | 'mcp';
   let activeSection = $state<Section>('about');
   const sections: { key: Section; label: string }[] = [
     { key: 'about', label: '关于' },
     { key: 'general', label: '通用' },
     { key: 'appearance', label: '外观' },
+    { key: 'mcp', label: 'MCP 服务' },
   ];
   // 应用版本号（打开关于页时懒加载）
   let version = $state<{ value: string }>({ value: '' });
@@ -44,6 +45,8 @@
   // 预设波特率编辑副本（打开时从 store 拷贝，取消不污染 store）
   let editBaudRates = $state<number[]>([]);
   let newBaud = $state('');
+  // MCP 自动启动编辑副本（从 cachedSettings 拷贝；改后重启生效）
+  let editMcpAutoStart = $state(true);
 
   export function show(section: Section = 'about') {
     editBaudRates = [...presetBaudRates.value];
@@ -59,6 +62,7 @@
     editTextEncoding = textEncoding.value;
     origTextEncoding = textEncoding.value;
     newBaud = '';
+    editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
     activeSection = section;
     open = true;
     // 进入关于页时懒加载版本号（仅首次拉取，失败兜底）
@@ -138,6 +142,7 @@
         ...base,
         ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
         presets: { baud_rates: rates, theme: editTheme },
+        mcp: { auto_start: editMcpAutoStart },
       };
       try {
         await saveSettings(next);
@@ -385,6 +390,24 @@
                   </div>
                 </button>
               {/each}
+            </div>
+          {:else if activeSection === 'mcp'}
+            <!-- MCP 服务：自动启动开关 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
+              内嵌 MCP server 让 Claude Code 经由 NeoSerial 操作串口（不占端口）。
+              Claude Code 配置 <code class="px-1 rounded bg-[var(--border-subtle)]">claude mcp add --transport http neoserial http://localhost:&lt;端口&gt;/mcp</code> 连接。
+            </div>
+            <label class="flex items-center gap-3 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                class="h-4 w-4 rounded accent-[var(--primary)]"
+                bind:checked={editMcpAutoStart}
+              />
+              <span class="text-[13px] text-[var(--foreground)]">打开软件时自动启动 MCP server</span>
+            </label>
+            <div class="text-[12px] text-[var(--muted-foreground)] mt-1 ml-7">
+              关闭后启动时不占用端口（需重启软件生效）。关闭期间 Claude Code 无法连接。
             </div>
           {/if}
         </div>

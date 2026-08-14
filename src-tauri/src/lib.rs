@@ -21,6 +21,45 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// 选端口 + 登记 registry + 起 MCP HTTP server + 心跳 task。
+/// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
+/// 返回 RegistryHandle(供 connect/disconnect 工具调 update_com)。
+fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registry::RegistryHandle> {
+    let port = match mcp::server::pick_port() {
+        Ok(p) => p,
+        Err(e) => {
+            log::error!("MCP 端口分配失败: {}", e);
+            return None;
+        }
+    };
+    let registry = mcp::registry::RegistryHandle::register(port).ok();
+    // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone),registry 同一 clone 供工具调 update_com
+    let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
+        app_handle: handle.clone(),
+        rx_history: state.rx_history.clone(),
+        connection: state.connection.clone(),
+        registry: registry.clone(),
+    });
+    // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
+    let shared_clone = mcp_shared.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = mcp::server::run_server(shared_clone, port).await {
+            log::error!("MCP server 退出: {}", e);
+        }
+    });
+    // 心跳:每 5s 更新 registry(若登记成功)
+    if let Some(reg) = registry.clone() {
+        tauri::async_runtime::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
+            loop {
+                interval.tick().await;
+                let _ = reg.heartbeat();
+            }
+        });
+    }
+    registry
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -30,44 +69,16 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
             let state = AppState::new(handle.clone());
-            // 选端口 + 登记 registry(先于 McpShared,以便注入同一 registry clone)
-            let port = match mcp::server::pick_port() {
-                Ok(p) => p,
-                Err(e) => {
-                    log::error!("MCP 端口分配失败: {}", e);
-                    // 端口分配失败不阻断主程序,只是 MCP 不可用
-                    #[cfg(debug_assertions)]
-                    app.get_webview_window("main").unwrap().open_devtools();
-                    return Ok(());
-                }
+            // 清理 registry 中前次/崩溃残留的死 pid 条目(无论是否起 MCP)
+            mcp::registry::cleanup_dead();
+            // 读 MCP 配置:是否启动时自动起 MCP server
+            let auto_start = state.settings.lock().ok().map(|s| s.mcp.auto_start).unwrap_or(true);
+            let registry = if auto_start {
+                start_mcp(&handle, &state)
+            } else {
+                None
             };
-            let registry = mcp::registry::RegistryHandle::register(port).ok();
-            // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)
-            // registry 是同一 clone,供 connect/disconnect 工具调 update_com
-            let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
-                app_handle: handle.clone(),
-                rx_history: state.rx_history.clone(),
-                connection: state.connection.clone(),
-                registry: registry.clone(),
-            });
             app.manage(state);
-            // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
-            let shared_clone = mcp_shared.clone();
-            tauri::async_runtime::spawn(async move {
-                if let Err(e) = mcp::server::run_server(shared_clone, port).await {
-                    log::error!("MCP server 退出: {}", e);
-                }
-            });
-            // 心跳:每 5s 更新 registry(若登记成功)
-            if let Some(reg) = registry.clone() {
-                tauri::async_runtime::spawn(async move {
-                    let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
-                    loop {
-                        interval.tick().await;
-                        let _ = reg.heartbeat();
-                    }
-                });
-            }
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
             Ok(())

@@ -161,6 +161,27 @@ impl Default for PresetSettings {
     }
 }
 
+/// MCP 服务设置。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct McpSettings {
+    /// 打开软件时是否自动启动 MCP server（默认 true）。
+    /// 改后需重启软件生效（setup 时读一次决定是否起 server）。
+    #[serde(default = "default_mcp_auto_start")]
+    pub auto_start: bool,
+}
+
+fn default_mcp_auto_start() -> bool {
+    true
+}
+
+impl Default for McpSettings {
+    fn default() -> Self {
+        McpSettings {
+            auto_start: default_mcp_auto_start(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
@@ -173,6 +194,9 @@ pub struct Settings {
     /// 预设项（预设波特率等）。旧配置缺该字段时取默认。
     #[serde(default)]
     pub presets: PresetSettings,
+    /// MCP 服务设置。旧配置缺该字段时取默认（auto_start=true）。
+    #[serde(default)]
+    pub mcp: McpSettings,
 }
 
 impl Settings {
@@ -210,6 +234,7 @@ impl Settings {
                 "+CMS ERROR".into(),
             ],
             presets: PresetSettings::default(),
+            mcp: McpSettings::default(),
         }
     }
 
@@ -317,6 +342,7 @@ impl LegacySettings {
             }],
             error_keywords: self.error_keywords,
             presets: PresetSettings::default(),
+            mcp: def.mcp.clone(),
         }
     }
 }

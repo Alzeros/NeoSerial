@@ -101,6 +101,10 @@ export interface Settings {
     baud_rates: number[];
     theme: string;
   };
+  mcp: {
+    /** 打开软件时是否自动启动 MCP server,改后重启生效 */
+    auto_start: boolean;
+  };
 }
 
 export interface ScriptCommand {
