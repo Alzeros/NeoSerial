@@ -21,6 +21,23 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// 查询 MCP server 运行状态:是否在跑 + 实际监听端口。
+/// 供前端设置页显示实际连接指令。
+#[tauri::command]
+fn get_mcp_status(state: tauri::State<'_, AppState>) -> std::result::Result<McpStatusResp, String> {
+    let port = state.mcp_port.lock().map_err(|e| e.to_string())?.clone();
+    Ok(McpStatusResp {
+        running: port.is_some(),
+        port,
+    })
+}
+
+#[derive(serde::Serialize)]
+struct McpStatusResp {
+    running: bool,
+    port: Option<u16>,
+}
+
 /// 选端口 + 登记 registry + 起 MCP HTTP server + 心跳 task。
 /// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
 /// 返回 RegistryHandle(供 connect/disconnect 工具调 update_com)。
@@ -32,6 +49,10 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
             return None;
         }
     };
+    // 记录端口供前端查询(get_mcp_status)
+    if let Ok(mut mp) = state.mcp_port.lock() {
+        *mp = Some(port);
+    }
     let registry = mcp::registry::RegistryHandle::register(port).ok();
     // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone),registry 同一 clone 供工具调 update_com
     let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
@@ -104,6 +125,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            get_mcp_status,
             connect,
             disconnect,
             list_ports,

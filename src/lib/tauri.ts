@@ -43,6 +43,18 @@ export async function resetStats(): Promise<void> {
   await invoke('reset_stats');
 }
 
+// ============ MCP ============
+
+export interface McpStatus {
+  running: boolean;
+  port: number | null;
+}
+
+/** 查询 MCP server 运行状态(是否在跑 + 实际端口)。供设置页显示连接指令。 */
+export async function getMcpStatus(): Promise<McpStatus> {
+  return await invoke<McpStatus>('get_mcp_status');
+}
+
 // ============ 数据收发 ============
 
 export async function send(text: string, ending: string, isHex: boolean): Promise<number> {

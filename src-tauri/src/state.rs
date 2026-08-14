@@ -21,6 +21,8 @@ pub struct AppState {
     pub settings: Mutex<crate::config::settings::Settings>,
     /// 后端 rx 历史,供 MCP 阻塞读查询。reader 线程喂入,MCP handler 读取。
     pub rx_history: Arc<RxHistory>,
+    /// MCP server 当前监听端口(运行中 Some(port),未启动 None)。供前端显示实际连接指令。
+    pub mcp_port: Mutex<Option<u16>>,
     #[allow(dead_code)]
     pub handle: AppHandle,
 }
@@ -34,6 +36,7 @@ impl AppState {
             last_log_path: Mutex::new(None),
             settings: Mutex::new(crate::config::settings::Settings::load()),
             rx_history: Arc::new(RxHistory::new(10_000)),
+            mcp_port: Mutex::new(None),
             handle,
         }
     }

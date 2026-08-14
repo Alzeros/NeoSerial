@@ -2,7 +2,7 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
-  import { saveSettings } from '$lib/tauri';
+  import { saveSettings, getMcpStatus } from '$lib/tauri';
   import type { Settings } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
@@ -47,6 +47,9 @@
   let newBaud = $state('');
   // MCP 自动启动编辑副本（从 cachedSettings 拷贝；改后重启生效）
   let editMcpAutoStart = $state(true);
+  // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
+  let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
+  let mcpCopied = $state(false);
 
   export function show(section: Section = 'about') {
     editBaudRates = [...presetBaudRates.value];
@@ -63,7 +66,10 @@
     origTextEncoding = textEncoding.value;
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
+    mcpCopied = false;
     activeSection = section;
+    // 拉取 MCP 运行状态(显示实际端口)
+    getMcpStatus().then((s) => (mcpStatus = s)).catch(() => {});
     open = true;
     // 进入关于页时懒加载版本号（仅首次拉取，失败兜底）
     if (section === 'about' && !version.value) {
@@ -152,6 +158,19 @@
       }
     }
     open = false;
+  }
+
+  // 一键复制 MCP 连接指令到剪贴板
+  async function copyMcpCommand() {
+    if (!mcpStatus.port) return;
+    const cmd = `claude mcp add --transport http neoserial http://localhost:${mcpStatus.port}/mcp`;
+    try {
+      await navigator.clipboard.writeText(cmd);
+      mcpCopied = true;
+      setTimeout(() => (mcpCopied = false), 1500);
+    } catch {
+      // 剪贴板不可用时静默
+    }
   }
 
   function handleCancel() {
@@ -392,11 +411,10 @@
               {/each}
             </div>
           {:else if activeSection === 'mcp'}
-            <!-- MCP 服务：自动启动开关 -->
+            <!-- MCP 服务：自动启动开关 + 连接指令 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
               内嵌 MCP server 让 Claude Code 经由 NeoSerial 操作串口（不占端口）。
-              Claude Code 配置 <code class="px-1 rounded bg-[var(--border-subtle)]">claude mcp add --transport http neoserial http://localhost:&lt;端口&gt;/mcp</code> 连接。
             </div>
             <label class="flex items-center gap-3 cursor-pointer select-none">
               <input
@@ -406,9 +424,33 @@
               />
               <span class="text-[13px] text-[var(--foreground)]">打开软件时自动启动 MCP server</span>
             </label>
-            <div class="text-[12px] text-[var(--muted-foreground)] mt-1 ml-7">
-              关闭后启动时不占用端口（需重启软件生效）。关闭期间 Claude Code 无法连接。
+            <div class="text-[12px] text-[var(--muted-foreground)] mt-1 ml-7 mb-5">
+              关闭后启动时不占用端口（需重启软件生效）。
             </div>
+
+            <!-- 当前运行状态 + 连接指令 -->
+            {#if mcpStatus.running && mcpStatus.port}
+              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">连接 Claude Code</div>
+              <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
+                MCP server 运行中，端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。在终端执行：
+              </div>
+              <div class="flex items-center gap-2">
+                <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
+                  claude mcp add --transport http neoserial http://localhost:{mcpStatus.port}/mcp
+                </code>
+                <button
+                  class="shrink-0 px-2.5 py-1.5 rounded text-[12px] font-medium transition-colors {mcpCopied
+                    ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                    : 'bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--border)]'}"
+                  onclick={copyMcpCommand}
+                  title="复制到剪贴板"
+                >{mcpCopied ? '已复制' : '复制'}</button>
+              </div>
+            {:else}
+              <div class="text-[12px] text-[var(--muted-foreground)] mt-4 px-3 py-2 rounded bg-[var(--border-subtle)]">
+                MCP server 未运行{editMcpAutoStart ? '（端口分配失败或启动异常）' : '（已关闭自动启动）'}。Claude Code 无法连接。
+              </div>
+            {/if}
           {/if}
         </div>
       </div>
