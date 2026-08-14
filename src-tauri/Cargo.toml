@@ -1,6 +1,6 @@
 [package]
 name = "neoserial"
-version = "0.1.3"
+version = "0.2.0"
 description = "NeoSerial - Serial Port Tool"
 authors = ["you"]
 edition = "2021"
