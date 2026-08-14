@@ -9,21 +9,21 @@ NeoSerial 单独持有串口,agent 不直接占端口。(代码仓库目录名�
 - 开发版:`cd S:/Mydevelop/cmserial && npm run tauri dev`
 - 生产版(若已安装):启动 NeoSerial.exe
 
-NeoSerial 启动后自动从 23333 起选空闲端口起 MCP server,并登记到 registry。
+NeoSerial 启动后用配置端口(默认 23334)起 MCP server,并登记到 registry。
 
 ## agent 发现实例(按 COM 口)
 操作某 COM 口前:
 1. 读 registry:`%APPDATA%/neoserial/mcp-registry.json`,找 `com==目标COM && connected && heartbeat 新鲜(30s 内)` 的实例 → 连其 `port`。
 2. 没有连目标 COM 的实例 → 找 `connected==false` 的空闲实例 → `connect(COM,...)`。
 3. 没有空闲实例 → 启动一个新 NeoSerial,等其登记进 registry(轮询文件 1-2s),再连。
-4. registry 缺失/全过期 → 从 23333 起逐端口 `get_status` 探测(兜底)。
+4. registry 缺失/全过期 → 从 23334 起逐端口 `get_status` 探测(兜底)。
 
 ## 配置 Claude Code 连接某实例
-实例端口从 registry 拿到后(如 23333),配:
+实例端口从 registry 拿到后(如 23334),配:
 ```
-claude mcp add --transport http neoserial http://localhost:23333/mcp
+claude mcp add --transport http neoserial http://localhost:23334/mcp
 ```
-或 .mcp.json:`{ "mcpServers": { "neoserial": { "type": "http", "url": "http://localhost:23333/mcp" } } }`
+或 .mcp.json:`{ "mcpServers": { "neoserial": { "type": "http", "url": "http://localhost:23334/mcp" } } }`
 
 ## 重连约定
 disconnect 后立即 connect 同一端口,极少数情况下驱动未完全释放会报"端口被占用,可能上次连接未完全释放,请稍后重试"——稍等 0.5-1s 重试一次即可(disconnect 已持锁等线程退出,正常不会触发)。

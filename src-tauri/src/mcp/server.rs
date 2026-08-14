@@ -23,7 +23,6 @@ fn schema(json: serde_json::Value) -> Arc<JsonObject> {
     Arc::new(map)
 }
 
-/// 从 23333 起递增找空闲端口,上限 23353(20 次)。返回绑定的端口。
 /// 尝试 bind 指定端口(固定端口策略,不递增)。
 /// 成功返回该端口;被占用返回错误(调用方提示用户改端口或释放占用)。
 pub fn bind_port(port: u16) -> Result<u16, String> {
