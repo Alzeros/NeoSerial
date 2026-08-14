@@ -256,7 +256,7 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
 fn do_send(shared: &McpShared, data: Vec<u8>) -> Result<(), String> {
     let conn = shared.connection.lock().map_err(|e| e.to_string())?;
     let handle = conn.as_ref().ok_or("未连接串口")?;
-    emit_tx_line(&shared.app_handle, data.clone());
+    emit_tx_line(&shared.app_handle, &handle.rx_history, data.clone());
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
     Ok(())
 }

@@ -1,6 +1,9 @@
+use std::sync::Arc;
+
 use tauri::{State, Emitter, Manager};
 
 use crate::state::AppState;
+use crate::buffer::rx_history::RxHistory;
 use crate::connection::WriteCommand;
 use crate::buffer::log_line::{Dir, LogLine};
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
@@ -39,7 +42,7 @@ pub fn send(
     // 乐观回显：入队前先 emit tx-line + 写文件日志。
     // 串口写入受驱动延迟影响（USB 延迟定时器，实测每条 20-60ms 甚至更久），
     // 若等写入完成再回显，界面会显得卡顿。这里发起即回显，写线程静默写。
-    emit_tx_line(&app_handle, data.clone());
+    emit_tx_line(&app_handle, &handle.rx_history, data.clone());
 
     // 通过 channel 发送给写线程（SendSilent：写线程只写不 emit，避免重复回显）
     handle.write_tx.send(WriteCommand::SendSilent(data))
@@ -51,8 +54,8 @@ pub fn send(
 /// 发送方向的即时回显 + 文件日志。与脚本序列（sequence.rs）共用同一逻辑。
 /// - log_send=false 时不回显也不记录（"记录发送"开关）
 /// - 与 write 线程解耦：发起即打时间戳，不受串口写阻塞影响
-pub fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
-    let (cfg, sender, rx_history) = match app_handle.try_state::<AppState>() {
+pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, data: Vec<u8>) {
+    let (cfg, sender) = match app_handle.try_state::<AppState>() {
         Some(state) => {
             let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
                 show_timestamp: s.ui.show_timestamp,
@@ -63,10 +66,9 @@ pub fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
                 .lock()
                 .ok()
                 .and_then(|ls| ls.as_ref().cloned());
-            let rx_history = state.rx_history.clone();
-            (cfg, sender, rx_history)
+            (cfg, sender)
         }
-        None => (None, None, std::sync::Arc::new(crate::buffer::rx_history::RxHistory::new(0))),
+        None => (None, None),
     };
     let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
     if log_send {
