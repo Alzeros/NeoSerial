@@ -38,3 +38,6 @@ err.log
 
 # Shot scripts
 shot*.ps1
+
+# workbuddy 工作区(AI 审查工具)
+.workbuddy/

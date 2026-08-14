@@ -425,7 +425,7 @@
               <div class="flex items-center gap-4">
                 <label class="flex items-center gap-2 cursor-pointer select-none">
                   <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editMcpAutoStart} />
-                  <span class="text-[13px] text-[var(--foreground)]">开机自启</span>
+                  <span class="text-[13px] text-[var(--foreground)]">启动时自动开启</span>
                 </label>
                 <label class="flex items-center gap-2">
                   <span class="text-[13px] text-[var(--foreground)]">端口</span>
@@ -454,7 +454,7 @@
               </div>
             {:else}
               <div class="text-[12px] text-[var(--muted-foreground)] px-3 py-2 rounded bg-[var(--border-subtle)]">
-                MCP 未运行{!editMcpAutoStart ? '（已关闭自启）' : `（端口 ${editMcpPort} 被占，改端口后重启）`}
+                MCP 未运行{!editMcpAutoStart ? '（已关闭自动启动）' : `（端口 ${editMcpPort} 被占，改端口后重启）`}
               </div>
             {/if}
           {/if}
