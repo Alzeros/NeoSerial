@@ -44,7 +44,7 @@ const DISCONNECT: &str = "disconnect";
 const GET_STATUS: &str = "get_status";
 const SEND_AND_READ: &str = "send_and_read";
 const SEND: &str = "send";
-const GET_RX_SINCE: &str = "get_rx_since";
+const GET_HISTORY_SINCE: &str = "get_history_since";
 
 pub struct CmserialHandler {
     shared: Arc<McpShared>,
@@ -144,9 +144,9 @@ impl ServerHandler for CmserialHandler {
                 })),
             ),
             Tool::new(
-                GET_RX_SINCE,
-                "获取指定序号之后的接收行。参数: seq(基准序号), max_lines(可选,截断最旧)。\
-                 返回 { ok, lines: [文本], latest_seq }。",
+                GET_HISTORY_SINCE,
+                "获取指定序号之后的收发历史(tx+rx,带方向)。参数: seq(基准序号), max_lines(可选,截断最旧)。\
+                 返回 { ok, lines: [{dir, text}], latest_seq }。dir 为 'rx' 或 'tx'。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -194,14 +194,14 @@ impl ServerHandler for CmserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
                 }
-                GET_RX_SINCE => {
-                    let req: tools::GetRxSinceReq = match serde_json::from_value(args) {
+                GET_HISTORY_SINCE => {
+                    let req: tools::GetHistorySinceReq = match serde_json::from_value(args) {
                         Ok(r) => r,
                         Err(e) => {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    serde_json::to_value(tools::get_rx_since(&shared, req, false)).unwrap_or_default()
+                    serde_json::to_value(tools::get_history_since(&shared, req, false)).unwrap_or_default()
                 }
                 SEND_AND_READ => {
                     let req: tools::SendAndReadReq = match serde_json::from_value(args) {

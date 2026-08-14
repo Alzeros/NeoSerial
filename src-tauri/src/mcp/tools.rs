@@ -169,14 +169,15 @@ pub struct StatusResp {
     pub connected: bool,
     pub port: Option<String>,
     pub baud: Option<u32>,
-    pub rx_seq: u64,
+    /// 收发历史当前最大序号(tx+rx 共用同一计数器)。
+    pub seq: u64,
 }
 
 pub fn get_status(shared: &McpShared) -> StatusResp {
     let conn = shared.connection.lock().ok();
     let (connected, port, baud) = match conn {
         Some(g) => match g.as_ref() {
-            Some(h) => (true, None, None), // port/baud 不在 ConnectionHandle,见下注
+            Some(_h) => (true, None, None), // port/baud 不在 ConnectionHandle,见下注
             None => (false, None, None),
         },
         None => (false, None, None),
@@ -186,7 +187,7 @@ pub fn get_status(shared: &McpShared) -> StatusResp {
         connected,
         port,
         baud,
-        rx_seq: shared.rx_history.latest_seq(),
+        seq: shared.rx_history.latest_seq(),
     }
 }
 
@@ -265,23 +266,37 @@ pub fn send(shared: &McpShared, req: SendReq) -> Result<SendResp, ErrorResp> {
 // ============ get_rx_since ============
 
 #[derive(Deserialize)]
-pub struct GetRxSinceReq {
+pub struct GetHistorySinceReq {
     pub seq: u64,
     pub max_lines: Option<usize>,
 }
 
+/// 历史行:方向(rx/tx)+ 文本(按 is_hex 选 ascii/hex)。
 #[derive(Serialize)]
-pub struct GetRxSinceResp {
+pub struct HistoryLine {
+    pub dir: String,
+    pub text: String,
+}
+
+#[derive(Serialize)]
+pub struct GetHistorySinceResp {
     pub ok: bool,
-    pub lines: Vec<String>,
+    pub lines: Vec<HistoryLine>,
     pub latest_seq: u64,
 }
 
-pub fn get_rx_since(shared: &McpShared, req: GetRxSinceReq, is_hex: bool) -> GetRxSinceResp {
+/// 拉取序号 > seq 的全部历史行(tx+rx,带方向)。供 agent 主动查对话流/异步 URC。
+pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq, is_hex: bool) -> GetHistorySinceResp {
     let (rows, latest) = shared.rx_history.since(req.seq);
-    let mut lines: Vec<String> = rows
+    let mut lines: Vec<HistoryLine> = rows
         .into_iter()
-        .map(|(_, l)| if is_hex { l.hex } else { l.ascii })
+        .map(|(_, dir, l)| HistoryLine {
+            dir: match dir {
+                crate::buffer::log_line::Dir::Rx => "rx".to_string(),
+                crate::buffer::log_line::Dir::Tx => "tx".to_string(),
+            },
+            text: if is_hex { l.hex } else { l.ascii },
+        })
         .collect();
     if let Some(max) = req.max_lines {
         // 最旧优先:截断保留前 max 条(先进先出,不跳过早期数据)
@@ -289,7 +304,7 @@ pub fn get_rx_since(shared: &McpShared, req: GetRxSinceReq, is_hex: bool) -> Get
             lines.truncate(max);
         }
     }
-    GetRxSinceResp { ok: true, lines, latest_seq: latest }
+    GetHistorySinceResp { ok: true, lines, latest_seq: latest }
 }
 
 // ============ send_and_read (async) ============
@@ -314,28 +329,34 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
     let mut timed_out = false;
 
     loop {
-        // 先查:有没有 seq > cur_seq 的新行
+        // 先查:有没有 seq > cur_seq 的新行(tx+rx 都会触发,但只收集 rx)
         let (rows, latest) = shared.rx_history.since(cur_seq);
-        if !rows.is_empty() {
-            for (_, l) in &rows {
+        let new_rx: Vec<_> = rows.iter()
+            .filter(|(_, dir, _)| *dir == crate::buffer::log_line::Dir::Rx)
+            .collect();
+        if !new_rx.is_empty() {
+            for (_, _, l) in &new_rx {
                 let text = if req.is_hex.unwrap_or(false) { &l.hex } else { &l.ascii };
                 responses.push(text.clone());
             }
-            cur_seq = latest; // 推进到最新
-            continue; // 拿到新数据,刷新静默窗口:回循环顶重新等 gap
+            cur_seq = latest; // 推进到最新(含已跳过的 tx)
+            continue; // 拿到新 rx,刷新静默窗口:回循环顶重新等 gap
         }
-        // 无新行:等 Notify,带 gap 超时
+        // 无新 rx 行:等 Notify,带 gap 超时
         let notified = shared.rx_history.notify().notified();
         match timeout(gap, notified).await {
             Ok(_) => {
-                // 被唤醒(有新行 push),回循环顶重查
+                // 被唤醒(有新行 push,可能是 tx 或 rx),回循环顶重查
                 continue;
             }
             Err(_) => {
                 // 静默超时:再查一次(防止唤醒与查询的竞态漏数据)
                 let (rows, latest) = shared.rx_history.since(cur_seq);
-                if !rows.is_empty() {
-                    for (_, l) in &rows {
+                let new_rx: Vec<_> = rows.iter()
+                    .filter(|(_, dir, _)| *dir == crate::buffer::log_line::Dir::Rx)
+                    .collect();
+                if !new_rx.is_empty() {
+                    for (_, _, l) in &new_rx {
                         let text = if req.is_hex.unwrap_or(false) { &l.hex } else { &l.ascii };
                         responses.push(text.clone());
                     }

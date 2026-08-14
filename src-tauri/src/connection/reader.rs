@@ -37,8 +37,8 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>) {
 
     for line in lines.drain(..) {
         let _ = app_handle.emit("rx-line", line.clone());
-        // 喂后端 rx 历史,供 MCP 阻塞读查询。push 触发 Notify 唤醒等待的 send_and_read。
-        rx_history.push(line.clone());
+        // 喂后端收发历史(rx),供 MCP 阻塞读/历史查询。push 触发 Notify 唤醒等待的 send_and_read。
+        rx_history.push(crate::buffer::log_line::Dir::Rx, line.clone());
         if let (Some(c), Some(tx)) = (&cfg, &sender) {
             let formatted = format_line_for_file(&line, c, false);
             if !formatted.is_empty() {

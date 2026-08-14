@@ -1,16 +1,20 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Mutex;
 
-use crate::buffer::log_line::LogLine;
+use crate::buffer::log_line::{Dir, LogLine};
 use crate::buffer::ring_buffer::RingBuffer;
 
-/// 后端 rx 历史:存 (序号, LogLine) 的 ring buffer,供 MCP 阻塞读按 seq 查询。
+/// 后端收发历史:存 (序号, Dir, LogLine) 的 ring buffer,供 MCP 阻塞读/历史查询。
 ///
-/// 写入:reader 线程(sync)调 push;读取:MCP handler(async)调 since/latest_seq。
+/// 同时存 tx 与 rx——agent 既能读模组响应(rx),也能读用户/自己发过的命令(tx)。
+/// send_and_read 内部过滤掉 tx 只返回 rx;get_history_since 返回全部(带 dir)。
+///
+/// 写入:reader 线程 push Rx,emit_tx_line/各发送路径 push Tx(sync 调用)。
+/// 读取:MCP handler(async)调 since/latest_seq。
 /// 用 std::sync::Mutex(临界区纳秒级,不跨 await 持锁);序号用 AtomicU64;
 /// 等待用 tokio::sync::Notify(push 时 notify_all)。
 pub struct RxHistory {
-    inner: Mutex<RingBuffer<(u64, LogLine)>>,
+    inner: Mutex<RingBuffer<(u64, Dir, LogLine)>>,
     seq: AtomicU64,
     notify: tokio::sync::Notify,
 }
@@ -24,23 +28,23 @@ impl RxHistory {
         }
     }
 
-    /// push 一行,返回分配的单调序号(从 1 开始)。push 后 notify_all 唤醒等待者。
-    pub fn push(&self, line: LogLine) -> u64 {
+    /// push 一行(带方向),返回分配的单调序号(从 1 开始)。push 后 notify_all 唤醒等待者。
+    pub fn push(&self, dir: Dir, line: LogLine) -> u64 {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut buf) = self.inner.lock() {
-            buf.push((seq, line));
+            buf.push((seq, dir, line));
         }
         self.notify.notify_waiters();
         seq
     }
 
-    /// 返回 seq > after_seq 的所有行(从旧到新)+ 当前最大序号。
-    pub fn since(&self, after_seq: u64) -> (Vec<(u64, LogLine)>, u64) {
+    /// 返回 seq > after_seq 的所有行(从旧到新,含 tx+rx)+ 当前最大序号。
+    pub fn since(&self, after_seq: u64) -> (Vec<(u64, Dir, LogLine)>, u64) {
         let rows = match self.inner.lock() {
             Ok(buf) => {
                 let snap = buf.snapshot();
-                let latest = snap.last().map(|(s, _)| *s).unwrap_or_else(|| self.seq.load(Ordering::SeqCst));
-                let filtered: Vec<_> = snap.into_iter().filter(|(s, _)| *s > after_seq).collect();
+                let latest = snap.last().map(|(s, _, _)| *s).unwrap_or_else(|| self.seq.load(Ordering::SeqCst));
+                let filtered: Vec<_> = snap.into_iter().filter(|(s, _, _)| *s > after_seq).collect();
                 (filtered, latest)
             }
             Err(_) => (Vec::new(), self.seq.load(Ordering::SeqCst)),
@@ -74,12 +78,15 @@ mod tests {
     fn rx(content: &[u8]) -> LogLine {
         LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[])
     }
+    fn tx(content: &[u8]) -> LogLine {
+        LogLine::new("08:00:00.000".into(), Dir::Tx, content.to_vec(), &[])
+    }
 
     #[test]
     fn test_seq_monotonic_from_1() {
         let h = RxHistory::new(100);
-        let s1 = h.push(rx(b"OK"));
-        let s2 = h.push(rx(b"AT"));
+        let s1 = h.push(Dir::Rx, rx(b"OK"));
+        let s2 = h.push(Dir::Tx, tx(b"AT"));
         assert_eq!(s1, 1);
         assert_eq!(s2, 2);
         assert_eq!(h.latest_seq(), 2);
@@ -88,20 +95,21 @@ mod tests {
     #[test]
     fn test_since_filters_after_seq() {
         let h = RxHistory::new(100);
-        h.push(rx(b"line1")); // seq1
-        let mid = h.push(rx(b"line2")); // seq2
-        h.push(rx(b"line3")); // seq3
+        h.push(Dir::Rx, rx(b"line1")); // seq1
+        let mid = h.push(Dir::Tx, tx(b"line2")); // seq2
+        h.push(Dir::Rx, rx(b"line3")); // seq3
         let (rows, latest) = h.since(mid);
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].0, 3);
-        assert_eq!(rows[0].1.ascii, "line3");
+        assert_eq!(rows[0].1, Dir::Rx);
+        assert_eq!(rows[0].2.ascii, "line3");
         assert_eq!(latest, 3);
     }
 
     #[test]
     fn test_since_empty_when_no_new() {
         let h = RxHistory::new(100);
-        h.push(rx(b"only"));
+        h.push(Dir::Rx, rx(b"only"));
         let (rows, latest) = h.since(h.latest_seq());
         assert!(rows.is_empty());
         assert_eq!(latest, 1);
@@ -110,16 +118,18 @@ mod tests {
     #[test]
     fn test_capacity_overflow_drops_oldest() {
         let h = RxHistory::new(2);
-        let s1 = h.push(rx(b"a")); // seq1
-        h.push(rx(b"b"));          // seq2
-        h.push(rx(b"c"));          // seq3,a 被挤出
+        let s1 = h.push(Dir::Rx, rx(b"a")); // seq1
+        h.push(Dir::Tx, tx(b"b"));          // seq2
+        h.push(Dir::Rx, rx(b"c"));          // seq3,a 被挤出
         let (rows, _) = h.since(0);
         assert_eq!(rows.len(), 2);
         // 最旧的 a(seq1)已不在
-        assert!(rows.iter().all(|(s, _)| *s != s1));
+        assert!(rows.iter().all(|(s, _, _)| *s != s1));
         // 但 since(0) 仍只返回 buffer 内现存的(seq2,seq3)
-        assert_eq!(rows[0].1.ascii, "b");
-        assert_eq!(rows[1].1.ascii, "c");
+        assert_eq!(rows[0].2.ascii, "b");
+        assert_eq!(rows[0].1, Dir::Tx);
+        assert_eq!(rows[1].2.ascii, "c");
+        assert_eq!(rows[1].1, Dir::Rx);
     }
 
     #[test]
@@ -134,11 +144,32 @@ mod tests {
     #[test]
     fn test_clear() {
         let h = RxHistory::new(100);
-        h.push(rx(b"x"));
+        h.push(Dir::Rx, rx(b"x"));
         h.clear();
         assert_eq!(h.latest_seq(), 1); // seq 不回退,但 buffer 空
         let (rows, _) = h.since(0);
         assert!(rows.is_empty());
+    }
+
+    /// tx+rx 混合:since 返回全部行(含 tx),send_and_read 语义靠调用方过滤 tx。
+    /// 这里验证 history 本身不过滤——完整保留 tx+rx,过滤责任在 send_and_read。
+    #[test]
+    fn test_mixed_tx_rx_kept_together() {
+        let h = RxHistory::new(100);
+        let s0 = h.latest_seq();
+        h.push(Dir::Tx, tx(b"AT"));      // seq1: 发的命令
+        h.push(Dir::Rx, rx(b""));        // seq2: 空行
+        h.push(Dir::Rx, rx(b"OK"));      // seq3: 模组响应
+        let (rows, latest) = h.since(s0);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].1, Dir::Tx);  // tx 也在
+        assert_eq!(rows[1].1, Dir::Rx);
+        assert_eq!(rows[2].1, Dir::Rx);
+        assert_eq!(latest, 3);
+        // 调用方过滤 tx 只取 rx:模拟 send_and_read 的行为
+        let rx_only: Vec<_> = rows.into_iter().filter(|(_, d, _)| *d == Dir::Rx).collect();
+        assert_eq!(rx_only.len(), 2);
+        assert_eq!(rx_only[1].2.ascii, "OK");
     }
 
     use std::time::Duration;
@@ -157,14 +188,14 @@ mod tests {
         let h2 = h.clone();
         std::thread::spawn(move || {
             std::thread::sleep(Duration::from_millis(50));
-            h2.push(rx(b"late"));
+            h2.push(Dir::Rx, rx(b"late"));
         });
         // 等待被唤醒(应在 ~50ms 后,push 调 notify_waiters)
         timeout(Duration::from_secs(1), notified).await.expect("notify 未唤醒");
         // 醒来重查
         let (rows2, _) = h.since(seq0);
         assert_eq!(rows2.len(), 1);
-        assert_eq!(rows2[0].1.ascii, "late");
+        assert_eq!(rows2[0].2.ascii, "late");
     }
 
     // 验证超时路径:无人 push 时 timeout 正常到期,不漏唤醒也不死等。

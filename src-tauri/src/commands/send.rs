@@ -52,7 +52,7 @@ pub fn send(
 /// - log_send=false 时不回显也不记录（"记录发送"开关）
 /// - 与 write 线程解耦：发起即打时间戳，不受串口写阻塞影响
 pub fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
-    let (cfg, sender) = match app_handle.try_state::<AppState>() {
+    let (cfg, sender, rx_history) = match app_handle.try_state::<AppState>() {
         Some(state) => {
             let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
                 show_timestamp: s.ui.show_timestamp,
@@ -63,14 +63,18 @@ pub fn emit_tx_line(app_handle: &tauri::AppHandle, data: Vec<u8>) {
                 .lock()
                 .ok()
                 .and_then(|ls| ls.as_ref().cloned());
-            (cfg, sender)
+            let rx_history = state.rx_history.clone();
+            (cfg, sender, rx_history)
         }
-        None => (None, None),
+        None => (None, None, std::sync::Arc::new(crate::buffer::rx_history::RxHistory::new(0))),
     };
     let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
     if log_send {
         let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[]);
         let _ = app_handle.emit("tx-line", line.clone());
+        // 喂后端收发历史(tx),供 agent 经 get_history_since 读用户/自己发过的命令。
+        // 与 emit tx-line 同步:log_send=false 时不进 history(与 GUI 一致,尊重"不记录发送")。
+        rx_history.push(Dir::Tx, line.clone());
         if let (Some(c), Some(tx)) = (cfg, sender) {
             let formatted = format_line_for_file(&line, &c, false);
             if !formatted.is_empty() {
