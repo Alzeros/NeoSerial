@@ -42,10 +42,12 @@ struct McpStatusResp {
 /// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
 /// 返回 RegistryHandle(供 connect/disconnect 工具调 update_com)。
 fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registry::RegistryHandle> {
-    let port = match mcp::server::pick_port() {
+    // 从设置读固定端口(默认 23333),不递增——被占则失败提示用户改端口
+    let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(23333);
+    let port = match mcp::server::bind_port(port) {
         Ok(p) => p,
         Err(e) => {
-            log::error!("MCP 端口分配失败: {}", e);
+            log::error!("MCP 端口 {} bind 失败: {}", port, e);
             return None;
         }
     };

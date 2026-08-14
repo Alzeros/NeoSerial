@@ -168,16 +168,26 @@ pub struct McpSettings {
     /// 改后需重启软件生效（setup 时读一次决定是否起 server）。
     #[serde(default = "default_mcp_auto_start")]
     pub auto_start: bool,
+    /// MCP server 监听端口（默认 23333）。
+    /// 固定端口:claude mcp add 配一次永久有效。改端口后需重新配置 Claude Code。
+    /// 端口被占时 MCP 不起(设置页提示)。
+    #[serde(default = "default_mcp_port")]
+    pub port: u16,
 }
 
 fn default_mcp_auto_start() -> bool {
     true
 }
 
+fn default_mcp_port() -> u16 {
+    23333
+}
+
 impl Default for McpSettings {
     fn default() -> Self {
         McpSettings {
             auto_start: default_mcp_auto_start(),
+            port: default_mcp_port(),
         }
     }
 }

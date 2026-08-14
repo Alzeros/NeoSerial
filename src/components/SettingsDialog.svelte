@@ -47,6 +47,8 @@
   let newBaud = $state('');
   // MCP 自动启动编辑副本（从 cachedSettings 拷贝；改后重启生效）
   let editMcpAutoStart = $state(true);
+  // MCP 端口编辑副本（默认 23333;改后需重新 claude mcp add）
+  let editMcpPort = $state(23333);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -66,6 +68,7 @@
     origTextEncoding = textEncoding.value;
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
+    editMcpPort = cachedSettings.value?.mcp?.port ?? 23333;
     mcpCopied = false;
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
@@ -148,7 +151,7 @@
         ...base,
         ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
         presets: { baud_rates: rates, theme: editTheme },
-        mcp: { auto_start: editMcpAutoStart },
+        mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
       };
       try {
         await saveSettings(next);
@@ -428,11 +431,27 @@
               关闭后启动时不占用端口（需重启软件生效）。
             </div>
 
+            <!-- 监听端口 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">监听端口</div>
+            <div class="flex items-center gap-2 mb-1">
+              <input
+                type="number"
+                class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]"
+                bind:value={editMcpPort}
+                min="1024"
+                max="65535"
+              />
+              <span class="text-[12px] text-[var(--muted-foreground)]">默认 23333,固定端口</span>
+            </div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-5">
+              固定端口让 <code class="px-1 rounded bg-[var(--border-subtle)]">claude mcp add</code> 配一次永久有效。改端口后需重新配置 Claude Code,端口被占时 MCP 不启动。
+            </div>
+
             <!-- 当前运行状态 + 连接指令 -->
             {#if mcpStatus.running && mcpStatus.port}
               <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">连接 Claude Code</div>
               <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
-                MCP server 运行中，端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。在终端执行：
+                MCP server 运行中，端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。在终端执行一次即可,后续会话自动连接：
               </div>
               <div class="flex items-center gap-2">
                 <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
@@ -448,7 +467,7 @@
               </div>
             {:else}
               <div class="text-[12px] text-[var(--muted-foreground)] mt-4 px-3 py-2 rounded bg-[var(--border-subtle)]">
-                MCP server 未运行{editMcpAutoStart ? '（端口分配失败或启动异常）' : '（已关闭自动启动）'}。Claude Code 无法连接。
+                MCP server 未运行{!editMcpAutoStart ? '（已关闭自动启动）' : `（端口 ${editMcpPort} 可能被占用,改端口或释放占用后重启）`}。
               </div>
             {/if}
           {/if}

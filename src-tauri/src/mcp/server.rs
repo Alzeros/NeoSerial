@@ -24,17 +24,16 @@ fn schema(json: serde_json::Value) -> Arc<JsonObject> {
 }
 
 /// 从 23333 起递增找空闲端口,上限 23353(20 次)。返回绑定的端口。
-pub fn pick_port() -> Result<u16, String> {
-    for port in 23333..=23353 {
-        match TcpListener::bind(("127.0.0.1", port)) {
-            Ok(listener) => {
-                drop(listener);
-                return Ok(port);
-            }
-            Err(_) => continue,
+/// 尝试 bind 指定端口(固定端口策略,不递增)。
+/// 成功返回该端口;被占用返回错误(调用方提示用户改端口或释放占用)。
+pub fn bind_port(port: u16) -> Result<u16, String> {
+    match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(listener) => {
+            drop(listener);
+            Ok(port)
         }
+        Err(e) => Err(format!("端口 {} 被占用: {}", port, e)),
     }
-    Err("23333-23353 端口均被占用".to_string())
 }
 
 /// 工具名常量

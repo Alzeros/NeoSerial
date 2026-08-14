@@ -104,6 +104,8 @@ export interface Settings {
   mcp: {
     /** 打开软件时是否自动启动 MCP server,改后重启生效 */
     auto_start: boolean;
+    /** MCP server 监听端口(默认 23333),改后需重新 claude mcp add */
+    port: number;
   };
 }
 
