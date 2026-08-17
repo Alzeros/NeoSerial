@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::time::timeout;
 
+use crate::commands::connection::resolve_port;
 use crate::commands::send::emit_tx_line;
 use crate::connection::{spawn_connection, SerialParams, WriteCommand};
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
@@ -60,9 +61,11 @@ pub struct ConnectResp {
 // ============ disconnect ============
 
 pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle) -> Result<(), String> {
+    // 先从 map 取出 handle 并放锁,再等 exit(持 connections 锁等 1s 会阻塞所有其他操作,死锁风险)。
     let handle = {
-        let mut conn = shared.connection.lock().map_err(|e| e.to_string())?;
-        conn.take()
+        let mut conns = shared.connections.lock().map_err(|e| e.to_string())?;
+        let resolved = resolve_port(&conns, None)?;
+        conns.remove(&resolved)
     };
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
@@ -99,26 +102,14 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
         },
         flow_control: parse_flow_control(&req.flow_control),
     };
-    // 已连接则报错(单连接)
-    {
-        let conn = shared.connection.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-        if conn.is_some() {
-            return Err(ErrorResp::new("已连接,请先 disconnect"));
-        }
+    // 过渡(单连接行为):已存在任何连接则报错。Task 4 改为 contains_key(&req.port)。
+    // 持锁贯穿 check→spawn→insert,防 TOCTOU(同 Tauri connect)。
+    let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+    if !conns.is_empty() {
+        return Err(ErrorResp::new("已连接,请先 disconnect"));
     }
-    match spawn_connection(params, shared.app_handle.clone()) {
-        Ok((handle, mode)) => {
-            {
-                let mut conn = shared.connection.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-                *conn = Some(handle);
-            }
-            // 更新 registry 的 com/connected(锁已释放,避免持锁做文件 IO)
-            // update_com 失败忽略:registry 只是辅助发现机制,不该阻塞 connect
-            if let Some(reg) = shared.registry.as_ref() {
-                let _ = reg.update_com(Some(req.port.clone()), Some(req.baud_rate), true);
-            }
-            Ok(ConnectResp { ok: true, mode: Some(mode) })
-        }
+    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone()) {
+        Ok(h) => h,
         Err(e) => {
             let lower = e.to_lowercase();
             let port_busy = lower.contains("access is denied")
@@ -126,12 +117,19 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
                 || lower.contains("accessdenied")
                 || lower.contains("permission");
             if port_busy {
-                Err(ErrorResp::new("端口被占用,可能上次连接未完全释放,请稍后重试"))
+                return Err(ErrorResp::new("端口被占用,可能上次连接未完全释放,请稍后重试"));
             } else {
-                Err(ErrorResp::new(e))
+                return Err(ErrorResp::new(e));
             }
         }
+    };
+    conns.insert(req.port.clone(), handle);
+    // 锁已释放(conns 出作用域)。更新 registry 的 com/connected(锁已释放,避免持锁做文件 IO)
+    // update_com 失败忽略:registry 只是辅助发现机制,不该阻塞 connect
+    if let Some(reg) = shared.registry.as_ref() {
+        let _ = reg.update_com(Some(req.port.clone()), Some(req.baud_rate), true);
     }
+    Ok(ConnectResp { ok: true, mode: Some(mode) })
 }
 
 fn parse_data_bits(s: &str) -> crate::config::settings::DataBits {
@@ -175,17 +173,20 @@ pub struct StatusResp {
 }
 
 pub fn get_status(shared: &McpShared) -> StatusResp {
-    let conn = shared.connection.lock().ok();
-    let (connected, port, baud, tx_bytes, rx_bytes) = match conn {
-        Some(g) => match g.as_ref() {
-            Some(h) => (
-                true,
-                Some(h.port.clone()),
-                Some(h.baud),
-                Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
-                Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
-            ),
-            None => (false, None, None, None, None),
+    let conns = shared.connections.lock().ok();
+    let (connected, port, baud, tx_bytes, rx_bytes) = match conns.as_ref() {
+        Some(g) => match resolve_port(g, None) {
+            Ok(p) => {
+                let h = g.get(&p).expect("resolve_port 返回的 port 必在 map 中");
+                (
+                    true,
+                    Some(h.port.clone()),
+                    Some(h.baud),
+                    Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+                    Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+                )
+            }
+            Err(_) => (false, None, None, None, None),
         },
         None => (false, None, None, None, None),
     };
@@ -254,8 +255,9 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
 
 /// 发送(复用 write_tx + emit_tx_line),不读。返回发送字节数语义的 sent=true。
 fn do_send(shared: &McpShared, data: Vec<u8>) -> Result<(), String> {
-    let conn = shared.connection.lock().map_err(|e| e.to_string())?;
-    let handle = conn.as_ref().ok_or("未连接串口")?;
+    let conns = shared.connections.lock().map_err(|e| e.to_string())?;
+    let resolved = resolve_port(&conns, None)?;
+    let handle = conns.get(&resolved).ok_or("未连接串口")?;
     emit_tx_line(&shared.app_handle, &handle.rx_history, data.clone());
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
     Ok(())

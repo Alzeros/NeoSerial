@@ -6,6 +6,7 @@ use serde::Serialize;
 use tauri::{State, Emitter, Manager};
 
 use crate::state::AppState;
+use crate::commands::connection::resolve_port;
 use crate::connection::WriteCommand;
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
 use crate::buffer::log_line::{Dir, LogLine};
@@ -32,6 +33,7 @@ pub fn sequence_run(
     commands: Vec<SequenceCommand>,
     run_count: u32,
     loop_interval: u32,
+    port: Option<String>,
 ) -> Result<(), String> {
     if SEQUENCE_RUNNING.swap(true, Ordering::SeqCst) {
         return Err("序列已在运行中".to_string());
@@ -41,19 +43,25 @@ pub fn sequence_run(
     // 注意：上面 swap(true) 已把运行标志置位，但只有线程启动后才会在末尾重置。
     // 若此处获取连接失败提前 return Err，标志会泄漏为 true，导致再也无法运行/停止。
     // 因此任何失败路径都必须先把标志复位。
-    let write_tx = match state.connection.lock() {
-        Ok(conn) => match conn.as_ref() {
-            Some(handle) => handle.write_tx.clone(),
-            None => {
+    let write_tx = match state.connections.lock() {
+        Ok(conns) => match resolve_port(&conns, port) {
+            Ok(resolved) => conns.get(&resolved)
+                .ok_or_else(|| "未连接串口".to_string())
+                .map(|h| h.write_tx.clone())
+                .map_err(|e| {
+                    SEQUENCE_RUNNING.store(false, Ordering::SeqCst);
+                    e
+                }),
+            Err(e) => {
                 SEQUENCE_RUNNING.store(false, Ordering::SeqCst);
-                return Err("未连接串口".to_string());
+                Err(e)
             }
         },
         Err(e) => {
             SEQUENCE_RUNNING.store(false, Ordering::SeqCst);
-            return Err(e.to_string());
+            Err(e.to_string())
         }
-    };
+    }?;
 
     thread::spawn(move || {
         let mut aborted = false;
@@ -145,7 +153,7 @@ pub fn sequence_run(
 }
 
 #[tauri::command]
-pub fn sequence_stop() -> Result<(), String> {
+pub fn sequence_stop(_port: Option<String>) -> Result<(), String> {
     SEQUENCE_RUNNING.store(false, Ordering::SeqCst);
     Ok(())
 }

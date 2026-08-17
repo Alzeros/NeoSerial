@@ -60,7 +60,7 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
         app_handle: handle.clone(),
         rx_history: state.rx_history.clone(),
-        connection: state.connection.clone(),
+        connections: state.connections.clone(),
         registry: registry.clone(),
     });
     // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)

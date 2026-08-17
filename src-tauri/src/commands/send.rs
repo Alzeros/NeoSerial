@@ -4,6 +4,7 @@ use tauri::{State, Emitter, Manager};
 
 use crate::state::AppState;
 use crate::buffer::rx_history::RxHistory;
+use crate::commands::connection::resolve_port;
 use crate::connection::WriteCommand;
 use crate::buffer::log_line::{Dir, LogLine};
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
@@ -17,9 +18,11 @@ pub fn send(
     text: String,
     ending: String,
     is_hex: bool,
+    port: Option<String>,
 ) -> Result<usize, String> {
-    let conn = state.connection.lock().map_err(|e| e.to_string())?;
-    let handle = conn.as_ref().ok_or("未连接串口")?;
+    let conns = state.connections.lock().map_err(|e| e.to_string())?;
+    let resolved = resolve_port(&conns, port)?;
+    let handle = conns.get(&resolved).ok_or("未连接串口")?;
 
     // 解析数据
     let mut data = if is_hex {
@@ -91,11 +94,14 @@ pub fn send_file(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
     path: String,
+    port: Option<String>,
 ) -> Result<usize, String> {
-    let conn = state.connection.lock().map_err(|e| e.to_string())?;
-    let handle = conn.as_ref().ok_or("未连接串口")?;
-    let write_tx = handle.write_tx.clone();
-    drop(conn); // 释放锁，避免阻塞其他操作
+    let write_tx = {
+        let conns = state.connections.lock().map_err(|e| e.to_string())?;
+        let resolved = resolve_port(&conns, port)?;
+        conns.get(&resolved).ok_or("未连接串口")?.write_tx.clone()
+    };
+    // 锁已在块内释放,send_file 的文件读 + 循环发送不持 connections 锁
 
     // 获取文件大小
     let file = std::fs::File::open(&path).map_err(|e| format!("打开文件失败: {}", e))?;
