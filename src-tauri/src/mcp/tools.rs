@@ -1,10 +1,11 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 use tauri::Emitter;
 use tokio::time::timeout;
 
-use crate::commands::connection::resolve_port;
+use crate::buffer::rx_history::RxHistory;
 use crate::commands::send::emit_tx_line;
 use crate::connection::{spawn_connection, SerialParams, WriteCommand};
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
@@ -60,12 +61,16 @@ pub struct ConnectResp {
 
 // ============ disconnect ============
 
-pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle) -> Result<(), String> {
+#[derive(Deserialize)]
+pub struct DisconnectReq {
+    pub port: String,
+}
+
+pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: DisconnectReq) -> Result<(), String> {
     // 先从 map 取出 handle 并放锁,再等 exit(持 connections 锁等 1s 会阻塞所有其他操作,死锁风险)。
     let handle = {
         let mut conns = shared.connections.lock().map_err(|e| e.to_string())?;
-        let resolved = resolve_port(&conns, None)?;
-        conns.remove(&resolved)
+        conns.remove(&req.port)
     };
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
@@ -78,7 +83,7 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle) -> Result<(
     }
     let _ = app_handle.emit(
         "connection-state",
-        crate::connection::ConnectionState { connected: false, port: None, baud_rate: None },
+        crate::connection::ConnectionState { connected: false, port: Some(req.port.clone()), baud_rate: None },
     );
     // 更新 registry:com/connected 清空(辅助发现机制,失败忽略)
     if let Some(reg) = shared.registry.as_ref() {
@@ -102,11 +107,11 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
         },
         flow_control: parse_flow_control(&req.flow_control),
     };
-    // 过渡(单连接行为):已存在任何连接则报错。Task 4 改为 contains_key(&req.port)。
+    // 多连接并发:同一 port 已连接才报错,不同 port 各自连接互不冲突。
     // 持锁贯穿 check→spawn→insert,防 TOCTOU(同 Tauri connect)。
     let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-    if !conns.is_empty() {
-        return Err(ErrorResp::new("已连接,请先 disconnect"));
+    if conns.contains_key(&req.port) {
+        return Err(ErrorResp::new(format!("端口 {} 已连接", req.port)));
     }
     let (handle, mode) = match spawn_connection(params, shared.app_handle.clone()) {
         Ok(h) => h,
@@ -168,27 +173,30 @@ pub struct StatusResp {
     pub baud: Option<u32>,
     pub tx_bytes: Option<u64>,
     pub rx_bytes: Option<u64>,
-    /// 收发历史当前最大序号(tx+rx 共用同一计数器)。
+    /// 收发历史当前最大序号(tx+rx 共用同一计数器,per-conn)。
     pub seq: u64,
 }
 
-pub fn get_status(shared: &McpShared) -> StatusResp {
+#[derive(Deserialize)]
+pub struct StatusReq {
+    pub port: String,
+}
+
+pub fn get_status(shared: &McpShared, req: StatusReq) -> StatusResp {
     let conns = shared.connections.lock().ok();
-    let (connected, port, baud, tx_bytes, rx_bytes) = match conns.as_ref() {
-        Some(g) => match resolve_port(g, None) {
-            Ok(p) => {
-                let h = g.get(&p).expect("resolve_port 返回的 port 必在 map 中");
-                (
-                    true,
-                    Some(h.port.clone()),
-                    Some(h.baud),
-                    Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
-                    Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
-                )
-            }
-            Err(_) => (false, None, None, None, None),
+    let (connected, port, baud, tx_bytes, rx_bytes, seq) = match conns.as_ref() {
+        Some(g) => match g.get(&req.port) {
+            Some(h) => (
+                true,
+                Some(h.port.clone()),
+                Some(h.baud),
+                Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+                Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+                h.rx_history.latest_seq(),
+            ),
+            None => (false, None, None, None, None, 0),
         },
-        None => (false, None, None, None, None),
+        None => (false, None, None, None, None, 0),
     };
     StatusResp {
         ok: true,
@@ -197,7 +205,7 @@ pub fn get_status(shared: &McpShared) -> StatusResp {
         baud,
         tx_bytes,
         rx_bytes,
-        seq: shared.rx_history.latest_seq(),
+        seq,
     }
 }
 
@@ -205,6 +213,7 @@ pub fn get_status(shared: &McpShared) -> StatusResp {
 
 #[derive(Deserialize)]
 pub struct SendReq {
+    pub port: String,
     pub text: String,
     pub ending: Option<String>,  // 默认 "Crlf"
     pub is_hex: Option<bool>,    // 默认 false
@@ -218,6 +227,7 @@ pub struct SendResp {
 
 #[derive(Deserialize)]
 pub struct SendAndReadReq {
+    pub port: String,
     pub text: String,
     pub timeout_ms: u64,
     pub ending: Option<String>,
@@ -253,14 +263,16 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
     Ok(data)
 }
 
-/// 发送(复用 write_tx + emit_tx_line),不读。返回发送字节数语义的 sent=true。
-fn do_send(shared: &McpShared, data: Vec<u8>) -> Result<(), String> {
-    let conns = shared.connections.lock().map_err(|e| e.to_string())?;
-    let resolved = resolve_port(&conns, None)?;
-    let handle = conns.get(&resolved).ok_or("未连接串口")?;
+/// 发送(复用 write_tx + emit_tx_line),不读。返回该 port 的 rx_history Arc,
+/// 供 send_and_read 后续 latest_seq/since/notify 使用——**不持有 connections 锁跨 await**。
+/// 锁只在取 handle + push tx + 发写命令的同步段持有,返回前释放;send_and_read
+/// 后续用返回的 Arc 直接调 rx_history 的方法,无需再锁 connections(避免长 await 持锁)。
+fn do_send(shared: &McpShared, port: &str, data: Vec<u8>) -> Result<Arc<RxHistory>, String> {
+    let conn = shared.connections.lock().map_err(|e| e.to_string())?;
+    let handle = conn.get(port).ok_or_else(|| format!("端口 {} 未连接", port))?;
     emit_tx_line(&shared.app_handle, &handle.rx_history, data.clone());
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
-    Ok(())
+    Ok(handle.rx_history.clone())
 }
 
 pub fn send(shared: &McpShared, req: SendReq) -> Result<SendResp, ErrorResp> {
@@ -268,7 +280,7 @@ pub fn send(shared: &McpShared, req: SendReq) -> Result<SendResp, ErrorResp> {
         Ok(d) => d,
         Err(e) => return Err(ErrorResp::new(e)),
     };
-    match do_send(shared, data) {
+    match do_send(shared, &req.port, data) {
         Ok(_) => Ok(SendResp { ok: true, sent: true }),
         Err(e) => Err(ErrorResp::new(e)),
     }
@@ -278,6 +290,7 @@ pub fn send(shared: &McpShared, req: SendReq) -> Result<SendResp, ErrorResp> {
 
 #[derive(Deserialize)]
 pub struct GetHistorySinceReq {
+    pub port: String,
     pub seq: u64,
     pub max_lines: Option<usize>,
     /// true 时每行 text 返回 hex dump(非可打印字节不丢);默认 false 返回 ascii。
@@ -300,9 +313,30 @@ pub struct GetHistorySinceResp {
 }
 
 /// 拉取序号 > seq 的全部历史行(tx+rx,带方向)。供 agent 主动查对话流/异步 URC。
+/// 用指定 port 的 per-conn rx_history:多连接不串数据。
 pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHistorySinceResp {
     let is_hex = req.is_hex.unwrap_or(false);
-    let (rows, latest) = shared.rx_history.since(req.seq);
+    // 取该 port 的 per-conn rx_history(锁只用于取 Arc,不跨 await)
+    let rx_history = match shared.connections.lock() {
+        Ok(conns) => match conns.get(&req.port) {
+            Some(h) => h.rx_history.clone(),
+            None => {
+                return GetHistorySinceResp {
+                    ok: false,
+                    lines: Vec::new(),
+                    latest_seq: 0,
+                };
+            }
+        },
+        Err(_) => {
+            return GetHistorySinceResp {
+                ok: false,
+                lines: Vec::new(),
+                latest_seq: 0,
+            };
+        }
+    };
+    let (rows, latest) = rx_history.since(req.seq);
     let mut lines: Vec<HistoryLine> = rows
         .into_iter()
         .map(|(_, dir, l)| HistoryLine {
@@ -326,17 +360,26 @@ pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHist
 
 /// 发后阻塞读:发数据 → 记 seq0 → async 等 timeout 内的新 rx 行。
 /// 超时语义:静默间隙超时——每次收到新行刷新截止时间,持续有数据时阻塞可远超 timeout_ms。
+///
+/// **断连超时语义(per-conn history)**: send_and_read 阻塞在
+/// `rx_history.notify().timeout(...)` 期间,若该 port 被 disconnect,reader 线程
+/// 退出不再 push,notify 不再触发 → 最终静默超时返回空 responses(无死锁)。
+/// 与旧全局 history 行为差异:旧实现读全局 history,disconnect 后全局仍可能被
+/// 其他连接的 reader push 唤醒(数据串连);新实现 per-conn history 隔离,断连后
+/// 该 history 静默,纯超时返回空——符合多连接隔离语义。
 #[allow(dead_code)] // 在 Task 10 的 server 注册前暂未被调用
 pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<SendAndReadResp, ErrorResp> {
     let data = match parse_send_data(&req.text, &req.ending, &req.is_hex) {
         Ok(d) => d,
         Err(e) => return Err(ErrorResp::new(e)),
     };
+    // do_send 内取该 port 的 per-conn rx_history 并返回 Arc,锁不跨 await。
+    let rx_history = match do_send(shared, &req.port, data) {
+        Ok(h) => h,
+        Err(e) => return Err(ErrorResp::new(e)),
+    };
     // 先记基准 seq0(发之前),这样发送后到达的响应都 > seq0
-    let seq0 = shared.rx_history.latest_seq();
-    if let Err(e) = do_send(shared, data) {
-        return Err(ErrorResp::new(e));
-    }
+    let seq0 = rx_history.latest_seq();
     let gap = Duration::from_millis(req.timeout_ms.max(50));
 
     let mut responses: Vec<String> = Vec::new();
@@ -345,7 +388,7 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
 
     loop {
         // 先查:有没有 seq > cur_seq 的新行(tx+rx 都会触发,但只收集 rx)
-        let (rows, latest) = shared.rx_history.since(cur_seq);
+        let (rows, latest) = rx_history.since(cur_seq);
         let new_rx: Vec<_> = rows.iter()
             .filter(|(_, dir, _)| *dir == crate::buffer::log_line::Dir::Rx)
             .collect();
@@ -358,7 +401,7 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
             continue; // 拿到新 rx,刷新静默窗口:回循环顶重新等 gap
         }
         // 无新 rx 行:等 Notify,带 gap 超时
-        let notified = shared.rx_history.notify().notified();
+        let notified = rx_history.notify().notified();
         match timeout(gap, notified).await {
             Ok(_) => {
                 // 被唤醒(有新行 push,可能是 tx 或 rx),回循环顶重查
@@ -366,7 +409,7 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
             }
             Err(_) => {
                 // 静默超时:再查一次(防止唤醒与查询的竞态漏数据)
-                let (rows, latest) = shared.rx_history.since(cur_seq);
+                let (rows, latest) = rx_history.since(cur_seq);
                 let new_rx: Vec<_> = rows.iter()
                     .filter(|(_, dir, _)| *dir == crate::buffer::log_line::Dir::Rx)
                     .collect();
@@ -425,5 +468,43 @@ mod tests {
     fn test_parse_send_empty_text_still_adds_ending() {
         let d = parse_send_data("", &Some("Crlf".into()), &None).unwrap();
         assert_eq!(d, b"\r\n");
+    }
+
+    // ============ per-connection history 隔离契约 ============
+
+    /// 两个独立 RxHistory,push 到 A 不影响 B —— 验证多连接不串数据。
+    /// 这是 Task 4 的核心契约:每个 ConnectionHandle 持自己的 rx_history,
+    /// send_and_read/get_history_since 按指定 port 取对应 history,不共用全局。
+    #[test]
+    fn test_per_conn_history_isolation() {
+        use std::sync::Arc;
+        use crate::buffer::rx_history::RxHistory;
+        use crate::buffer::log_line::{Dir, LogLine};
+
+        fn rx(content: &[u8]) -> LogLine {
+            LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[])
+        }
+
+        let a = Arc::new(RxHistory::new(100));
+        let b = Arc::new(RxHistory::new(100));
+        // A push 两行
+        a.push(Dir::Rx, rx(b"OK-A1"));
+        a.push(Dir::Rx, rx(b"OK-A2"));
+        // B push 一行
+        b.push(Dir::Rx, rx(b"OK-B1"));
+
+        // A 只有自己的两行,不含 B
+        let (rows_a, latest_a) = a.since(0);
+        assert_eq!(rows_a.len(), 2);
+        assert_eq!(rows_a[0].2.ascii, "OK-A1");
+        assert_eq!(rows_a[1].2.ascii, "OK-A2");
+        assert_eq!(latest_a, 2);
+        // B 只有一行,不含 A
+        let (rows_b, latest_b) = b.since(0);
+        assert_eq!(rows_b.len(), 1);
+        assert_eq!(rows_b[0].2.ascii, "OK-B1");
+        assert_eq!(latest_b, 1);
+        // seq 各自单调,不共享计数器
+        assert_ne!(a.latest_seq(), b.latest_seq());
     }
 }

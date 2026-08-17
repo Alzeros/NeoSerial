@@ -82,7 +82,7 @@ impl ServerHandler for NeoserialHandler {
                 CONNECT,
                 "连接串口。参数: port(如 COM3), baud_rate, data_bits(Five|Six|Seven|Eight), \
                  parity(None|Odd|Even), stop_bits(1|2), flow_control(None|Software|Hardware)。\
-                 单连接:已连接时先 disconnect。返回 { ok, mode } 或 { ok:false, error }。",
+                 多连接:同一 port 已连接报错,不同 port 各自连接。返回 { ok, mode } 或 { ok:false, error }。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -98,65 +98,74 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 DISCONNECT,
-                "断开当前串口连接。无参数。返回 { ok: true } 或 { ok:false, error }。",
+                "断开指定串口连接。参数: port(要断开的串口名,如 COM3)。返回 { ok: true } 或 { ok:false, error }。",
                 schema(serde_json::json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "port": { "type": "string", "description": "要断开的串口名,如 COM3" }
+                    },
+                    "required": ["port"],
                     "additionalProperties": false
                 })),
             ),
             Tool::new(
                 GET_STATUS,
-                "查询当前连接状态与 rx 序号。无参数。返回 { ok, connected, port, baud, tx_bytes, rx_bytes, seq }。",
+                "查询指定端口的连接状态与 rx 序号。参数: port。返回 { ok, connected, port, baud, tx_bytes, rx_bytes, seq }。",
                 schema(serde_json::json!({
                     "type": "object",
-                    "properties": {},
+                    "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" }
+                    },
+                    "required": ["port"],
                     "additionalProperties": false
                 })),
             ),
             Tool::new(
                 SEND,
-                "发送数据到串口(不读响应)。参数: text, ending(Cr|Lf|Crlf|None,默认 Crlf), \
+                "发送数据到串口(不读响应)。参数: port, text, ending(Cr|Lf|Crlf|None,默认 Crlf), \
                  is_hex(默认 false)。返回 { ok, sent } 或 { ok:false, error }。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" },
                         "text": { "type": "string", "description": "要发送的数据" },
                         "ending": { "type": "string", "enum": ["Cr","Lf","Crlf","None"], "default": "Crlf" },
                         "is_hex": { "type": "boolean", "default": false }
                     },
-                    "required": ["text"]
+                    "required": ["port", "text"]
                 })),
             ),
             Tool::new(
                 SEND_AND_READ,
-                "发送数据并阻塞读取响应。参数: text, timeout_ms(静默间隙超时), \
+                "发送数据并阻塞读取响应。参数: port, text, timeout_ms(静默间隙超时), \
                  ending(默认 Crlf), is_hex(默认 false)。\
                  超时语义:持续有数据时阻塞可远超 timeout,静默 gap 后返回。\
                  返回 { ok, sent, responses: [行], timed_out, seq0, seq1 } 或 { ok:false, error }。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" },
                         "text": { "type": "string" },
                         "timeout_ms": { "type": "integer", "description": "静默间隙超时(毫秒),最小50" },
                         "ending": { "type": "string", "enum": ["Cr","Lf","Crlf","None"], "default": "Crlf" },
                         "is_hex": { "type": "boolean", "default": false }
                     },
-                    "required": ["text", "timeout_ms"]
+                    "required": ["port", "text", "timeout_ms"]
                 })),
             ),
             Tool::new(
                 GET_HISTORY_SINCE,
-                "获取指定序号之后的收发历史(tx+rx,带方向)。参数: seq(基准序号), max_lines(可选,截断最旧), is_hex(可选,默认 false 返回 ascii;true 返回 hex dump,纯 hex 数据应传 true 否则 ascii 显示空)。\
+                "获取指定端口的收发历史(tx+rx,带方向)。参数: port, seq(基准序号), max_lines(可选,截断最旧), is_hex(可选,默认 false 返回 ascii;true 返回 hex dump,纯 hex 数据应传 true 否则 ascii 显示空)。\
                  返回 { ok, lines: [{dir, text}], latest_seq }。dir 为 'rx' 或 'tx'。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" },
                         "seq": { "type": "integer", "description": "基准序号,返回 seq > 此值 的行" },
                         "max_lines": { "type": "integer", "description": "最多返回行数,截断最旧" },
                         "is_hex": { "type": "boolean", "default": false, "description": "true 返回 hex dump(非可打印字节不丢);纯 hex 数据需传 true" }
                     },
-                    "required": ["seq"]
+                    "required": ["port", "seq"]
                 })),
             ),
         ];
@@ -179,12 +188,26 @@ impl ServerHandler for NeoserialHandler {
             let resp: Value = match name.as_ref() {
                 LIST_PORTS => serde_json::to_value(tools::list_ports(&shared)).unwrap_or_default(),
                 DISCONNECT => {
-                    match tools::disconnect(&shared, &shared.app_handle) {
+                    let req: tools::DisconnectReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    match tools::disconnect(&shared, &shared.app_handle, req) {
                         Ok(_) => serde_json::json!({ "ok": true }),
                         Err(e) => serde_json::json!({ "ok": false, "error": e }),
                     }
                 }
-                GET_STATUS => serde_json::to_value(tools::get_status(&shared)).unwrap_or_default(),
+                GET_STATUS => {
+                    let req: tools::StatusReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    serde_json::to_value(tools::get_status(&shared, req)).unwrap_or_default()
+                }
                 SEND => {
                     let req: tools::SendReq = match serde_json::from_value(args) {
                         Ok(r) => r,

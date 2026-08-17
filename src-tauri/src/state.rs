@@ -4,7 +4,6 @@ use std::sync::{Arc, Mutex};
 use crossbeam_channel::Sender;
 use tauri::AppHandle;
 
-use crate::buffer::rx_history::RxHistory;
 use crate::connection::ConnectionHandle;
 use crate::logging::file_logger::FileLogger;
 use crate::mcp::registry::RegistryHandle;
@@ -22,9 +21,6 @@ pub struct AppState {
     /// 上次日志保存路径。stop_logging 后保留,再次 start_logging 不传 path 时续写此文件。
     pub last_log_path: Mutex<Option<String>>,
     pub settings: Mutex<crate::config::settings::Settings>,
-    /// 后端 rx 历史,供 MCP 阻塞读查询。reader 线程喂入,MCP handler 读取。
-    /// (Task 4 改为 per-connection 后将删除此全局字段)
-    pub rx_history: Arc<RxHistory>,
     /// MCP server 当前监听端口(运行中 Some(port),未启动 None)。供前端显示实际连接指令。
     pub mcp_port: Mutex<Option<u16>>,
     /// MCP registry 句柄,进程退出时调 unregister 注销。
@@ -41,7 +37,6 @@ impl AppState {
             line_sender: Mutex::new(None),
             last_log_path: Mutex::new(None),
             settings: Mutex::new(crate::config::settings::Settings::load()),
-            rx_history: Arc::new(RxHistory::new(10_000)),
             mcp_port: Mutex::new(None),
             registry: None,
             handle,

@@ -59,7 +59,6 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone),registry 同一 clone 供工具调 update_com
     let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
         app_handle: handle.clone(),
-        rx_history: state.rx_history.clone(),
         connections: state.connections.clone(),
         registry: registry.clone(),
     });
