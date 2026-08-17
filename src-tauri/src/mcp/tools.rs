@@ -377,7 +377,6 @@ pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHist
 /// 与旧全局 history 行为差异:旧实现读全局 history,disconnect 后全局仍可能被
 /// 其他连接的 reader push 唤醒(数据串连);新实现 per-conn history 隔离,断连后
 /// 该 history 静默,纯超时返回空——符合多连接隔离语义。
-#[allow(dead_code)] // 在 Task 10 的 server 注册前暂未被调用
 pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<SendAndReadResp, ErrorResp> {
     let data = match parse_send_data(&req.text, &req.ending, &req.is_hex) {
         Ok(d) => d,

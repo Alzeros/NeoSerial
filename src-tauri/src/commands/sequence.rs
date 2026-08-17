@@ -331,4 +331,29 @@ mod tests {
             "停 A 不应影响 B 的运行序列"
         );
     }
+
+    /// RunningGuard 的 Drop 清理路径本身。原 5 个测试直接操作 HashSet,
+    /// 未覆盖 guard 的 Drop trait——这是 sequence_run 线程实际用的清理机制
+    /// (panic/正常退出/aborted 都靠它 remove)。构造 guard → insert port →
+    /// drop guard → 断言 port 已从集合移除。
+    #[test]
+    fn test_running_guard_drop_removes_port() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset();
+
+        let port = "COM-TEST".to_string();
+        SEQUENCE_RUNNING.lock().unwrap().insert(port.clone());
+        assert!(
+            SEQUENCE_RUNNING.lock().unwrap().contains(&port),
+            "guard drop 前该 port 应在运行集合"
+        );
+        // 构造 guard 并立即 drop:模拟线程退出(_guard 离开作用域)
+        {
+            let _guard = RunningGuard { port: port.clone() };
+        }
+        assert!(
+            !SEQUENCE_RUNNING.lock().unwrap().contains(&port),
+            "guard drop 后应从运行集合移除该 port"
+        );
+    }
 }

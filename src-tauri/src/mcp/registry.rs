@@ -14,18 +14,23 @@ pub fn registry_path() -> PathBuf {
 
 /// 单个连接信息(COM 口 + 波特率)。registry 批量化(Task 5):
 /// 每个实例持有多连接列表,替代旧 com/baud/connected 单值字段。
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
 pub struct ConnInfo {
+    #[serde(default)]
     pub com: String,
+    #[serde(default)]
     pub baud: u32,
 }
 
 /// 一个 neoserial 实例的 registry 条目。
 /// connections 为完整快照(connect/disconnect 后用 update_connections 整体替换)。
+/// connections 字段标 `#[serde(default)]`:旧 registry.json(单连接期写入,
+/// 缺 connections 字段)反序列化时用空 Vec 兜底,不报错。
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
     pub pid: u32,
     pub port: u16,
+    #[serde(default)]
     pub connections: Vec<ConnInfo>,
     pub started_at: u64,
     pub heartbeat_at: u64,
