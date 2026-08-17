@@ -40,7 +40,7 @@ struct McpStatusResp {
 
 /// 选端口 + 登记 registry + 起 MCP HTTP server + 心跳 task。
 /// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
-/// 返回 RegistryHandle(供 connect/disconnect 工具调 update_com)。
+/// 返回 RegistryHandle(供 connect/disconnect 工具调 update_connections)。
 fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registry::RegistryHandle> {
     // 从设置读固定端口(默认 34594),不递增——被占则失败提示用户改端口
     let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(23333);
@@ -56,7 +56,7 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
         *mp = Some(port);
     }
     let registry = mcp::registry::RegistryHandle::register(port).ok();
-    // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone),registry 同一 clone 供工具调 update_com
+    // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone),registry 同一 clone 供工具调 update_connections
     let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
         app_handle: handle.clone(),
         connections: state.connections.clone(),

@@ -13,6 +13,6 @@ use crate::mcp::registry::RegistryHandle;
 pub struct McpShared {
     pub app_handle: tauri::AppHandle,
     pub connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
-    /// registry 句柄,供 connect/disconnect 工具更新 com/connected。None 时跳过更新。
+    /// registry 句柄,供 connect/disconnect 工具更新 connections 快照。None 时跳过更新。
     pub registry: Option<RegistryHandle>,
 }

@@ -12,14 +12,21 @@ pub fn registry_path() -> PathBuf {
     appdata.join("neoserial").join("mcp-registry.json")
 }
 
+/// 单个连接信息(COM 口 + 波特率)。registry 批量化(Task 5):
+/// 每个实例持有多连接列表,替代旧 com/baud/connected 单值字段。
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ConnInfo {
+    pub com: String,
+    pub baud: u32,
+}
+
 /// 一个 neoserial 实例的 registry 条目。
+/// connections 为完整快照(connect/disconnect 后用 update_connections 整体替换)。
 #[derive(Clone, Serialize, Deserialize)]
 pub struct RegistryEntry {
     pub pid: u32,
     pub port: u16,
-    pub com: Option<String>,
-    pub baud: Option<u32>,
-    pub connected: bool,
+    pub connections: Vec<ConnInfo>,
     pub started_at: u64,
     pub heartbeat_at: u64,
 }
@@ -68,9 +75,7 @@ impl RegistryHandle {
         let entry = RegistryEntry {
             pid,
             port,
-            com: None,
-            baud: None,
-            connected: false,
+            connections: vec![],
             started_at: now,
             heartbeat_at: now,
         };
@@ -82,14 +87,15 @@ impl RegistryHandle {
         Ok(RegistryHandle { pid, port, path })
     }
 
-    /// 更新本实例的 com/baud/connected。
-    pub fn update_com(&self, com: Option<String>, baud: Option<u32>, connected: bool) -> Result<(), String> {
+    /// 更新本实例的 connections(完整快照整体替换)。
+    /// connect 成功后/disconnect 后由 tools 构造当前所有连接的快照传入,
+    /// read_all → 改本 pid 的 connections + heartbeat → write_all。
+    /// 传空 Vec 即表示无连接(全部断开)。
+    pub fn update_connections(&self, conns: Vec<ConnInfo>) -> Result<(), String> {
         let mut all = read_all(&self.path);
         for e in all.iter_mut() {
             if e.pid == self.pid {
-                e.com = com.clone();
-                e.baud = baud;
-                e.connected = connected;
+                e.connections = conns.clone();
                 e.heartbeat_at = now_secs();
             }
         }
@@ -180,15 +186,16 @@ mod tests {
         let path = tmp_path();
         // 临时替换 registry_path:用独立函数测试 read_all/write_all
         let entry = RegistryEntry {
-            pid: 99991, port: 23333, com: None, baud: None,
-            connected: false, started_at: 1, heartbeat_at: 1,
+            pid: 99991, port: 23333,
+            connections: vec![],
+            started_at: 1, heartbeat_at: 1,
         };
         write_all(&path, &[entry.clone()]).unwrap();
         let all = read_all(&path);
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].pid, 99991);
         assert_eq!(all[0].port, 23333);
-        assert!(!all[0].connected);
+        assert!(all[0].connections.is_empty());
         let _ = fs::remove_file(&path);
     }
 
@@ -204,17 +211,20 @@ mod tests {
     fn test_write_replaces_not_appends() {
         let path = tmp_path();
         write_all(&path, &[RegistryEntry {
-            pid: 1, port: 23333, com: None, baud: None,
-            connected: false, started_at: 1, heartbeat_at: 1,
+            pid: 1, port: 23333,
+            connections: vec![],
+            started_at: 1, heartbeat_at: 1,
         }]).unwrap();
         write_all(&path, &[RegistryEntry {
-            pid: 2, port: 23334, com: Some("COM5".into()), baud: Some(9600),
-            connected: true, started_at: 2, heartbeat_at: 2,
+            pid: 2, port: 23334,
+            connections: vec![ConnInfo { com: "COM5".into(), baud: 9600 }],
+            started_at: 2, heartbeat_at: 2,
         }]).unwrap();
         let all = read_all(&path);
         assert_eq!(all.len(), 1); // 第二次写覆盖了第一次
         assert_eq!(all[0].pid, 2);
-        assert_eq!(all[0].com.as_deref(), Some("COM5"));
+        assert_eq!(all[0].connections.len(), 1);
+        assert_eq!(all[0].connections[0].com, "COM5");
         let _ = fs::remove_file(&path);
     }
 
@@ -235,5 +245,78 @@ mod tests {
     fn test_is_pid_alive_dead_pid_false() {
         // 极不可能存活的 pid(Windows pid 上限远小于此)
         assert!(!is_pid_alive(999_999_999));
+    }
+
+    // ============ Task 5: connections 列表批量化 ============
+
+    /// write_all 写含 connections 列表的 entry,read_all 读回验证序列化/反序列化正确。
+    #[test]
+    fn test_write_read_connections_list() {
+        let path = tmp_path();
+        let entry = RegistryEntry {
+            pid: 100, port: 20000,
+            connections: vec![
+                ConnInfo { com: "COM5".into(), baud: 9600 },
+                ConnInfo { com: "COM7".into(), baud: 115200 },
+            ],
+            started_at: 1, heartbeat_at: 1,
+        };
+        write_all(&path, &[entry]).unwrap();
+        let all = read_all(&path);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].connections.len(), 2);
+        assert_eq!(all[0].connections[0].com, "COM5");
+        assert_eq!(all[0].connections[0].baud, 9600);
+        assert_eq!(all[0].connections[1].com, "COM7");
+        assert_eq!(all[0].connections[1].baud, 115200);
+        let _ = fs::remove_file(&path);
+    }
+
+    /// update_connections 用完整快照整体替换本 pid 的 connections,并刷新 heartbeat。
+    #[test]
+    fn test_update_connections_replaces_snapshot() {
+        let path = tmp_path();
+        // 先写一条空 connections 的 entry
+        let entry = RegistryEntry {
+            pid: 200, port: 30000,
+            connections: vec![],
+            started_at: 1, heartbeat_at: 1,
+        };
+        write_all(&path, &[entry]).unwrap();
+        // 构造 handle 指向同一临时文件(测试模块可访问私有字段)
+        let handle = RegistryHandle { pid: 200, port: 30000, path: path.clone() };
+        // 调 update_connections 写入两个连接快照
+        handle.update_connections(vec![
+            ConnInfo { com: "COM3".into(), baud: 115200 },
+            ConnInfo { com: "COM9".into(), baud: 9600 },
+        ]).unwrap();
+        // 读回验证:connections 被整体替换为快照
+        let all = read_all(&path);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].connections.len(), 2);
+        assert_eq!(all[0].connections[0].com, "COM3");
+        assert_eq!(all[0].connections[0].baud, 115200);
+        assert_eq!(all[0].connections[1].com, "COM9");
+        assert_eq!(all[0].connections[1].baud, 9600);
+        // heartbeat 应被刷新(>初始值 1)
+        assert!(all[0].heartbeat_at > 1);
+        let _ = fs::remove_file(&path);
+    }
+
+    /// update_connections 用空快照清空连接列表(disconnect 最后一个连接后的场景)。
+    #[test]
+    fn test_update_connections_empty_clears() {
+        let path = tmp_path();
+        let entry = RegistryEntry {
+            pid: 300, port: 40000,
+            connections: vec![ConnInfo { com: "COM3".into(), baud: 115200 }],
+            started_at: 1, heartbeat_at: 1,
+        };
+        write_all(&path, &[entry]).unwrap();
+        let handle = RegistryHandle { pid: 300, port: 40000, path: path.clone() };
+        handle.update_connections(vec![]).unwrap();
+        let all = read_all(&path);
+        assert_eq!(all[0].connections.len(), 0);
+        let _ = fs::remove_file(&path);
     }
 }

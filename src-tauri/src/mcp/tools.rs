@@ -10,6 +10,7 @@ use crate::commands::send::emit_tx_line;
 use crate::connection::{spawn_connection, SerialParams, WriteCommand};
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
 
+use super::registry::ConnInfo;
 use super::state::McpShared;
 
 // ============ 通用响应 ============
@@ -68,9 +69,14 @@ pub struct DisconnectReq {
 
 pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: DisconnectReq) -> Result<(), String> {
     // 先从 map 取出 handle 并放锁,再等 exit(持 connections 锁等 1s 会阻塞所有其他操作,死锁风险)。
-    let handle = {
+    // 在同一锁作用域内构造剩余连接快照(handle 移除后剩余 entries),避免二次取锁且快照与移除原子一致。
+    let (handle, snapshot): (Option<crate::connection::ConnectionHandle>, Vec<ConnInfo>) = {
         let mut conns = shared.connections.lock().map_err(|e| e.to_string())?;
-        conns.remove(&req.port)
+        let removed = conns.remove(&req.port);
+        let snap = conns.values()
+            .map(|h| ConnInfo { com: h.port.clone(), baud: h.baud })
+            .collect();
+        (removed, snap)
     };
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
@@ -85,9 +91,9 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
         "connection-state",
         crate::connection::ConnectionState { connected: false, port: Some(req.port.clone()), baud_rate: None },
     );
-    // 更新 registry:com/connected 清空(辅助发现机制,失败忽略)
+    // 更新 registry:用当前剩余连接的完整快照整体替换(辅助发现机制,失败忽略)。
     if let Some(reg) = shared.registry.as_ref() {
-        let _ = reg.update_com(None, None, false);
+        let _ = reg.update_connections(snapshot);
     }
     Ok(())
 }
@@ -129,10 +135,14 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
         }
     };
     conns.insert(req.port.clone(), handle);
-    // 锁已释放(conns 出作用域)。更新 registry 的 com/connected(锁已释放,避免持锁做文件 IO)
-    // update_com 失败忽略:registry 只是辅助发现机制,不该阻塞 connect
+    // 锁仍持有:构造当前所有连接的完整快照(含刚 insert 的这条),用于整体更新 registry。
+    // 锁在 conns 出作用域时释放,update_connections 失败忽略:registry 只是辅助发现机制。
+    let snapshot: Vec<ConnInfo> = conns.values()
+        .map(|h| ConnInfo { com: h.port.clone(), baud: h.baud })
+        .collect();
+    drop(conns);
     if let Some(reg) = shared.registry.as_ref() {
-        let _ = reg.update_com(Some(req.port.clone()), Some(req.baud_rate), true);
+        let _ = reg.update_connections(snapshot);
     }
     Ok(ConnectResp { ok: true, mode: Some(mode) })
 }
