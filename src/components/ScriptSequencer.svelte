@@ -107,7 +107,7 @@
   }
 
   import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, loadSequenceAuto, saveSequenceAuto, sequenceRun, sequenceStop, send } from '$lib/tauri';
-  import { connected } from '$lib/stores';
+  import { connected, windowPort } from '$lib/stores';
 
   // 单行发送：点编号按钮即发送该行（用本行 hex/enter 设置）
   async function sendOne(index: number) {
@@ -116,7 +116,7 @@
     const cmd = page?.commands[index];
     if (!cmd || !cmd.command.trim()) return;
     try {
-      await send(cmd.command, cmd.enter ? 'Crlf' : 'None', cmd.hex);
+      await send(windowPort.value!, cmd.command, cmd.enter ? 'Crlf' : 'None', cmd.hex);
     } catch (e) {
       console.error('单行发送失败:', e);
     }
@@ -135,7 +135,7 @@
     scriptRunState.finished = '';
     scriptRunning.value = true;
     try {
-      await sequenceRun(page.commands, scriptRunCount.value, scriptLoopInterval.value);
+      await sequenceRun(windowPort.value!, page.commands, scriptRunCount.value, scriptLoopInterval.value);
     } catch (e) {
       // 启动失败（如未连接串口、序列已在运行）：复位 UI 运行态。
       // 后端在失败路径已复位 SEQUENCE_RUNNING 标志，这里把前端状态同步回去，
@@ -152,7 +152,7 @@
 
   async function handleStop() {
     try {
-      await sequenceStop();
+      await sequenceStop(windowPort.value!);
     } catch (e) {
       console.error('停止失败:', e);
     }

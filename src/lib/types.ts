@@ -20,10 +20,12 @@ export interface ConnectionState {
 
 export interface TxUpdate {
   total: number;
+  port: string;
 }
 
 export interface RxUpdate {
   total: number;
+  port: string;
 }
 
 export interface ErrorEvent {
@@ -41,6 +43,17 @@ export interface SequenceDone {
 
 export interface ConnectionMode {
   mode: 'independent' | 'shared';
+}
+
+/** 副窗口 onMount 调 get_window_conn_state 的返回:本窗口对应 port 的连接状态。
+ *  main 窗口(port=null)返回 connected:false,由它自己 connect 流程管理。 */
+export interface WindowConnState {
+  ok: boolean;
+  port: string | null;
+  connected: boolean;
+  baud: number | null;
+  tx_bytes: number | null;
+  rx_bytes: number | null;
 }
 
 export type Parity = 'None' | 'Odd' | 'Even';

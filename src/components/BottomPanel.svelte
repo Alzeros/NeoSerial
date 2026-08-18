@@ -15,6 +15,7 @@
     sendText,
     showTimestamp,
     appendLogLine,
+    windowPort,
   } from '$lib/stores';
   import { openFileDialog, saveFileDialog, sendFile, startLogging, stopLogging } from '$lib/tauri';
   import { onMount } from 'svelte';
@@ -50,7 +51,7 @@
     pendingSend = true;
 
     try {
-      await send(sendText.value, lineEnding.value, hexSend.value);
+      await send(windowPort.value!, sendText.value, lineEnding.value, hexSend.value);
       // 发送后保留输入内容，便于重复发送/修改后再发
     } catch (e) {
       console.error('发送失败:', e);
@@ -63,7 +64,7 @@
 
   async function handleSendCtrlZ() {
     try {
-      await send('1A', 'None', true);
+      await send(windowPort.value!, '1A', 'None', true);
     } catch (e) {
       console.error('发送 Ctrl-Z 失败:', e);
     }
@@ -78,7 +79,7 @@
     if (!fileSendPath.value) return;
     try {
       fileSendProgress.value = 0;
-      await sendFile(fileSendPath.value);
+      await sendFile(windowPort.value!, fileSendPath.value);
       fileSendProgress.value = 100;
     } catch (e) {
       console.error('文件发送失败:', e);

@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import TitleBar from '$components/TitleBar.svelte';
   import ConnectionBar from '$components/ConnectionBar.svelte';
   import LogView from '$components/LogView.svelte';
   import BottomPanel from '$components/BottomPanel.svelte';
   import StatusBar from '$components/StatusBar.svelte';
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
+  import Launcher from '$components/Launcher.svelte';
   import {
     appendLogLine,
     autoScroll,
@@ -36,10 +38,12 @@
     scriptRunState,
     showTimestamp,
     txBytes,
+    windowPort,
   } from '$lib/stores';
   import type { LogLine, Settings } from '$lib/types';
   import {
     getSettings,
+    getWindowConnState,
     saveSettings,
     onConnectionMode,
     onConnectionState,
@@ -153,7 +157,27 @@
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
 
+  // 窗口角色:main=启动器(label "main"),其余为串口窗口(win-{port})。
+  // main 只作入口(开窗口+MCP 状态),不直接连串口;串口界面在副窗口渲染。
+  const isMain = getCurrentWebview().label === 'main';
+
   onMount(() => {
+    // main 窗口:启动器不需要串口事件/连接状态,跳过整个串口初始化。
+    if (isMain) return;
+
+    // 副窗口:按本窗口 label 反推 port,存入 windowPort 供所有 invoke 定位连接。
+    // 同时拉本窗口连接状态——MCP 可能已先连了该 port,需回填已连状态。
+    getWindowConnState()
+      .then((s) => {
+        if (s.port) windowPort.value = s.port;
+        connected.value = s.connected;
+        if (s.connected) {
+          currentPort.value = s.port;
+          if (s.baud) connectionParams.baudRate = s.baud;
+        }
+      })
+      .catch((e) => console.error('获取窗口连接状态失败:', e));
+
     // 启动时加载持久化设置
     getSettings()
       .then(applySettings)
@@ -265,6 +289,9 @@
   }
 </script>
 
+{#if isMain}
+  <Launcher />
+{:else}
 {#if showModeNotification.value && connectionMode.mode === 'shared'}
   <div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-md text-[13px] font-medium shadow-lg flex items-center gap-2"
        style="background: var(--warning); color: var(--primary-foreground);">
@@ -322,3 +349,4 @@
   {/if}
   </div>
 </div>
+{/if}

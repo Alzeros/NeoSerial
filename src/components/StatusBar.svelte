@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { connected, currentPort, rxBytes, txBytes, logDirLabelStyle } from '$lib/stores';
+  import { connected, currentPort, rxBytes, txBytes, logDirLabelStyle, windowPort } from '$lib/stores';
   import { resetStats } from '$lib/tauri';
 
   function formatBytes(n: number): string {
@@ -14,7 +14,7 @@
 
   async function handleResetStats() {
     try {
-      await resetStats();
+      if (windowPort.value) await resetStats(windowPort.value);
     } catch (e) {
       console.error('清零统计失败:', e);
     }

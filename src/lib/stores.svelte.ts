@@ -4,6 +4,9 @@ import { defaultScriptCommand, defaultScriptPage, defaultScriptModule, presetScr
 export const connected = $state<{ value: boolean }>({ value: false });
 export const currentPort = $state<{ value: string | null }>({ value: null });
 export const availablePorts = $state<{ value: string[] }>({ value: [] });
+/** 本窗口绑定的 port:副窗口(win-{port})从 label 反推得到;main 窗口为 null。
+ *  所有 invoke 调用(send/disconnect/sequence 等)用它定位目标连接。 */
+export const windowPort = $state<{ value: string | null }>({ value: null });
 
 export const connectionParams = $state<{
   port: string;

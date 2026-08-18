@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core';
-import { listen } from '@tauri-apps/api/event';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import type {
   ConnectionMode,
@@ -15,6 +15,7 @@ import type {
   SequenceProgress,
   Settings,
   TxUpdate,
+  WindowConnState,
 } from './types';
 import { defaultScriptModule } from './types';
 
@@ -31,16 +32,26 @@ export async function connect(params: ConnectionParams): Promise<void> {
   });
 }
 
-export async function disconnect(): Promise<void> {
-  await invoke('disconnect');
+export async function disconnect(port: string): Promise<void> {
+  await invoke('disconnect', { port });
 }
 
 export async function listPorts(): Promise<string[]> {
   return await invoke<string[]>('list_ports');
 }
 
-export async function resetStats(): Promise<void> {
-  await invoke('reset_stats');
+export async function resetStats(port: string): Promise<void> {
+  await invoke('reset_stats', { port });
+}
+
+/** 显式开一个新串口窗口(主窗口"打开新串口窗口"入口)。只建窗,不连接。 */
+export async function openPortWindow(port: string): Promise<void> {
+  await invoke('open_port_window', { port });
+}
+
+/** 副窗口 onMount 调:按本窗口 label 反推 port,查连接状态。 */
+export async function getWindowConnState(): Promise<WindowConnState> {
+  return await invoke<WindowConnState>('get_window_conn_state');
 }
 
 // ============ MCP ============
@@ -57,12 +68,12 @@ export async function getMcpStatus(): Promise<McpStatus> {
 
 // ============ 数据收发 ============
 
-export async function send(text: string, ending: string, isHex: boolean): Promise<number> {
-  return await invoke<number>('send', { text, ending, isHex });
+export async function send(port: string, text: string, ending: string, isHex: boolean): Promise<number> {
+  return await invoke<number>('send', { port, text, ending, isHex });
 }
 
-export async function sendFile(path: string): Promise<number> {
-  return await invoke<number>('send_file', { path });
+export async function sendFile(port: string, path: string): Promise<number> {
+  return await invoke<number>('send_file', { port, path });
 }
 
 // ============ 配置管理 ============
@@ -96,15 +107,16 @@ export async function isLogging(): Promise<boolean> {
 // ============ 脚本序列 ============
 
 export async function sequenceRun(
+  port: string,
   commands: ScriptCommand[],
   runCount: number,
   loopInterval: number,
 ): Promise<void> {
-  await invoke('sequence_run', { commands, runCount, loopInterval });
+  await invoke('sequence_run', { port, commands, runCount, loopInterval });
 }
 
-export async function sequenceStop(): Promise<void> {
-  await invoke('sequence_stop');
+export async function sequenceStop(port: string): Promise<void> {
+  await invoke('sequence_stop', { port });
 }
 
 export async function saveSequenceConfig(path: string, data: ScriptModule[]): Promise<void> {
@@ -172,9 +184,11 @@ export async function saveFileDialog(title?: string, defaultName?: string, filte
 }
 
 // ============ 事件监听 ============
+// 用 getCurrentWebview().listen 定向:只收 emit_to 给本窗口(label)的事件。
+// 后端 emit_to(win-{port}),每个副窗口只收自己 port 的事件,多窗口不串流。
 
 export function onRxLine(cb: (line: LogLine) => void) {
-  return listen<LogLine>('rx-line', (e) => cb(e.payload));
+  return getCurrentWebview().listen<LogLine>('rx-line', (e) => cb(e.payload));
 }
 
 export interface FileSendProgress {
@@ -183,37 +197,37 @@ export interface FileSendProgress {
 }
 
 export function onFileSendProgress(cb: (progress: FileSendProgress) => void) {
-  return listen<FileSendProgress>('file-send-progress', (e) => cb(e.payload));
+  return getCurrentWebview().listen<FileSendProgress>('file-send-progress', (e) => cb(e.payload));
 }
 
 export function onTxLine(cb: (line: LogLine) => void) {
-  return listen<LogLine>('tx-line', (e) => cb(e.payload));
+  return getCurrentWebview().listen<LogLine>('tx-line', (e) => cb(e.payload));
 }
 
 export function onTxUpdate(cb: (update: TxUpdate) => void) {
-  return listen<TxUpdate>('tx-update', (e) => cb(e.payload));
+  return getCurrentWebview().listen<TxUpdate>('tx-update', (e) => cb(e.payload));
 }
 
 export function onRxUpdate(cb: (update: RxUpdate) => void) {
-  return listen<RxUpdate>('rx-update', (e) => cb(e.payload));
+  return getCurrentWebview().listen<RxUpdate>('rx-update', (e) => cb(e.payload));
 }
 
 export function onConnectionState(cb: (state: ConnectionState) => void) {
-  return listen<ConnectionState>('connection-state', (e) => cb(e.payload));
+  return getCurrentWebview().listen<ConnectionState>('connection-state', (e) => cb(e.payload));
 }
 
 export function onSequenceProgress(cb: (progress: SequenceProgress) => void) {
-  return listen<SequenceProgress>('sequence-progress', (e) => cb(e.payload));
+  return getCurrentWebview().listen<SequenceProgress>('sequence-progress', (e) => cb(e.payload));
 }
 
 export function onSequenceDone(cb: (done: SequenceDone) => void) {
-  return listen<SequenceDone>('sequence-done', (e) => cb(e.payload));
+  return getCurrentWebview().listen<SequenceDone>('sequence-done', (e) => cb(e.payload));
 }
 
 export function onError(cb: (error: ErrorEvent) => void) {
-  return listen<ErrorEvent>('error', (e) => cb(e.payload));
+  return getCurrentWebview().listen<ErrorEvent>('error', (e) => cb(e.payload));
 }
 
 export function onConnectionMode(cb: (mode: ConnectionMode) => void) {
-  return listen<ConnectionMode>('connection-mode', (e) => cb(e.payload));
+  return getCurrentWebview().listen<ConnectionMode>('connection-mode', (e) => cb(e.payload));
 }
