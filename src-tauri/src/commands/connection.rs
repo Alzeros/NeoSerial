@@ -1,9 +1,14 @@
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use tauri::{State, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
+use tauri::{State, Emitter, WebviewUrl, WebviewWindowBuilder};
 
-use crate::connection::{ConnectionHandle, SerialParams, spawn_connection, WriteCommand, label_to_port, port_to_label};
+use crate::connection::{ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
 use crate::state::AppState;
+
+/// 副窗口自增序号:每开一个新窗口 +1,label = win-{n}。不绑 port——
+/// 窗口与连接解耦,用户在任何窗口都能选任意 port 连。
+static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 
 /// 解析目标端口:供 Tauri command / MCP 工具从 `connections` 取出唯一连接或校验指定端口。
 ///
@@ -132,18 +137,17 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
         let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
         conns.remove(port)
     };
-    // window_label 从 handle 拿(准确);handle 已不在(并发已断)则用 port_to_label 兜底。
-    let window_label = handle.as_ref()
-        .map(|h| h.window_label.clone())
-        .unwrap_or_else(|| crate::connection::port_to_label(port));
-    if let Some(handle) = handle {
-        let _ = handle.write_tx.send(WriteCommand::Close);
-        handle.running.store(false, std::sync::atomic::Ordering::SeqCst);
-        // 持锁(此处已释放 conns,用 handle.exit 的内部锁)等线程退出。
-        if let Ok(mut e) = handle.exit.0.lock() {
-            if !*e {
-                let _ = handle.exit.1.wait_timeout(e, std::time::Duration::from_secs(1));
-            }
+    let Some(handle) = handle else {
+        // 连接已不在(并发已断/重复 disconnect):无需清理,也无窗口可通知。
+        return Ok(());
+    };
+    let window_label = handle.window_label.clone();
+    let _ = handle.write_tx.send(WriteCommand::Close);
+    handle.running.store(false, std::sync::atomic::Ordering::SeqCst);
+    // 持锁(此处已释放 conns,用 handle.exit 的内部锁)等线程退出。
+    if let Ok(mut e) = handle.exit.0.lock() {
+        if !*e {
+            let _ = handle.exit.1.wait_timeout(e, std::time::Duration::from_secs(1));
         }
     }
     // 定向通知该连接归属的窗口:主动断开完成。spawn_connection 的监控线程也会发一条
@@ -169,50 +173,29 @@ pub fn list_ports() -> Result<Vec<String>, String> {
     Ok(list_ports_inner())
 }
 
-/// 内部:确保 `win-{port}` 窗口存在,不存在则创建。fire-and-forget 语义:
-/// connect 成功后调,窗口异步加载,不阻塞连接返回。已存在则跳过(幂等)。
+/// 前端调用:开一个新串口窗口(完整界面的复制品,空白未连接)。
+/// label = win-{自增序号},不绑 port——用户进去自己在左上角选端口/波特率再点连接。
 ///
-/// Windows 下建窗需在主线程,WebviewWindowBuilder::build() 内部已处理调度;
-/// 不在 connections 锁内调用(见 connect 注释)。
-pub fn ensure_port_window(app_handle: &tauri::AppHandle, port: &str) {
-    let label = port_to_label(port);
-    // 已存在则跳过:可能 MCP 与前端先后 connect 同一 port(contains_key 拦了重复连接,
-    // 但不同调用路径都走 ensure,幂等保护无妨)。
-    if app_handle.get_webview_window(&label).is_some() {
-        return;
-    }
-    let title = format!("NeoSerial - {}", port);
-    if let Err(e) = WebviewWindowBuilder::new(app_handle, &label, WebviewUrl::App("index.html".into()))
-        .title(&title)
-        .build()
-    {
-        log::warn!("[窗口] 建 {} 窗口失败(连接已建立,不影响操作): {}", label, e);
-    }
-}
-
-/// 前端调用:显式开一个新串口窗口(主窗口"打开新串口窗口"入口)。
-/// 与 connect 解耦——只建窗,不连接。新窗口加载后若该 port 已连(MCP 先连了)
-/// 则显示已连状态;未连则显示连接界面让用户配参连接。
+/// **必须 async fn**:Windows 下创建窗口的同步 command 会死锁(spec 警告)。
+/// async 让建窗在 Tauri 主线程异步执行,command 立即返回不阻塞。
 #[tauri::command]
-pub fn open_port_window(app_handle: tauri::AppHandle, port: String) -> Result<(), String> {
-    let label = port_to_label(&port);
-    if app_handle.get_webview_window(&label).is_some() {
-        return Err(format!("端口 {} 的窗口已打开", port));
-    }
-    let title = format!("NeoSerial - {}", port);
+pub async fn open_port_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+    let n = WINDOW_SEQ.fetch_add(1, AtomicOrdering::SeqCst);
+    let label = format!("win-{}", n);
     WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
-        .title(&title)
+        .title("NeoSerial")
         .build()
         .map_err(|e| format!("创建窗口失败: {}", e))?;
     Ok(())
 }
 
-/// 副窗口 onMount 调:按自己 label 反推 port,查 connections 返回本窗口连接状态。
-/// main 窗口(label="main")调用时返回 connected:false(主窗口状态由它自己 connect 流程管理)。
+/// 窗口 onMount 调:按本窗口 label 查"该窗口是否已连了某个 port"。
+/// 遍历 connections 找 window_label == 本窗口 label 的连接(MCP 可能先连了,
+/// 或窗口重连场景)。未找到返回未连占位。
 #[derive(serde::Serialize)]
 pub struct WindowConnState {
     pub ok: bool,
-    /// 本窗口对应的 port(None 表示 main 窗口,无固定 port 绑定)
+    /// 本窗口已连的 port(未连为 None)
     pub port: Option<String>,
     pub connected: bool,
     pub baud: Option<u32>,
@@ -224,18 +207,15 @@ pub struct WindowConnState {
 pub fn get_window_conn_state(
     state: State<'_, AppState>,
     webview_window: tauri::WebviewWindow,
-) -> Result<WindowConnState, String> {
+    ) -> Result<WindowConnState, String> {
     let label = webview_window.label().to_string();
-    let port = label_to_port(&label);
-    let Some(port) = port else {
-        // main 窗口:无固定 port,主窗口自己管理连接,这里返回未连占位
-        return Ok(WindowConnState { ok: true, port: None, connected: false, baud: None, tx_bytes: None, rx_bytes: None });
-    };
     let conns = state.connections.lock().map_err(|e| e.to_string())?;
-    match conns.get(&port) {
+    // 遍历找 window_label == 本窗口 label 的连接
+    let found = conns.values().find(|h| h.window_label == label);
+    match found {
         Some(h) => Ok(WindowConnState {
             ok: true,
-            port: Some(port),
+            port: Some(h.port.clone()),
             connected: true,
             baud: Some(h.baud),
             tx_bytes: Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
@@ -243,7 +223,7 @@ pub fn get_window_conn_state(
         }),
         None => Ok(WindowConnState {
             ok: true,
-            port: Some(port),
+            port: None,
             connected: false,
             baud: None,
             tx_bytes: None,
@@ -265,17 +245,15 @@ pub fn reset_stats(
         resolve_port(&conns, port)?
     };
     // resolve 与清零分两段持锁:resolve 放锁后,连接若在此间隙被 disconnect,
-    // 下方 get 返回 None,跳过清零(幂等,仅 emit 0)。这是可接受的弱一致(reset_stats 非关键路径)。
+    // 下方 get 返回 None,跳过清零+emit(幂等,前端已 0)。弱一致可接受(reset_stats 非关键路径)。
     let conns = state.connections.lock().map_err(|e| e.to_string())?;
-    let window_label = conns.get(&resolved)
-        .map(|h| h.window_label.clone())
-        .unwrap_or_else(|| crate::connection::port_to_label(&resolved));
     if let Some(handle) = conns.get(&resolved) {
+        let window_label = handle.window_label.clone();
         handle.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
         handle.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
+        let _ = app_handle.emit_to(&window_label, "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
+        let _ = app_handle.emit_to(&window_label, "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
     }
-    let _ = app_handle.emit_to(&window_label, "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
-    let _ = app_handle.emit_to(&window_label, "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
     Ok(())
 }
 

@@ -68,20 +68,14 @@
 <div class="layout-fixed flex items-end border-b px-5 py-4" style="background: var(--background-elevated); border-color: var(--border);">
   <!-- 左侧：所有配置项分组（紧凑间距，左对齐紧凑排列，不拉伸） -->
   <div class="config-group" style="margin-right: 24px; gap: 12px;">
-    <!-- 端口号:副窗口(windowPort 从 label 反推)锁定自己的 port;main 可选 -->
+    <!-- 端口号(所有窗口都可选,连不同 port) -->
     <label class="control-group">
       <span>端口号</span>
-      {#if windowPort.value}
-        <select style="width: 100px;" value={windowPort.value} disabled>
-          <option value={windowPort.value}>{windowPort.value}</option>
-        </select>
-      {:else}
-        <select style="width: 100px;" bind:value={connectionParams.port} disabled={connected.value}>
-          {#each availablePorts.value as p}
-            <option value={p}>{p}</option>
-          {/each}
-        </select>
-      {/if}
+      <select style="width: 100px;" bind:value={connectionParams.port} disabled={connected.value}>
+        {#each availablePorts.value as p}
+          <option value={p}>{p}</option>
+        {/each}
+      </select>
     </label>
 
     <!-- 波特率 -->

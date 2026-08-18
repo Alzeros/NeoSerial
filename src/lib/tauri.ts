@@ -44,9 +44,9 @@ export async function resetStats(port: string): Promise<void> {
   await invoke('reset_stats', { port });
 }
 
-/** 显式开一个新串口窗口(主窗口"打开新串口窗口"入口)。只建窗,不连接。 */
-export async function openPortWindow(port: string): Promise<void> {
-  await invoke('open_port_window', { port });
+/** 开一个新串口窗口(完整界面的复制品,空白未连接)。用户进去自己选端口连接。 */
+export async function openPortWindow(): Promise<void> {
+  await invoke('open_port_window');
 }
 
 /** 副窗口 onMount 调:按本窗口 label 反推 port,查连接状态。 */

@@ -120,9 +120,10 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     if conns.contains_key(&req.port) {
         return Err(ErrorResp::new(format!("端口 {} 已连接", req.port)));
     }
-    // MCP connect 建的连接归属 win-{port} 窗口(ensure_port_window 会建它)。
-    // 事件 emit_to 到该窗口,与前端在副窗口连的行为一致。
-    let window_label = crate::connection::port_to_label(&req.port);
+    // MCP connect 的 window_label = mcp-{port}:不对应真实窗口(emit_to 到此 label 是 no-op)。
+    // agent 经 send_and_read/get_history_since 拿数据,不依赖 GUI 事件;用户想看自己开窗口连。
+    // 这样 MCP connect 不建窗(避免同步建窗死锁),与前端 connect 完全解耦。
+    let window_label = format!("mcp-{}", req.port);
     let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label) {
         Ok(h) => h,
         Err(e) => {
@@ -148,9 +149,6 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     if let Some(reg) = shared.registry.as_ref() {
         let _ = reg.update_connections(snapshot);
     }
-    // fire-and-forget 建窗:与 Tauri connect 一致,连接成功后开 win-{port} 窗口。
-    // agent 不依赖窗口,建窗失败不阻断 connect。
-    crate::commands::connection::ensure_port_window(&shared.app_handle, &req.port);
     Ok(ConnectResp { ok: true, mode: Some(mode) })
 }
 
