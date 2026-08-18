@@ -2,6 +2,13 @@
   import { availablePorts, connectionParams, connected, presetBaudRates, windowPort } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
 
+  // 局部错误提示(端口已连接/被占用),4s 自动消失。不依赖全局 store 避免跨窗口响应性问题。
+  let connErr = $state<string | null>(null);
+  function showErr(msg: string) {
+    connErr = msg;
+    setTimeout(() => { connErr = null; }, 4000);
+  }
+
   // 波特率下拉项 = 预设波特率（来自设置，持久化）
   const baudRates = $derived(presetBaudRates.value.map((b) => String(b)));
   const dataBitsOpts = [{ l: '5', v: 'Five' }, { l: '6', v: 'Six' }, { l: '7', v: 'Seven' }, { l: '8', v: 'Eight' }];
@@ -28,9 +35,11 @@
     const baud = Number(baudRateStr);
     // 波特率为空/非法时拒绝连接，避免 0 波特率下发到后端
     if (!baud || baud <= 0) return;
-    // 副窗口(windowPort 已从 label 反推)锁定连自己的 port;main(windowPort=null)用用户选的 port。
-    const targetPort = windowPort.value ?? connectionParams.port;
+    // 始终用用户在下拉框选的 port(窗口不绑 port,每次连接前重新选)。
+    // windowPort 只用于"已连接后"定位 send/disconnect,连接前用 connectionParams.port。
+    const targetPort = connectionParams.port;
     if (!targetPort) return;
+    connErr = null;
     try {
       await connect({
         port: targetPort,
@@ -41,7 +50,9 @@
         flow_control: connectionParams.flowControl,
       });
     } catch (e) {
-      console.error('连接失败:', e);
+      console.error('[connect] 失败:', e);
+      const msg = typeof e === 'string' ? e : e instanceof Error ? e.message : String(e);
+      showErr(msg);
     }
   }
 
@@ -65,7 +76,7 @@
   });
 </script>
 
-<div class="layout-fixed flex items-end border-b px-5 py-4" style="background: var(--background-elevated); border-color: var(--border);">
+<div class="layout-fixed relative flex items-end border-b px-5 py-4" style="background: var(--background-elevated); border-color: var(--border);">
   <!-- 左侧：所有配置项分组（紧凑间距，左对齐紧凑排列，不拉伸） -->
   <div class="config-group" style="margin-right: 24px; gap: 12px;">
     <!-- 端口号(所有窗口都可选,连不同 port) -->
@@ -128,6 +139,15 @@
       </select>
     </label>
   </div>
+
+  <!-- 连接错误提示(端口已连接/被占用等):absolute 定位在连接按钮正下方,淡红底深红字 -->
+  {#if connErr}
+    <div class="absolute right-5 top-full mt-1 z-[200] px-3 py-1.5 rounded-md text-[12px] shadow-lg flex items-center gap-1.5 whitespace-nowrap"
+         style="background: #fee2e2; color: #b91c1c;">
+      <span>⚠</span>
+      <span>{connErr}</span>
+    </div>
+  {/if}
 
   <!-- 右侧：连接/断开按钮（ml-auto 推至最右，与下拉框底部对齐） -->
   <div class="flex-shrink-0 ml-auto">

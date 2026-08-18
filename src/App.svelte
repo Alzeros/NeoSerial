@@ -184,9 +184,11 @@
       connected.value = s.connected;
       currentPort.value = s.port;
       // windowPort 跟随当前连接的 port:连接成功时锁定,供所有 invoke(send/disconnect/sequence)定位连接。
-      // main 连的 port 不固定(可断开重连别的),副窗口连自己的固定 port。
+      // 断开时清空,避免下次连接用残留 windowPort 连错端口(用户会重新选 port)。
       if (s.connected && s.port) {
         windowPort.value = s.port;
+      } else {
+        windowPort.value = null;
       }
       // 连接成功时回填端口/波特率下拉框——MCP connect 走后端,顶部的 connectionParams
       // 不会自动更新,这里同步避免"连了 COM2 但下拉框还显 COM1"。

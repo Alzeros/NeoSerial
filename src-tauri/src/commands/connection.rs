@@ -178,12 +178,19 @@ pub fn list_ports() -> Result<Vec<String>, String> {
 ///
 /// **必须 async fn**:Windows 下创建窗口的同步 command 会死锁(spec 警告)。
 /// async 让建窗在 Tauri 主线程异步执行,command 立即返回不阻塞。
+///
+/// 窗口配置与 main 一致(tauri.conf.json):尺寸 1216x750、minWidth 1216、
+/// decorations:false(用自定义 TitleBar,否则会有两排窗口按钮)。
 #[tauri::command]
 pub async fn open_port_window(app_handle: tauri::AppHandle) -> Result<(), String> {
     let n = WINDOW_SEQ.fetch_add(1, AtomicOrdering::SeqCst);
     let label = format!("win-{}", n);
     WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
         .title("NeoSerial")
+        .inner_size(1216.0, 750.0)
+        .min_inner_size(1216.0, 500.0)
+        .decorations(false)
+        .resizable(true)
         .build()
         .map_err(|e| format!("创建窗口失败: {}", e))?;
     Ok(())
