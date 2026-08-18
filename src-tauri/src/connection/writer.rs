@@ -9,6 +9,7 @@ use crate::buffer::log_line::{Dir, LogLine};
 use crate::buffer::rx_history::RxHistory;
 use crate::connection::WriteCommand;
 use crate::connection::port_wrapper::PortWriter;
+use crate::connection::port_to_label;
 use crate::state::AppState;
 use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
@@ -42,7 +43,7 @@ pub fn spawn_writer(
                     match port.write_all(&data) {
                         Ok(_) => {
                             let total = tx_bytes.fetch_add(data.len() as u64, std::sync::atomic::Ordering::SeqCst) + data.len() as u64;
-                            let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
+                            let _ = app_handle.emit_to(port_to_label(&port_name), "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
 
                             if emit_line {
                                 // 从 state 读取显示配置和文件日志 sender
@@ -64,7 +65,7 @@ pub fn spawn_writer(
                                 let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
                                 if log_send {
                                     let line = LogLine::new(now_local_ts(), Dir::Tx, data.clone(), &[]);
-                                    let _ = app_handle.emit("tx-line", line.clone());
+                                    let _ = app_handle.emit_to(port_to_label(&port_name), "tx-line", line.clone());
                                     // 喂 per-connection 收发历史(tx)。Send 分支(send_file)不经 emit_tx_line,
                                     // 这里补 push,让 get_history_since 也能看到文件发送的 Tx。
                                     // SendSilent 不走这(其 Tx 由 emit_tx_line 已 push)。
@@ -82,13 +83,13 @@ pub fn spawn_writer(
                             // 共享模式下锁错误不致命，继续运行
                             if let PortWriter::Shared(_) = port {
                                 if e.kind() == std::io::ErrorKind::Other {
-                                    let _ = app_handle.emit("error", crate::connection::ErrorEvent {
+                                    let _ = app_handle.emit_to(port_to_label(&port_name), "error", crate::connection::ErrorEvent {
                                         message: format!("写入端口锁错误: {}", e),
                                     });
                                     continue;
                                 }
                             }
-                            let _ = app_handle.emit("error", crate::connection::ErrorEvent {
+                            let _ = app_handle.emit_to(port_to_label(&port_name), "error", crate::connection::ErrorEvent {
                                 message: format!("发送失败: {}", e),
                             });
                         }

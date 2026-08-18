@@ -9,7 +9,7 @@ use tauri::{State, Emitter};
 use crate::state::AppState;
 use crate::commands::connection::resolve_port;
 use crate::commands::send::emit_tx_line;
-use crate::connection::WriteCommand;
+use crate::connection::{WriteCommand, port_to_label};
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
 
 #[derive(Clone, Serialize)]
@@ -102,7 +102,7 @@ pub fn sequence_run(
                     continue;
                 }
 
-                let _ = app_handle.emit("sequence-progress", SequenceProgress {
+                let _ = app_handle.emit_to(port_to_label(&port), "sequence-progress", SequenceProgress {
                     row: i + 1,
                     total: commands.len(),
                 });
@@ -125,7 +125,7 @@ pub fn sequence_run(
                     // + 文件日志,与 send 命令同一逻辑。log_send=false 时不回显/记录。
                     // (Task 2 deferred minor:原内联逻辑不 push Tx 到 rx_history,
                     //  导致 sequence 发送的命令在 get_history_since 不可见,已修。)
-                    emit_tx_line(&app_handle, &rx_history, data.clone());
+                    emit_tx_line(&app_handle, &rx_history, &port, data.clone());
                     // 塞 channel,writer 异步写(SendSilent:不 emit,emit_tx_line 已 emit)
                     let _ = write_tx.send(WriteCommand::SendSilent(data));
                 }
@@ -143,7 +143,7 @@ pub fn sequence_run(
             }
         }
 
-        let _ = app_handle.emit("sequence-done", SequenceDone { aborted });
+        let _ = app_handle.emit_to(port_to_label(&port), "sequence-done", SequenceDone { aborted });
         // _guard drop 在此:remove(&port)
     });
 

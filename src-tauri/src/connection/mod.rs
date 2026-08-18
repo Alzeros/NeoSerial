@@ -13,6 +13,20 @@ use tauri::Emitter;
 use crate::buffer::rx_history::RxHistory;
 use crate::config::settings::{DataBits, FlowControl, Parity, StopBits};
 
+/// 窗口 label 前缀。多窗口场景下每个连接对应一个 webview 窗口,label 固定规则
+/// `win-{port}`(如 `win-COM3`),port 与 label 双向推导,不维护映射表。
+const WIN_LABEL_PREFIX: &str = "win-";
+
+/// port → 窗口 label:`COM3` → `win-COM3`。
+pub fn port_to_label(port: &str) -> String {
+    format!("{}{}", WIN_LABEL_PREFIX, port)
+}
+
+/// 窗口 label → port:`win-COM3` → `Some(COM3)`;非 `win-` 前缀(main 窗口)返回 None。
+pub fn label_to_port(label: &str) -> Option<String> {
+    label.strip_prefix(WIN_LABEL_PREFIX).map(|s| s.to_string())
+}
+
 /// 发送到写线程的命令。
 pub enum WriteCommand {
     Send(Vec<u8>),
@@ -212,8 +226,8 @@ pub fn spawn_connection(
         }
     };
 
-    // 发送连接模式事件
-    let _ = app_handle.emit("connection-mode", ConnectionMode { mode: mode_str.clone() });
+    // 发送连接模式事件(定向到该 port 窗口)
+    let _ = app_handle.emit_to(port_to_label(&params.port), "connection-mode", ConnectionMode { mode: mode_str.clone() });
 
     // 监控线程：等待读/写线程都退出后，清理状态并通知前端
     let port_name = params.port.clone();
@@ -230,19 +244,47 @@ pub fn spawn_connection(
             *e = true;
             exit_clone.1.notify_all();
         }
-        let _ = app_handle_clone.emit("connection-state", ConnectionState {
+        // 定向通知该 port 窗口:连接已断开(线程退出,可能是被动断开如拔线)
+        let _ = app_handle_clone.emit_to(port_to_label(&port_name), "connection-state", ConnectionState {
             connected: false,
             port: Some(port_name),
             baud_rate: None,
         });
     });
 
-    // 发送连接成功事件
-    let _ = app_handle.emit("connection-state", ConnectionState {
+    // 发送连接成功事件(定向到该 port 窗口)
+    let _ = app_handle.emit_to(port_to_label(&params.port), "connection-state", ConnectionState {
         connected: true,
         port: Some(params.port.clone()),
         baud_rate: Some(params.baud_rate),
     });
 
     Ok((handle, mode_str))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_port_to_label() {
+        assert_eq!(port_to_label("COM3"), "win-COM3");
+        assert_eq!(port_to_label("COM12"), "win-COM12");
+    }
+
+    #[test]
+    fn test_label_to_port() {
+        assert_eq!(label_to_port("win-COM3"), Some("COM3".to_string()));
+        assert_eq!(label_to_port("win-COM12"), Some("COM12".to_string()));
+        // main 窗口 label 无 win- 前缀,返回 None
+        assert_eq!(label_to_port("main"), None);
+        assert_eq!(label_to_port(""), None);
+    }
+
+    #[test]
+    fn test_roundtrip() {
+        for port in ["COM1", "COM3", "COM12", "COM255"] {
+            assert_eq!(label_to_port(&port_to_label(port)), Some(port.to_string()));
+        }
+    }
 }

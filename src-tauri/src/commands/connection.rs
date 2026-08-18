@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 
-use tauri::{State, Emitter};
+use tauri::{State, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::connection::{ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
+use crate::connection::{ConnectionHandle, SerialParams, spawn_connection, WriteCommand, label_to_port, port_to_label};
 use crate::state::AppState;
 
 /// 解析目标端口:供 Tauri command / MCP 工具从 `connections` 取出唯一连接或校验指定端口。
@@ -84,7 +84,7 @@ pub fn connect(
     if conns.contains_key(&port) {
         return Err(format!("端口 {} 已连接", port));
     }
-    let (handle, _mode) = match spawn_connection(params, app_handle) {
+    let (handle, _mode) = match spawn_connection(params, app_handle.clone()) {
         Ok(h) => h,
         Err(e) => {
             // 端口被占用类:Windows "Access is denied" / "being used by another process"
@@ -101,7 +101,12 @@ pub fn connect(
         }
     };
     conns.insert(port.clone(), handle);
-    // conns 锁在函数末尾随作用域释放
+    // 锁释放:建窗不能持 connections 锁(WebviewWindowBuilder 可能调度到主线程,持锁有死锁风险)。
+    drop(conns);
+    // fire-and-forget 建窗:连接已同步写入 connections,agent/前端立即可操作,不依赖窗口。
+    // 已存在则跳过(同 port 重复 connect 不会发生——contains_key 已拦,但 MCP 与前端可能先后连同一
+    // 已连端口以外的场景,幂等保护无妨)。建窗失败不阻断 connect(窗口只是 GUI 可见性载体)。
+    ensure_port_window(&app_handle, &port);
     Ok(())
 }
 
@@ -111,13 +116,20 @@ pub fn disconnect(
     app_handle: tauri::AppHandle,
     port: Option<String>,
 ) -> Result<(), String> {
-    // 先从 map 取出 handle 并放锁,再等 exit:
-    // 持 connections 锁等线程退出(最多 1s)会阻塞所有其他 connect/disconnect/send 操作,
-    // 死锁风险(尤其 connect 也持此锁)。exit 的 Condvar 用的是 handle.exit 内部锁,与 connections 锁无关。
+    let resolved = {
+        let conns = state.connections.lock().map_err(|e| e.to_string())?;
+        resolve_port(&conns, port)?
+    };
+    disconnect_port(&state, &app_handle, &resolved)
+}
+
+/// 内部:断开指定 port 的连接(已解析 port)。供 disconnect command 与窗口关闭
+/// (CloseRequested)复用。取 handle 放锁后再等线程退出(持 connections 锁等 1s
+/// 会阻塞所有其他操作,死锁风险——exit 用 handle.exit 内部锁,与 connections 锁无关)。
+pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &str) -> Result<(), String> {
     let handle = {
         let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
-        let resolved = resolve_port(&conns, port)?;
-        conns.remove(&resolved)
+        conns.remove(port)
     };
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
@@ -129,9 +141,12 @@ pub fn disconnect(
             }
         }
     }
-    let _ = app_handle.emit("connection-state", crate::connection::ConnectionState {
+    // 定向通知该 port 窗口:主动断开完成。spawn_connection 的监控线程也会发一条
+    // connected:false,但那是线程退净后发的;这里已同步等过线程退出,
+    // 先发一条让窗口即时响应(幂等,前端取 connected:false 即可)。
+    let _ = app_handle.emit_to(crate::connection::port_to_label(port), "connection-state", crate::connection::ConnectionState {
         connected: false,
-        port: None,
+        port: Some(port.to_string()),
         baud_rate: None,
     });
     Ok(())
@@ -147,6 +162,89 @@ pub fn list_ports_inner() -> Vec<String> {
 #[tauri::command]
 pub fn list_ports() -> Result<Vec<String>, String> {
     Ok(list_ports_inner())
+}
+
+/// 内部:确保 `win-{port}` 窗口存在,不存在则创建。fire-and-forget 语义:
+/// connect 成功后调,窗口异步加载,不阻塞连接返回。已存在则跳过(幂等)。
+///
+/// Windows 下建窗需在主线程,WebviewWindowBuilder::build() 内部已处理调度;
+/// 不在 connections 锁内调用(见 connect 注释)。
+pub fn ensure_port_window(app_handle: &tauri::AppHandle, port: &str) {
+    let label = port_to_label(port);
+    // 已存在则跳过:可能 MCP 与前端先后 connect 同一 port(contains_key 拦了重复连接,
+    // 但不同调用路径都走 ensure,幂等保护无妨)。
+    if app_handle.get_webview_window(&label).is_some() {
+        return;
+    }
+    let title = format!("NeoSerial - {}", port);
+    if let Err(e) = WebviewWindowBuilder::new(app_handle, &label, WebviewUrl::App("index.html".into()))
+        .title(&title)
+        .build()
+    {
+        log::warn!("[窗口] 建 {} 窗口失败(连接已建立,不影响操作): {}", label, e);
+    }
+}
+
+/// 前端调用:显式开一个新串口窗口(主窗口"打开新串口窗口"入口)。
+/// 与 connect 解耦——只建窗,不连接。新窗口加载后若该 port 已连(MCP 先连了)
+/// 则显示已连状态;未连则显示连接界面让用户配参连接。
+#[tauri::command]
+pub fn open_port_window(app_handle: tauri::AppHandle, port: String) -> Result<(), String> {
+    let label = port_to_label(&port);
+    if app_handle.get_webview_window(&label).is_some() {
+        return Err(format!("端口 {} 的窗口已打开", port));
+    }
+    let title = format!("NeoSerial - {}", port);
+    WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
+        .title(&title)
+        .build()
+        .map_err(|e| format!("创建窗口失败: {}", e))?;
+    Ok(())
+}
+
+/// 副窗口 onMount 调:按自己 label 反推 port,查 connections 返回本窗口连接状态。
+/// main 窗口(label="main")调用时返回 connected:false(主窗口状态由它自己 connect 流程管理)。
+#[derive(serde::Serialize)]
+pub struct WindowConnState {
+    pub ok: bool,
+    /// 本窗口对应的 port(None 表示 main 窗口,无固定 port 绑定)
+    pub port: Option<String>,
+    pub connected: bool,
+    pub baud: Option<u32>,
+    pub tx_bytes: Option<u64>,
+    pub rx_bytes: Option<u64>,
+}
+
+#[tauri::command]
+pub fn get_window_conn_state(
+    state: State<'_, AppState>,
+    webview_window: tauri::WebviewWindow,
+) -> Result<WindowConnState, String> {
+    let label = webview_window.label().to_string();
+    let port = label_to_port(&label);
+    let Some(port) = port else {
+        // main 窗口:无固定 port,主窗口自己管理连接,这里返回未连占位
+        return Ok(WindowConnState { ok: true, port: None, connected: false, baud: None, tx_bytes: None, rx_bytes: None });
+    };
+    let conns = state.connections.lock().map_err(|e| e.to_string())?;
+    match conns.get(&port) {
+        Some(h) => Ok(WindowConnState {
+            ok: true,
+            port: Some(port),
+            connected: true,
+            baud: Some(h.baud),
+            tx_bytes: Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+            rx_bytes: Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
+        }),
+        None => Ok(WindowConnState {
+            ok: true,
+            port: Some(port),
+            connected: false,
+            baud: None,
+            tx_bytes: None,
+            rx_bytes: None,
+        }),
+    }
 }
 
 /// 清零收发字节统计。把累计器置 0，并 emit tx-update/rx-update = 0 让前端同步。
@@ -168,8 +266,8 @@ pub fn reset_stats(
         handle.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
         handle.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
     }
-    let _ = app_handle.emit("tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
-    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
+    let _ = app_handle.emit_to(crate::connection::port_to_label(&resolved), "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
+    let _ = app_handle.emit_to(crate::connection::port_to_label(&resolved), "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
     Ok(())
 }
 

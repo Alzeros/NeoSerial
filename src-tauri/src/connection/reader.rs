@@ -8,12 +8,14 @@ use crate::buffer::log_line::{Dir, LogLine};
 use crate::buffer::rx_history::RxHistory;
 use crate::connection::line_assembler::LineAssembler;
 use crate::connection::port_wrapper::PortReader;
+use crate::connection::port_to_label;
 use crate::state::AppState;
 use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
 /// 把积攒的行 flush 出去：emit rx-line 给前端 + 送文件日志（若正在记录）。
-fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_history: &RxHistory) {
+/// rx-line 定向到该 port 的窗口(emit_to),多窗口下不串流。
+fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_history: &RxHistory, port_name: &str) {
     if lines.is_empty() {
         return;
     }
@@ -33,9 +35,10 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_histo
         }
         None => (None, None),
     };
+    let label = port_to_label(port_name);
 
     for line in lines.drain(..) {
-        let _ = app_handle.emit("rx-line", line.clone());
+        let _ = app_handle.emit_to(&label, "rx-line", line.clone());
         // 喂后端收发历史(rx),供 MCP 阻塞读/历史查询。push 触发 Notify 唤醒等待的 send_and_read。
         rx_history.push(crate::buffer::log_line::Dir::Rx, line.clone());
         if let (Some(c), Some(tx)) = (&cfg, &sender) {
@@ -50,7 +53,7 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_histo
 /// 把 LineAssembler 中不换行的残尾（如 shell 的 "> " 提示符）补打为一行。
 /// 残尾没有换行符，正常切行永远等不到，需在设备输出间歇（读超时）时主动取出。
 /// 复用 flush_lines：统一处理前端 emit + 文件日志。
-fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory) {
+fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, port_name: &str) {
     let Some(tail) = assembler.flush() else {
         return;
     };
@@ -60,7 +63,7 @@ fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHand
     let ts = now_local_ts();
     let line = LogLine::new(ts, Dir::Rx, tail, &[]);
     pending_lines.push(line);
-    flush_lines(app_handle, pending_lines, rx_history);
+    flush_lines(app_handle, pending_lines, rx_history, port_name);
 }
 
 /// 启动串口读取线程。
@@ -93,36 +96,36 @@ pub fn spawn_reader(
 
                     // 批量 emit：攒够 16 行或超过 5ms
                     if pending_lines.len() >= 16 || last_emit.elapsed() > std::time::Duration::from_millis(5) {
-                        flush_lines(&app_handle, &mut pending_lines, &rx_history);
+                        flush_lines(&app_handle, &mut pending_lines, &rx_history, &port_name);
                         last_emit = Instant::now();
                     }
 
-                    // 定期发送 rx-update 事件
+                    // 定期发送 rx-update 事件(定向到该 port 窗口)
                     let total = rx_bytes.load(std::sync::atomic::Ordering::SeqCst);
-                    let _ = app_handle.emit("rx-update", crate::connection::RxUpdate { total, port: port_name.clone() });
+                    let _ = app_handle.emit_to(port_to_label(&port_name), "rx-update", crate::connection::RxUpdate { total, port: port_name.clone() });
                 }
                 Ok(_) => {
                     // 超时：有数据也可能在等下一批，先 flush 已有行
-                    flush_lines(&app_handle, &mut pending_lines, &rx_history);
+                    flush_lines(&app_handle, &mut pending_lines, &rx_history, &port_name);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     // 超时（读超时到）：此刻通常意味着设备输出告一段落，
                     // 把不换行的残尾（如 shell 的 "> " 提示符）也补打出来，
                     // 避免残留行滞留到下一批、带上下一个时间戳。
-                    flush_lines(&app_handle, &mut pending_lines, &rx_history);
-                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history);
+                    flush_lines(&app_handle, &mut pending_lines, &rx_history, &port_name);
+                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history, &port_name);
                 }
                 Err(e) => {
                     // 共享模式下锁错误不致命，继续运行
                     if let PortReader::Shared(_) = port {
                         if e.kind() == std::io::ErrorKind::Other {
-                            let _ = app_handle.emit("error", crate::connection::ErrorEvent {
+                            let _ = app_handle.emit_to(port_to_label(&port_name), "error", crate::connection::ErrorEvent {
                                 message: format!("读取端口锁错误: {}", e),
                             });
                             continue;
                         }
                     }
-                    let _ = app_handle.emit("error", crate::connection::ErrorEvent {
+                    let _ = app_handle.emit_to(port_to_label(&port_name), "error", crate::connection::ErrorEvent {
                         message: format!("串口读取错误: {}", e),
                     });
                     running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -131,6 +134,6 @@ pub fn spawn_reader(
             }
         }
         // 线程退出前把残余行 flush
-        flush_lines(&app_handle, &mut pending_lines, &rx_history);
+        flush_lines(&app_handle, &mut pending_lines, &rx_history, &port_name);
     })
 }

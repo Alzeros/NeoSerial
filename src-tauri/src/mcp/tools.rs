@@ -87,7 +87,8 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
             }
         }
     }
-    let _ = app_handle.emit(
+    let _ = app_handle.emit_to(
+        crate::connection::port_to_label(&req.port),
         "connection-state",
         crate::connection::ConnectionState { connected: false, port: Some(req.port.clone()), baud_rate: None },
     );
@@ -144,6 +145,9 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     if let Some(reg) = shared.registry.as_ref() {
         let _ = reg.update_connections(snapshot);
     }
+    // fire-and-forget 建窗:与 Tauri connect 一致,连接成功后开 win-{port} 窗口。
+    // agent 不依赖窗口,建窗失败不阻断 connect。
+    crate::commands::connection::ensure_port_window(&shared.app_handle, &req.port);
     Ok(ConnectResp { ok: true, mode: Some(mode) })
 }
 
@@ -280,7 +284,7 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
 fn do_send(shared: &McpShared, port: &str, data: Vec<u8>) -> Result<Arc<RxHistory>, String> {
     let conn = shared.connections.lock().map_err(|e| e.to_string())?;
     let handle = conn.get(port).ok_or_else(|| format!("端口 {} 未连接", port))?;
-    emit_tx_line(&shared.app_handle, &handle.rx_history, data.clone());
+    emit_tx_line(&shared.app_handle, &handle.rx_history, port, data.clone());
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
     Ok(handle.rx_history.clone())
 }
