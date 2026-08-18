@@ -8,7 +8,7 @@ mod state;
 mod util;
 
 use tauri::Manager;
-use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state};
+use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands};
 use commands::logging::{start_logging, stop_logging, is_logging};
@@ -166,6 +166,7 @@ pub fn run() {
             reset_stats,
             open_port_window,
             get_window_conn_state,
+            has_active_sessions,
             send,
             send_file,
             get_settings,

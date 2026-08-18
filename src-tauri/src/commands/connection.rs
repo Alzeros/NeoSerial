@@ -188,6 +188,28 @@ pub fn list_ports() -> Result<Vec<String>, String> {
     Ok(list_ports_inner())
 }
 
+/// 查询是否有"需要二次确认关闭"的活跃会话:其他可见窗口 + 活跃连接。
+/// 供 main 窗口关闭按钮判断是否弹确认(关 main 会断所有连接+退 app+停 MCP)。
+#[derive(serde::Serialize)]
+pub struct ActiveSessions {
+    /// 其他可见窗口数(非 main 的 win-* 窗口)
+    pub other_windows: usize,
+    /// 活跃串口连接数
+    pub connections: usize,
+}
+
+#[tauri::command]
+pub fn has_active_sessions(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<ActiveSessions, String> {
+    let connections = state.connections.lock().map_err(|e| e.to_string())?.len();
+    // 其他可见窗口:非 main 的 webview 窗口
+    use tauri::Manager;
+    let other_windows = app_handle.webview_windows()
+        .into_iter()
+        .filter(|(label, _)| label != "main")
+        .count();
+    Ok(ActiveSessions { other_windows, connections })
+}
+
 /// 前端调用:开一个新串口窗口(完整界面的复制品,空白未连接)。
 /// label = win-{自增序号},不绑 port——用户进去自己在左上角选端口/波特率再点连接。
 ///

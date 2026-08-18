@@ -54,6 +54,15 @@ export async function getWindowConnState(): Promise<WindowConnState> {
   return await invoke<WindowConnState>('get_window_conn_state');
 }
 
+/** 查活跃会话(其他窗口数 + 连接数),供 main 关闭二次确认。 */
+export interface ActiveSessions {
+  other_windows: number;
+  connections: number;
+}
+export async function hasActiveSessions(): Promise<ActiveSessions> {
+  return await invoke<ActiveSessions>('has_active_sessions');
+}
+
 // ============ MCP ============
 
 export interface McpStatus {

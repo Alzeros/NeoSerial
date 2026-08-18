@@ -1,11 +1,20 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
+  import { ask } from '@tauri-apps/plugin-dialog';
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
-  import { scriptPanelOpen, toggleScriptPanel } from '$lib/stores';
-  import { openPortWindow } from '$lib/tauri';
+  import { scriptPanelOpen, toggleScriptPanel, currentPort } from '$lib/stores';
+  import { openPortWindow, hasActiveSessions } from '$lib/tauri';
   import SettingsDialog from '$components/SettingsDialog.svelte';
 
   const appWindow = getCurrentWindow();
+  // 副窗口(label=win-*)顶部加提示区分 main;连了端口后显示 port
+  const isMain = getCurrentWebview().label === 'main';
+  const titleText = $derived(
+    isMain ? 'NeoSerial'
+    : currentPort.value ? `NeoSerial · ${currentPort.value}`
+    : 'NeoSerial · 新窗口'
+  );
 
   let alwaysOnTop = $state<{ value: boolean }>({ value: false });
   let settingsDialog: SettingsDialog;
@@ -19,6 +28,21 @@
   }
 
   async function handleClose() {
+    // main 窗口:有其他窗口 或 活跃连接时,二次确认(关 main 会断所有连接+退 app+停 MCP)
+    if (isMain) {
+      const { other_windows, connections } = await hasActiveSessions();
+      if (other_windows > 0 || connections > 0) {
+        const detail = [
+          other_windows > 0 ? `${other_windows} 个其他窗口` : '',
+          connections > 0 ? `${connections} 个串口连接` : '',
+        ].filter(Boolean).join('、');
+        const confirmed = await ask(
+          `关闭主窗口会同时关闭${detail}并停止 MCP 服务,确定吗?`,
+          { title: '关闭 NeoSerial', kind: 'warning', okLabel: '关闭', cancelLabel: '取消' }
+        );
+        if (!confirmed) return;
+      }
+    }
     await appWindow.close();
   }
 
@@ -53,13 +77,13 @@
   class="flex items-center h-8 border-b border-[var(--border)] select-none"
   style="background: var(--background-elevated);"
 >
-  <!-- 左侧：应用名 + 拖动区域 -->
+  <!-- 左侧：应用名 + 拖动区域(main 显 NeoSerial;副窗口加提示/端口区分) -->
   <div
     data-tauri-drag-region
     class="flex-1 h-full flex items-center px-3 text-[13px] font-medium text-[var(--muted-foreground)]"
     ondblclick={handleTitleDblClick}
   >
-    NeoSerial
+    {titleText}
   </div>
 
   <!-- 新窗口按钮:开一个完整串口界面的复制品(空白未连接) -->
