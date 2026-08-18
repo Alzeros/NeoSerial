@@ -28,12 +28,12 @@
     const baud = Number(baudRateStr);
     // 波特率为空/非法时拒绝连接，避免 0 波特率下发到后端
     if (!baud || baud <= 0) return;
-    // 副窗口的 port 锁定为本窗口 label 反推的 windowPort,不允许连到别的 port
-    // (事件 emit_to(win-{windowPort}),连别的 port 会收不到该窗口事件)。
-    if (!windowPort.value) return;
+    // 副窗口(windowPort 已从 label 反推)锁定连自己的 port;main(windowPort=null)用用户选的 port。
+    const targetPort = windowPort.value ?? connectionParams.port;
+    if (!targetPort) return;
     try {
       await connect({
-        port: windowPort.value,
+        port: targetPort,
         baud_rate: baud,
         data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
@@ -68,12 +68,20 @@
 <div class="layout-fixed flex items-end border-b px-5 py-4" style="background: var(--background-elevated); border-color: var(--border);">
   <!-- 左侧：所有配置项分组（紧凑间距，左对齐紧凑排列，不拉伸） -->
   <div class="config-group" style="margin-right: 24px; gap: 12px;">
-    <!-- 端口号(副窗口锁定为本窗口 port,不可改) -->
+    <!-- 端口号:副窗口(windowPort 从 label 反推)锁定自己的 port;main 可选 -->
     <label class="control-group">
       <span>端口号</span>
-      <select style="width: 100px;" value={windowPort.value ?? connectionParams.port} disabled>
-        <option value={windowPort.value ?? connectionParams.port}>{windowPort.value ?? connectionParams.port}</option>
-      </select>
+      {#if windowPort.value}
+        <select style="width: 100px;" value={windowPort.value} disabled>
+          <option value={windowPort.value}>{windowPort.value}</option>
+        </select>
+      {:else}
+        <select style="width: 100px;" bind:value={connectionParams.port} disabled={connected.value}>
+          {#each availablePorts.value as p}
+            <option value={p}>{p}</option>
+          {/each}
+        </select>
+      {/if}
     </label>
 
     <!-- 波特率 -->

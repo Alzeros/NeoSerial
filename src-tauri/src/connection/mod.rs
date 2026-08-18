@@ -63,6 +63,10 @@ pub struct ConnectionHandle {
     /// 该连接的独立收发历史。reader push Rx,emit_tx_line/writer push Tx,
     /// MCP send_and_read/get_history_since 查询。per-connection 隔离,不串数据。
     pub rx_history: Arc<RxHistory>,
+    /// 该连接归属的窗口 label。reader/writer emit_to 用它定向事件:
+    /// 前端在 main 连 → "main";前端在副窗口连 → 该窗口 label;MCP connect → win-{port}。
+    /// 与 port 解耦:同一 port 在不同窗口连,事件发到各自窗口,不串。
+    pub window_label: String,
 }
 
 /// 发送给前端的 Tx 更新事件。
@@ -111,6 +115,7 @@ pub struct ConnectionMode {
 pub fn spawn_connection(
     params: SerialParams,
     app_handle: tauri::AppHandle,
+    window_label: String,
 ) -> Result<(ConnectionHandle, String), String> {
     let data_bits = match params.data_bits {
         DataBits::Five => serialport::DataBits::Five,
@@ -166,6 +171,7 @@ pub fn spawn_connection(
         port: params.port.clone(),
         baud: params.baud_rate,
         rx_history: rx_history.clone(),
+        window_label: window_label.clone(),
     };
 
     // 尝试克隆端口，失败则降级为共享模式
@@ -183,6 +189,7 @@ pub fn spawn_connection(
                 app_handle.clone(),
                 rx_history.clone(),
                 params.port.clone(),
+                window_label.clone(),
             );
 
             let w_handle = writer::spawn_writer(
@@ -193,6 +200,7 @@ pub fn spawn_connection(
                 app_handle.clone(),
                 rx_history.clone(),
                 params.port.clone(),
+                window_label.clone(),
             );
             
             (r_handle, w_handle, "independent".to_string())
@@ -210,6 +218,7 @@ pub fn spawn_connection(
                 app_handle.clone(),
                 rx_history.clone(),
                 params.port.clone(),
+                window_label.clone(),
             );
 
             let w_handle = writer::spawn_writer(
@@ -220,17 +229,19 @@ pub fn spawn_connection(
                 app_handle.clone(),
                 rx_history.clone(),
                 params.port.clone(),
+                window_label.clone(),
             );
             
             (r_handle, w_handle, "shared".to_string())
         }
     };
 
-    // 发送连接模式事件(定向到该 port 窗口)
-    let _ = app_handle.emit_to(port_to_label(&params.port), "connection-mode", ConnectionMode { mode: mode_str.clone() });
+    // 发送连接模式事件(定向到该连接归属的窗口)
+    let _ = app_handle.emit_to(&window_label, "connection-mode", ConnectionMode { mode: mode_str.clone() });
 
     // 监控线程：等待读/写线程都退出后，清理状态并通知前端
     let port_name = params.port.clone();
+    let window_label_clone = window_label.clone();
     let app_handle_clone = app_handle.clone();
     let running_clone = running.clone();
     let exit_clone = exit.clone();
@@ -244,16 +255,16 @@ pub fn spawn_connection(
             *e = true;
             exit_clone.1.notify_all();
         }
-        // 定向通知该 port 窗口:连接已断开(线程退出,可能是被动断开如拔线)
-        let _ = app_handle_clone.emit_to(port_to_label(&port_name), "connection-state", ConnectionState {
+        // 定向通知该连接归属的窗口:连接已断开(线程退出,可能是被动断开如拔线)
+        let _ = app_handle_clone.emit_to(&window_label_clone, "connection-state", ConnectionState {
             connected: false,
             port: Some(port_name),
             baud_rate: None,
         });
     });
 
-    // 发送连接成功事件(定向到该 port 窗口)
-    let _ = app_handle.emit_to(port_to_label(&params.port), "connection-state", ConnectionState {
+    // 发送连接成功事件(定向到该连接归属的窗口)
+    let _ = app_handle.emit_to(&window_label, "connection-state", ConnectionState {
         connected: true,
         port: Some(params.port.clone()),
         baud_rate: Some(params.baud_rate),

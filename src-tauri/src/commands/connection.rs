@@ -40,6 +40,7 @@ pub fn resolve_port(
 pub fn connect(
     state: State<'_, AppState>,
     app_handle: tauri::AppHandle,
+    webview_window: tauri::WebviewWindow,
     port: String,
     baudRate: u32,
     dataBits: String,
@@ -84,7 +85,10 @@ pub fn connect(
     if conns.contains_key(&port) {
         return Err(format!("端口 {} 已连接", port));
     }
-    let (handle, _mode) = match spawn_connection(params, app_handle.clone()) {
+    // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label)。
+    // reader/writer emit_to 用它定向事件,确保事件回到发起连接的窗口。
+    let window_label = webview_window.label().to_string();
+    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), window_label) {
         Ok(h) => h,
         Err(e) => {
             // 端口被占用类:Windows "Access is denied" / "being used by another process"
@@ -101,12 +105,9 @@ pub fn connect(
         }
     };
     conns.insert(port.clone(), handle);
-    // 锁释放:建窗不能持 connections 锁(WebviewWindowBuilder 可能调度到主线程,持锁有死锁风险)。
+    // 前端 connect 不建窗(用户在当前窗口操作,当前窗口就是界面)。
+    // 建窗只在:前端"开新窗口"按钮(open_port_window) + MCP connect(ensure_port_window)。
     drop(conns);
-    // fire-and-forget 建窗:连接已同步写入 connections,agent/前端立即可操作,不依赖窗口。
-    // 已存在则跳过(同 port 重复 connect 不会发生——contains_key 已拦,但 MCP 与前端可能先后连同一
-    // 已连端口以外的场景,幂等保护无妨)。建窗失败不阻断 connect(窗口只是 GUI 可见性载体)。
-    ensure_port_window(&app_handle, &port);
     Ok(())
 }
 
@@ -131,6 +132,10 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
         let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
         conns.remove(port)
     };
+    // window_label 从 handle 拿(准确);handle 已不在(并发已断)则用 port_to_label 兜底。
+    let window_label = handle.as_ref()
+        .map(|h| h.window_label.clone())
+        .unwrap_or_else(|| crate::connection::port_to_label(port));
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
         handle.running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -141,10 +146,10 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
             }
         }
     }
-    // 定向通知该 port 窗口:主动断开完成。spawn_connection 的监控线程也会发一条
+    // 定向通知该连接归属的窗口:主动断开完成。spawn_connection 的监控线程也会发一条
     // connected:false,但那是线程退净后发的;这里已同步等过线程退出,
     // 先发一条让窗口即时响应(幂等,前端取 connected:false 即可)。
-    let _ = app_handle.emit_to(crate::connection::port_to_label(port), "connection-state", crate::connection::ConnectionState {
+    let _ = app_handle.emit_to(&window_label, "connection-state", crate::connection::ConnectionState {
         connected: false,
         port: Some(port.to_string()),
         baud_rate: None,
@@ -262,12 +267,15 @@ pub fn reset_stats(
     // resolve 与清零分两段持锁:resolve 放锁后,连接若在此间隙被 disconnect,
     // 下方 get 返回 None,跳过清零(幂等,仅 emit 0)。这是可接受的弱一致(reset_stats 非关键路径)。
     let conns = state.connections.lock().map_err(|e| e.to_string())?;
+    let window_label = conns.get(&resolved)
+        .map(|h| h.window_label.clone())
+        .unwrap_or_else(|| crate::connection::port_to_label(&resolved));
     if let Some(handle) = conns.get(&resolved) {
         handle.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
         handle.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
     }
-    let _ = app_handle.emit_to(crate::connection::port_to_label(&resolved), "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
-    let _ = app_handle.emit_to(crate::connection::port_to_label(&resolved), "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
+    let _ = app_handle.emit_to(&window_label, "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
+    let _ = app_handle.emit_to(&window_label, "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
     Ok(())
 }
 
@@ -294,6 +302,7 @@ mod tests {
             port: port.to_string(),
             baud: 115200,
             rx_history: Arc::new(RxHistory::new(100)),
+            window_label: format!("win-{}", port),
         }
     }
 

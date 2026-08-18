@@ -120,7 +120,10 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     if conns.contains_key(&req.port) {
         return Err(ErrorResp::new(format!("端口 {} 已连接", req.port)));
     }
-    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone()) {
+    // MCP connect 建的连接归属 win-{port} 窗口(ensure_port_window 会建它)。
+    // 事件 emit_to 到该窗口,与前端在副窗口连的行为一致。
+    let window_label = crate::connection::port_to_label(&req.port);
+    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label) {
         Ok(h) => h,
         Err(e) => {
             let lower = e.to_lowercase();
@@ -284,7 +287,7 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
 fn do_send(shared: &McpShared, port: &str, data: Vec<u8>) -> Result<Arc<RxHistory>, String> {
     let conn = shared.connections.lock().map_err(|e| e.to_string())?;
     let handle = conn.get(port).ok_or_else(|| format!("端口 {} 未连接", port))?;
-    emit_tx_line(&shared.app_handle, &handle.rx_history, port, data.clone());
+    emit_tx_line(&shared.app_handle, &handle.rx_history, &handle.window_label, data.clone());
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
     Ok(handle.rx_history.clone())
 }

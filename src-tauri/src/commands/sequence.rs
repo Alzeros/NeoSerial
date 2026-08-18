@@ -9,7 +9,7 @@ use tauri::{State, Emitter};
 use crate::state::AppState;
 use crate::commands::connection::resolve_port;
 use crate::commands::send::emit_tx_line;
-use crate::connection::{WriteCommand, port_to_label};
+use crate::connection::WriteCommand;
 use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
 
 #[derive(Clone, Serialize)]
@@ -54,13 +54,13 @@ pub fn sequence_run(
     loop_interval: u32,
     port: Option<String>,
 ) -> Result<(), String> {
-    // 1. 解析 port + 取连接句柄(write_tx + rx_history)。与 SEQUENCE_RUNNING
+    // 1. 解析 port + 取连接句柄(write_tx + rx_history + window_label)。与 SEQUENCE_RUNNING
     //    解耦:此步失败不影响集合(尚未 insert),无需清理。
-    let (write_tx, rx_history, port) = {
+    let (write_tx, rx_history, port, window_label) = {
         let conns = state.connections.lock().map_err(|e| e.to_string())?;
         let resolved = resolve_port(&conns, port)?;
         let handle = conns.get(&resolved).ok_or("未连接串口")?;
-        (handle.write_tx.clone(), handle.rx_history.clone(), resolved)
+        (handle.write_tx.clone(), handle.rx_history.clone(), resolved, handle.window_label.clone())
     };
 
     // 2. SEQUENCE_RUNNING: insert-then-check 契约。已含该 port → 拒绝;
@@ -102,7 +102,7 @@ pub fn sequence_run(
                     continue;
                 }
 
-                let _ = app_handle.emit_to(port_to_label(&port), "sequence-progress", SequenceProgress {
+                let _ = app_handle.emit_to(&window_label, "sequence-progress", SequenceProgress {
                     row: i + 1,
                     total: commands.len(),
                 });
@@ -125,7 +125,7 @@ pub fn sequence_run(
                     // + 文件日志,与 send 命令同一逻辑。log_send=false 时不回显/记录。
                     // (Task 2 deferred minor:原内联逻辑不 push Tx 到 rx_history,
                     //  导致 sequence 发送的命令在 get_history_since 不可见,已修。)
-                    emit_tx_line(&app_handle, &rx_history, &port, data.clone());
+                    emit_tx_line(&app_handle, &rx_history, &window_label, data.clone());
                     // 塞 channel,writer 异步写(SendSilent:不 emit,emit_tx_line 已 emit)
                     let _ = write_tx.send(WriteCommand::SendSilent(data));
                 }
@@ -143,7 +143,7 @@ pub fn sequence_run(
             }
         }
 
-        let _ = app_handle.emit_to(port_to_label(&port), "sequence-done", SequenceDone { aborted });
+        let _ = app_handle.emit_to(&window_label, "sequence-done", SequenceDone { aborted });
         // _guard drop 在此:remove(&port)
     });
 
