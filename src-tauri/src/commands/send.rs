@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use tauri::{State, Emitter, Manager};
 
@@ -57,8 +57,8 @@ pub fn send(
 /// 发送方向的即时回显 + 文件日志。与脚本序列（sequence.rs）共用同一逻辑。
 /// - log_send=false 时不回显也不记录（"记录发送"开关）
 /// - 与 write 线程解耦：发起即打时间戳，不受串口写阻塞影响
-/// - tx-line 定向到该连接归属的窗口(emit_to window_label),多窗口下不串流
-pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, window_label: &str, data: Vec<u8>) {
+/// - tx-line 定向到该连接归属的窗口(emit_to 读 window_label RwLock),多窗口下不串流
+pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, window_label: &Arc<RwLock<String>>, data: Vec<u8>) {
     let (cfg, sender) = match app_handle.try_state::<AppState>() {
         Some(state) => {
             let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
@@ -77,7 +77,8 @@ pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, 
     let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
     if log_send {
         let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[]);
-        let _ = app_handle.emit_to(window_label, "tx-line", line.clone());
+        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+        let _ = app_handle.emit_to(&wl, "tx-line", line.clone());
         // 喂后端收发历史(tx),供 agent 经 get_history_since 读用户/自己发过的命令。
         // 与 emit tx-line 同步:log_send=false 时不进 history(与 GUI 一致,尊重"不记录发送")。
         rx_history.push(Dir::Tx, line.clone());
@@ -129,7 +130,8 @@ pub fn send_file(
         sent += n;
 
         // 发送进度事件(定向到该连接归属的窗口)
-        let _ = app_handle.emit_to(&window_label, "file-send-progress", FileSendProgress {
+        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+        let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress {
             sent,
             total: total_size,
         });

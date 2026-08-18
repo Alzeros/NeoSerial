@@ -102,7 +102,8 @@ pub fn sequence_run(
                     continue;
                 }
 
-                let _ = app_handle.emit_to(&window_label, "sequence-progress", SequenceProgress {
+                let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+                let _ = app_handle.emit_to(&wl, "sequence-progress", SequenceProgress {
                     row: i + 1,
                     total: commands.len(),
                 });
@@ -143,7 +144,8 @@ pub fn sequence_run(
             }
         }
 
-        let _ = app_handle.emit_to(&window_label, "sequence-done", SequenceDone { aborted });
+        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+        let _ = app_handle.emit_to(&wl, "sequence-done", SequenceDone { aborted });
         // _guard drop 在此:remove(&port)
     });
 

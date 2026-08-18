@@ -87,13 +87,29 @@ pub fn connect(
     // 若 check 与 insert 之间放锁,另一线程可能在此间隙 connect 同一 port,
     // 双方都通过 contains_key 检查 → 双 spawn → 连接泄漏。全程持同一把锁串行化。
     let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
-    if conns.contains_key(&port) {
+    // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label)。
+    let caller_label = webview_window.label().to_string();
+    if let Some(existing) = conns.get(&port) {
+        // port 已连:看是谁连的。MCP 连的(window_label=mcp-xxx)→GUI 接管,改 window_label 为当前窗口,
+        // 事件从此显示在该 GUI 窗口。别的 GUI 窗口连的→报已连接(防两个窗口抢同一 port)。
+        let existing_label = existing.window_label.read().ok().map(|s| s.clone()).unwrap_or_default();
+        if existing_label.starts_with("mcp-") {
+            // 接管 MCP 连接:改 window_label,reader/writer 下次 emit 自动用新值
+            if let Ok(mut wl) = existing.window_label.write() {
+                *wl = caller_label.clone();
+            }
+            // 接管成功:发连接成功事件到当前窗口,让 UI 显示已连
+            drop(conns);
+            let _ = app_handle.emit_to(&caller_label, "connection-state", crate::connection::ConnectionState {
+                connected: true,
+                port: Some(port.clone()),
+                baud_rate: Some(params.baud_rate),
+            });
+            return Ok(());
+        }
         return Err(format!("端口 {} 已连接", port));
     }
-    // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label)。
-    // reader/writer emit_to 用它定向事件,确保事件回到发起连接的窗口。
-    let window_label = webview_window.label().to_string();
-    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), window_label) {
+    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), caller_label) {
         Ok(h) => h,
         Err(e) => {
             // 端口被占用类:Windows "Access is denied" / "being used by another process"
@@ -110,8 +126,6 @@ pub fn connect(
         }
     };
     conns.insert(port.clone(), handle);
-    // 前端 connect 不建窗(用户在当前窗口操作,当前窗口就是界面)。
-    // 建窗只在:前端"开新窗口"按钮(open_port_window) + MCP connect(ensure_port_window)。
     drop(conns);
     Ok(())
 }
@@ -153,7 +167,8 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
     // 定向通知该连接归属的窗口:主动断开完成。spawn_connection 的监控线程也会发一条
     // connected:false,但那是线程退净后发的;这里已同步等过线程退出,
     // 先发一条让窗口即时响应(幂等,前端取 connected:false 即可)。
-    let _ = app_handle.emit_to(&window_label, "connection-state", crate::connection::ConnectionState {
+    let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+    let _ = app_handle.emit_to(&wl, "connection-state", crate::connection::ConnectionState {
         connected: false,
         port: Some(port.to_string()),
         baud_rate: None,
@@ -217,8 +232,10 @@ pub fn get_window_conn_state(
     ) -> Result<WindowConnState, String> {
     let label = webview_window.label().to_string();
     let conns = state.connections.lock().map_err(|e| e.to_string())?;
-    // 遍历找 window_label == 本窗口 label 的连接
-    let found = conns.values().find(|h| h.window_label == label);
+    // 遍历找 window_label == 本窗口 label 的连接(读 RwLock 比较)
+    let found = conns.values().find(|h| {
+        h.window_label.read().map(|wl| wl.as_str() == label).unwrap_or(false)
+    });
     match found {
         Some(h) => Ok(WindowConnState {
             ok: true,
@@ -258,8 +275,9 @@ pub fn reset_stats(
         let window_label = handle.window_label.clone();
         handle.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
         handle.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
-        let _ = app_handle.emit_to(&window_label, "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
-        let _ = app_handle.emit_to(&window_label, "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
+        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+        let _ = app_handle.emit_to(&wl, "tx-update", crate::connection::TxUpdate { total: 0, port: resolved.clone() });
+        let _ = app_handle.emit_to(&wl, "rx-update", crate::connection::RxUpdate { total: 0, port: resolved });
     }
     Ok(())
 }
@@ -287,7 +305,7 @@ mod tests {
             port: port.to_string(),
             baud: 115200,
             rx_history: Arc::new(RxHistory::new(100)),
-            window_label: format!("win-{}", port),
+            window_label: Arc::new(std::sync::RwLock::new(format!("win-{}", port))),
         }
     }
 

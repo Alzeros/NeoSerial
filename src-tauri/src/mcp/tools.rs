@@ -78,6 +78,10 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
             .collect();
         (removed, snap)
     };
+    // window_label 从 handle 读(可能被 GUI 接管改过);无 handle 兜底 win-{port}
+    let window_label = handle.as_ref()
+        .and_then(|h| h.window_label.read().ok().map(|g| g.clone()))
+        .unwrap_or_else(|| crate::connection::port_to_label(&req.port));
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
         handle.running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -88,7 +92,7 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
         }
     }
     let _ = app_handle.emit_to(
-        crate::connection::port_to_label(&req.port),
+        &window_label,
         "connection-state",
         crate::connection::ConnectionState { connected: false, port: Some(req.port.clone()), baud_rate: None },
     );
@@ -100,8 +104,19 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
 }
 
 /// 连接串口(复用 spawn_connection + 端口占用文案)。
-/// spawn_connection 内部会 emit connection-state/connection-mode,前端原样接收。
+/// **复用语义**:若该 port 已被(GUI 或前次 MCP)连接,直接复用返回 ok——
+/// 不报冲突、不重建。agent 与人共享同一连接:agent 发命令的事件显示在 GUI 窗口
+/// (用该连接的 window_label),GUI 能看到;agent 读同一份 rx_history。
+/// 这符合 CLAUDE.md "NeoSerial 持有串口,agent 不直接占端口"——MCP 操作已有连接。
 pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, ErrorResp> {
+    let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+    // 复用:port 已连 → 直接返回 ok(不重建)。GUI 连的 agent 能操作,反之亦然。
+    if let Some(existing) = conns.get(&req.port) {
+        return Ok(ConnectResp {
+            ok: true,
+            mode: Some("independent".to_string()),
+        });
+    }
     let params = SerialParams {
         port: req.port.clone(),
         baud_rate: req.baud_rate,
@@ -114,15 +129,9 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
         },
         flow_control: parse_flow_control(&req.flow_control),
     };
-    // 多连接并发:同一 port 已连接才报错,不同 port 各自连接互不冲突。
-    // 持锁贯穿 check→spawn→insert,防 TOCTOU(同 Tauri connect)。
-    let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-    if conns.contains_key(&req.port) {
-        return Err(ErrorResp::new(format!("端口 {} 已连接", req.port)));
-    }
-    // MCP connect 的 window_label = mcp-{port}:不对应真实窗口(emit_to 到此 label 是 no-op)。
-    // agent 经 send_and_read/get_history_since 拿数据,不依赖 GUI 事件;用户想看自己开窗口连。
-    // 这样 MCP connect 不建窗(避免同步建窗死锁),与前端 connect 完全解耦。
+    // MCP 先连(GUI 没连)的连接:window_label = mcp-{port}。
+    // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
+    // (见 Tauri connect 的复用逻辑)。这里只处理 MCP 首次建连。
     let window_label = format!("mcp-{}", req.port);
     let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label) {
         Ok(h) => h,
@@ -141,7 +150,6 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     };
     conns.insert(req.port.clone(), handle);
     // 锁仍持有:构造当前所有连接的完整快照(含刚 insert 的这条),用于整体更新 registry。
-    // 锁在 conns 出作用域时释放,update_connections 失败忽略:registry 只是辅助发现机制。
     let snapshot: Vec<ConnInfo> = conns.values()
         .map(|h| ConnInfo { com: h.port.clone(), baud: h.baud })
         .collect();

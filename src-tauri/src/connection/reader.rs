@@ -1,6 +1,7 @@
 use std::io::Read;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::RwLock;
 use std::time::Instant;
 
 use tauri::{Emitter, Manager};
@@ -13,8 +14,9 @@ use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
 /// 把积攒的行 flush 出去：emit rx-line 给前端 + 送文件日志（若正在记录）。
-/// rx-line 定向到该连接归属的窗口(emit_to window_label),多窗口下不串流。
-fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &str) {
+/// rx-line 定向到该连接归属的窗口(emit_to 读 window_label RwLock),多窗口下不串流。
+/// RwLock 让 GUI 接管 MCP 连接时改 window_label,reader 自动用新值。
+fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>) {
     if lines.is_empty() {
         return;
     }
@@ -34,9 +36,11 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_histo
         }
         None => (None, None),
     };
+    // 读当前 window_label(GUI 接管时改 RwLock,下次 flush 自动用新值)
+    let label = window_label.read().map(|s| s.clone()).unwrap_or_default();
 
     for line in lines.drain(..) {
-        let _ = app_handle.emit_to(window_label, "rx-line", line.clone());
+        let _ = app_handle.emit_to(&label, "rx-line", line.clone());
         // 喂后端收发历史(rx),供 MCP 阻塞读/历史查询。push 触发 Notify 唤醒等待的 send_and_read。
         rx_history.push(crate::buffer::log_line::Dir::Rx, line.clone());
         if let (Some(c), Some(tx)) = (&cfg, &sender) {
@@ -51,7 +55,7 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_histo
 /// 把 LineAssembler 中不换行的残尾（如 shell 的 "> " 提示符）补打为一行。
 /// 残尾没有换行符，正常切行永远等不到，需在设备输出间歇（读超时）时主动取出。
 /// 复用 flush_lines：统一处理前端 emit + 文件日志。
-fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &str) {
+fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>) {
     let Some(tail) = assembler.flush() else {
         return;
     };
@@ -72,7 +76,7 @@ pub fn spawn_reader(
     app_handle: tauri::AppHandle,
     rx_history: Arc<RxHistory>,
     port_name: String,
-    window_label: String,
+    window_label: Arc<RwLock<String>>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 1024];
@@ -101,7 +105,9 @@ pub fn spawn_reader(
 
                     // 定期发送 rx-update 事件(定向到该连接归属的窗口)
                     let total = rx_bytes.load(std::sync::atomic::Ordering::SeqCst);
-                    let _ = app_handle.emit_to(&window_label, "rx-update", crate::connection::RxUpdate { total, port: port_name.clone() });
+                    if let Ok(wl) = window_label.read() {
+                        let _ = app_handle.emit_to(&*wl, "rx-update", crate::connection::RxUpdate { total, port: port_name.clone() });
+                    }
                 }
                 Ok(_) => {
                     // 超时：有数据也可能在等下一批，先 flush 已有行
@@ -118,15 +124,19 @@ pub fn spawn_reader(
                     // 共享模式下锁错误不致命，继续运行
                     if let PortReader::Shared(_) = port {
                         if e.kind() == std::io::ErrorKind::Other {
-                            let _ = app_handle.emit_to(&window_label, "error", crate::connection::ErrorEvent {
-                                message: format!("读取端口锁错误: {}", e),
-                            });
+                            if let Ok(wl) = window_label.read() {
+                                let _ = app_handle.emit_to(&*wl, "error", crate::connection::ErrorEvent {
+                                    message: format!("读取端口锁错误: {}", e),
+                                });
+                            }
                             continue;
                         }
                     }
-                    let _ = app_handle.emit_to(&window_label, "error", crate::connection::ErrorEvent {
-                        message: format!("串口读取错误: {}", e),
-                    });
+                    if let Ok(wl) = window_label.read() {
+                        let _ = app_handle.emit_to(&*wl, "error", crate::connection::ErrorEvent {
+                            message: format!("串口读取错误: {}", e),
+                        });
+                    }
                     running.store(false, std::sync::atomic::Ordering::SeqCst);
                     break;
                 }

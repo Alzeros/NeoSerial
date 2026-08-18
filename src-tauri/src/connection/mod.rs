@@ -63,10 +63,11 @@ pub struct ConnectionHandle {
     /// 该连接的独立收发历史。reader push Rx,emit_tx_line/writer push Tx,
     /// MCP send_and_read/get_history_since 查询。per-connection 隔离,不串数据。
     pub rx_history: Arc<RxHistory>,
-    /// 该连接归属的窗口 label。reader/writer emit_to 用它定向事件:
-    /// 前端在 main 连 → "main";前端在副窗口连 → 该窗口 label;MCP connect → win-{port}。
-    /// 与 port 解耦:同一 port 在不同窗口连,事件发到各自窗口,不串。
-    pub window_label: String,
+    /// 该连接归属的窗口 label。reader/writer emit_to 读它定向事件。
+    /// 用 Arc<RwLock<String>>:GUI 接管 MCP 连接时改此值,reader/writer 自动读新 label,
+    /// 事件定向到接管的 GUI 窗口(无需重启线程)。MCP connect 初始 mcp-{port},
+    /// GUI 窗口 connect 复用时改成该窗口 label。
+    pub window_label: Arc<std::sync::RwLock<String>>,
 }
 
 /// 发送给前端的 Tx 更新事件。
@@ -158,6 +159,8 @@ pub fn spawn_connection(
     let rx_bytes = Arc::new(AtomicU64::new(0));
     let exit = Arc::new((std::sync::Mutex::new(false), std::sync::Condvar::new()));
     let rx_history = Arc::new(RxHistory::new(10_000));
+    // window_label 用 Arc<RwLock>:reader/writer 持 clone,emit 时读;GUI 接管时改值,线程自动用新 label
+    let window_label = Arc::new(std::sync::RwLock::new(window_label));
 
     // 创建写通道
     let (write_tx, write_rx) = bounded::<WriteCommand>(64);
@@ -237,7 +240,10 @@ pub fn spawn_connection(
     };
 
     // 发送连接模式事件(定向到该连接归属的窗口)
-    let _ = app_handle.emit_to(&window_label, "connection-mode", ConnectionMode { mode: mode_str.clone() });
+    {
+        let wl = window_label.read().map_err(|e| e.to_string())?;
+        let _ = app_handle.emit_to(&*wl, "connection-mode", ConnectionMode { mode: mode_str.clone() });
+    }
 
     // 监控线程：等待读/写线程都退出后，清理状态并通知前端
     let port_name = params.port.clone();
@@ -256,19 +262,24 @@ pub fn spawn_connection(
             exit_clone.1.notify_all();
         }
         // 定向通知该连接归属的窗口:连接已断开(线程退出,可能是被动断开如拔线)
-        let _ = app_handle_clone.emit_to(&window_label_clone, "connection-state", ConnectionState {
-            connected: false,
-            port: Some(port_name),
-            baud_rate: None,
-        });
+        if let Ok(wl) = window_label_clone.read() {
+            let _ = app_handle_clone.emit_to(&*wl, "connection-state", ConnectionState {
+                connected: false,
+                port: Some(port_name),
+                baud_rate: None,
+            });
+        }
     });
 
     // 发送连接成功事件(定向到该连接归属的窗口)
-    let _ = app_handle.emit_to(&window_label, "connection-state", ConnectionState {
-        connected: true,
-        port: Some(params.port.clone()),
-        baud_rate: Some(params.baud_rate),
-    });
+    {
+        let wl = window_label.read().map_err(|e| e.to_string())?;
+        let _ = app_handle.emit_to(&*wl, "connection-state", ConnectionState {
+            connected: true,
+            port: Some(params.port.clone()),
+            baud_rate: Some(params.baud_rate),
+        });
+    }
 
     Ok((handle, mode_str))
 }
