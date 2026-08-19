@@ -47,3 +47,28 @@ jobs:
           # 自动生成 latest.json 供 updater endpoint 使用;NSIS 优先
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
+
+      # 把 latest.json 同步到自建服务器(国内可达),作 updater 主源
+      # dl.neo.loc.cc,GitHub release 作 fallback
+      - name: Upload latest.json to mirror server
+        shell: pwsh
+        env:
+          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          # 写私钥文件
+          $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
+          Set-Content -Path $keyPath -Value $env:SERVER_SSH_KEY -NoNewline
+          icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+          # 信任主机指纹
+          $knownHosts = Join-Path $env:USERPROFILE ".ssh"
+          New-Item -ItemType Directory -Path $knownHosts -Force | Out-Null
+          Add-Content -Path (Join-Path $knownHosts "known_hosts") -Value "[dl.neo.loc.cc]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
+          Add-Content -Path (Join-Path $knownHosts "known_hosts") -Value "[38.14.254.128]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
+          # 定位 tauri 生成的 latest.json
+          $json = Get-ChildItem -Path "src-tauri/target/release" -Recurse -Filter "latest.json" | Select-Object -First 1
+          if (-not $json) { Write-Error "latest.json not found"; exit 1 }
+          Write-Host "Found: $($json.FullName)"
+          # scp 上传
+          scp -i $keyPath -o StrictHostKeyChecking=yes -P 22 $json.FullName neoserial@38.14.254.128:/var/www/neoserial/latest.json
+          Write-Host "Uploaded to dl.neo.loc.cc"
+
