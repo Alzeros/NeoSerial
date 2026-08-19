@@ -61,6 +61,15 @@ jobs:
           # 用 [IO.File]::WriteAllText 保留 LF 换行(GitHub Secret 里是 \n),避免 Set-Content 的 CRLF/-NoNewline 问题
           [System.IO.File]::WriteAllText($keyPath, $env:SERVER_SSH_KEY.Replace("`r`n", "`n"))
           icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+          # 诊断:打印私钥行数+首尾(不暴露中间),确认 Secret 内容完整无前导空格
+          $lines = Get-Content $keyPath
+          Write-Host "私钥行数: $($lines.Count) 行"
+          Write-Host "首行: '$($lines[0])'"
+          Write-Host "末行: '$($lines[$lines.Count-1])'"
+          if ($lines[0] -notmatch '^-----BEGIN OPENSSH PRIVATE KEY-----$') {
+            Write-Error "私钥首行格式错误(可能 Secret 存入时带了前导空格/缩进)"
+            exit 1
+          }
           # tauri-action 把 latest.json 上传到 release,从那里下载
           $tag = $env:GITHUB_REF_NAME  # v0.2.2
           $dlDir = Join-Path $env:RUNNER_TEMP "dl"
