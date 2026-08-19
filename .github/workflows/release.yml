@@ -55,13 +55,15 @@ jobs:
         continue-on-error: true
         shell: pwsh
         env:
-          SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
           GH_TOKEN: ${{ github.token }}
         run: |
           try {
-            # 写私钥文件(保留 LF 换行,OpenSSH 私钥每行一个 base64 块)
+            # 私钥以 base64 单行字符串存 Secret(规避多行文本存入时换行/空格被改)
+            # 这里 decode 还原成私钥文件
             $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
-            [System.IO.File]::WriteAllText($keyPath, $env:SERVER_SSH_KEY.Replace("`r`n", "`n"))
+            $keyBytes = [System.Convert]::FromBase64String($env:SERVER_SSH_KEY_B64)
+            [System.IO.File]::WriteAllBytes($keyPath, $keyBytes)
             icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
             # 从 release 下载 latest.json
             $tag = $env:GITHUB_REF_NAME
