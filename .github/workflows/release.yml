@@ -48,36 +48,26 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
 
-      # 把 latest.json 同步到自建服务器(国内可达),作 updater 备用源
-      # dl.neo.loc.cc(GitHub 不通时的保底),GitHub release 作主源
-      # continue-on-error: 镜像失败不阻断 CI(release 已发布,更新仍走 GitHub)
-      - name: Upload latest.json to mirror server
+  # 把 latest.json 同步到自建服务器(国内可达),作 updater 备用源
+  # 用 Linux job:Windows OpenSSH 对私钥文件权限检查过严(Bad permissions),
+  # Linux 的 OpenSSH chmod 600 即可,绕开这个坑
+  mirror:
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download latest.json from release + scp to mirror
         continue-on-error: true
-        shell: pwsh
         env:
-          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
           GH_TOKEN: ${{ github.token }}
+          SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
         run: |
-          try {
-            # 私钥以 base64 单行字符串存 Secret(规避多行文本存入时换行/空格被改)
-            # 这里 decode 还原成私钥文件
-            $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
-            $keyBytes = [System.Convert]::FromBase64String($env:SERVER_SSH_KEY_B64)
-            [System.IO.File]::WriteAllBytes($keyPath, $keyBytes)
-            icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
-            # 从 release 下载 latest.json
-            $tag = $env:GITHUB_REF_NAME
-            $dlDir = Join-Path $env:RUNNER_TEMP "dl"
-            New-Item -ItemType Directory -Path $dlDir -Force | Out-Null
-            gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern "latest.json" --dir $dlDir
-            $json = Join-Path $dlDir "latest.json"
-            if (-not (Test-Path $json)) { throw "latest.json not found in release $tag" }
-            Write-Host "Downloaded latest.json from release"
-            # scp 上传(accept-new 自动信任首次连接指纹)
-            scp -i $keyPath -o StrictHostKeyChecking=accept-new -P 22 $json neoserial@38.14.254.128:/var/www/neoserial/latest.json
-            Write-Host "Uploaded to dl.neo.loc.cc"
-          } catch {
-            Write-Warning "镜像同步失败(不影响发布): $_"
-            exit 1
-          }
-
+          set -e
+          # 从 release 下载 latest.json
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "latest.json" --dir /tmp
+          echo "Downloaded latest.json"
+          # 还原私钥(base64 decode,Linux chmod 600 即可,无 Windows 权限坑)
+          echo "$SERVER_SSH_KEY_B64" | base64 -d > /tmp/id_ed25519
+          chmod 600 /tmp/id_ed25519
+          # scp 上传
+          scp -i /tmp/id_ed25519 -o StrictHostKeyChecking=accept-new -P 22 /tmp/latest.json neoserial@38.14.254.128:/var/www/neoserial/latest.json
+          echo "Uploaded to dl.neo.loc.cc"
