@@ -47,3 +47,8 @@ shot*.ps1
 
 # 本地 AI 约定文档
 CLAUDE.md
+
+# Tauri 签名私钥(自动更新用,绝不入库)
+*.key
+# PowerShell ~ 未展开产生的本地密钥目录残留(私钥+公钥,pubkey 已配在 tauri.conf.json)
+~/

@@ -26,9 +26,18 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/Alzeros/NeoSerial/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDlEQkUwNjRDQkEyQTUwM0QKUldROVVDcTZUQWErbmRJdjZxcEhQV2orbHRadVkwSTVqMnlUV3d6Y1lGZExDMU9xS2JBKzNXWVkK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "createUpdaterArtifacts": true,
     "icon": [
       "icons/icon.ico",
       "icons/32x32.png",

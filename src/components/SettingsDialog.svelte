@@ -3,6 +3,7 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { saveSettings, getMcpStatus } from '$lib/tauri';
+  import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
@@ -238,6 +239,8 @@
               <div class="text-[13px] text-[var(--muted-foreground)]">
                 版本 <span class="text-[var(--foreground)] font-medium">{version.value || '0.1.3'}</span>
               </div>
+              <!-- 更新检查卡片 -->
+              <UpdaterCard />
             </div>
           {:else if activeSection === 'general'}
             <!-- 通用：预设波特率 -->
