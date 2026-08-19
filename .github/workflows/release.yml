@@ -60,11 +60,11 @@ jobs:
           $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
           Set-Content -Path $keyPath -Value $env:SERVER_SSH_KEY -NoNewline
           icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
-          # 信任主机指纹
+          # 信任主机指纹(默认端口 22 的 known_hosts 条目不带 :22 后缀)
           $sshDir = Join-Path $env:USERPROFILE ".ssh"
           New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
-          Add-Content -Path (Join-Path $sshDir "known_hosts") -Value "[dl.neo.loc.cc]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
-          Add-Content -Path (Join-Path $sshDir "known_hosts") -Value "[38.14.254.128]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
+          Add-Content -Path (Join-Path $sshDir "known_hosts") -Value "dl.neo.loc.cc ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
+          Add-Content -Path (Join-Path $sshDir "known_hosts") -Value "38.14.254.128 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
           # tauri-action 把 latest.json 上传到 release,从那里下载
           $tag = $env:GITHUB_REF_NAME  # v0.2.2
           $dlDir = Join-Path $env:RUNNER_TEMP "dl"
