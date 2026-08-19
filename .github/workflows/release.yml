@@ -48,37 +48,34 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
 
-      # 把 latest.json 同步到自建服务器(国内可达),作 updater 主源
-      # dl.neo.loc.cc,GitHub release 作 fallback
+      # 把 latest.json 同步到自建服务器(国内可达),作 updater 备用源
+      # dl.neo.loc.cc(GitHub 不通时的保底),GitHub release 作主源
+      # continue-on-error: 镜像失败不阻断 CI(release 已发布,更新仍走 GitHub)
       - name: Upload latest.json to mirror server
+        continue-on-error: true
         shell: pwsh
         env:
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          # 写私钥文件(必须保留换行,OpenSSH 私钥每行一个 base64 块;不能用 -NoNewline)
-          $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
-          # 用 [IO.File]::WriteAllText 保留 LF 换行(GitHub Secret 里是 \n),避免 Set-Content 的 CRLF/-NoNewline 问题
-          [System.IO.File]::WriteAllText($keyPath, $env:SERVER_SSH_KEY.Replace("`r`n", "`n"))
-          icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
-          # 诊断:打印私钥行数+首尾(不暴露中间),确认 Secret 内容完整无前导空格
-          $lines = Get-Content $keyPath
-          Write-Host "私钥行数: $($lines.Count) 行"
-          Write-Host "首行: '$($lines[0])'"
-          Write-Host "末行: '$($lines[$lines.Count-1])'"
-          if ($lines[0] -notmatch '^-----BEGIN OPENSSH PRIVATE KEY-----$') {
-            Write-Error "私钥首行格式错误(可能 Secret 存入时带了前导空格/缩进)"
+          try {
+            # 写私钥文件(保留 LF 换行,OpenSSH 私钥每行一个 base64 块)
+            $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
+            [System.IO.File]::WriteAllText($keyPath, $env:SERVER_SSH_KEY.Replace("`r`n", "`n"))
+            icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
+            # 从 release 下载 latest.json
+            $tag = $env:GITHUB_REF_NAME
+            $dlDir = Join-Path $env:RUNNER_TEMP "dl"
+            New-Item -ItemType Directory -Path $dlDir -Force | Out-Null
+            gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern "latest.json" --dir $dlDir
+            $json = Join-Path $dlDir "latest.json"
+            if (-not (Test-Path $json)) { throw "latest.json not found in release $tag" }
+            Write-Host "Downloaded latest.json from release"
+            # scp 上传(accept-new 自动信任首次连接指纹)
+            scp -i $keyPath -o StrictHostKeyChecking=accept-new -P 22 $json neoserial@38.14.254.128:/var/www/neoserial/latest.json
+            Write-Host "Uploaded to dl.neo.loc.cc"
+          } catch {
+            Write-Warning "镜像同步失败(不影响发布): $_"
             exit 1
           }
-          # tauri-action 把 latest.json 上传到 release,从那里下载
-          $tag = $env:GITHUB_REF_NAME  # v0.2.2
-          $dlDir = Join-Path $env:RUNNER_TEMP "dl"
-          New-Item -ItemType Directory -Path $dlDir -Force | Out-Null
-          gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern "latest.json" --dir $dlDir
-          $json = Join-Path $dlDir "latest.json"
-          if (-not (Test-Path $json)) { Write-Error "latest.json not found in release $tag"; exit 1 }
-          Write-Host "Downloaded latest.json from release"
-          # scp 上传到服务器(accept-new 自动信任首次连接的主机指纹,避免 known_hosts 格式坑)
-          scp -i $keyPath -o StrictHostKeyChecking=accept-new -P 22 $json neoserial@38.14.254.128:/var/www/neoserial/latest.json
-          Write-Host "Uploaded to dl.neo.loc.cc"
 
