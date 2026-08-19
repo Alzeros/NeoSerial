@@ -54,21 +54,26 @@ jobs:
         shell: pwsh
         env:
           SERVER_SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           # 写私钥文件
           $keyPath = Join-Path $env:RUNNER_TEMP "id_ed25519"
           Set-Content -Path $keyPath -Value $env:SERVER_SSH_KEY -NoNewline
           icacls $keyPath /inheritance:r /grant:r "$($env:USERNAME):(R)" | Out-Null
           # 信任主机指纹
-          $knownHosts = Join-Path $env:USERPROFILE ".ssh"
-          New-Item -ItemType Directory -Path $knownHosts -Force | Out-Null
-          Add-Content -Path (Join-Path $knownHosts "known_hosts") -Value "[dl.neo.loc.cc]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
-          Add-Content -Path (Join-Path $knownHosts "known_hosts") -Value "[38.14.254.128]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
-          # 定位 tauri 生成的 latest.json
-          $json = Get-ChildItem -Path "src-tauri/target/release" -Recurse -Filter "latest.json" | Select-Object -First 1
-          if (-not $json) { Write-Error "latest.json not found"; exit 1 }
-          Write-Host "Found: $($json.FullName)"
-          # scp 上传
-          scp -i $keyPath -o StrictHostKeyChecking=yes -P 22 $json.FullName neoserial@38.14.254.128:/var/www/neoserial/latest.json
+          $sshDir = Join-Path $env:USERPROFILE ".ssh"
+          New-Item -ItemType Directory -Path $sshDir -Force | Out-Null
+          Add-Content -Path (Join-Path $sshDir "known_hosts") -Value "[dl.neo.loc.cc]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
+          Add-Content -Path (Join-Path $sshDir "known_hosts") -Value "[38.14.254.128]:22 ssh-ed25519 SHA256:KutUVlVq2lh/v5hR6m3leiLWP+LUkjCfLHmx96S17iA"
+          # tauri-action 把 latest.json 上传到 release,从那里下载
+          $tag = $env:GITHUB_REF_NAME  # v0.2.2
+          $dlDir = Join-Path $env:RUNNER_TEMP "dl"
+          New-Item -ItemType Directory -Path $dlDir -Force | Out-Null
+          gh release download $tag --repo $env:GITHUB_REPOSITORY --pattern "latest.json" --dir $dlDir
+          $json = Join-Path $dlDir "latest.json"
+          if (-not (Test-Path $json)) { Write-Error "latest.json not found in release $tag"; exit 1 }
+          Write-Host "Downloaded latest.json from release"
+          # scp 上传到服务器
+          scp -i $keyPath -o StrictHostKeyChecking=yes -P 22 $json neoserial@38.14.254.128:/var/www/neoserial/latest.json
           Write-Host "Uploaded to dl.neo.loc.cc"
 
