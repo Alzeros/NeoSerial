@@ -81,13 +81,13 @@
   );
 </script>
 
-<div class="rounded-lg border p-4 mt-4" style="border-color: var(--border); background: var(--background);">
+<div class="rounded-lg border p-4 mt-4 w-full max-w-sm mx-auto" style="border-color: var(--border);">
   {#if state.kind === 'idle'}
     <div class="flex items-center justify-between">
       <span class="text-[12px]" style="color: var(--muted-foreground);">检查更新</span>
       <button
         class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80"
-        style="color: var(--accent);"
+        style="color: #2563eb;"
         onclick={() => checkUpdate(false)}
       >
         <RefreshCw size={13} />
@@ -101,7 +101,7 @@
     </div>
   {:else if state.kind === 'up-to-date'}
     <div class="flex items-center gap-2 text-[12px]" style="color: var(--muted-foreground);">
-      <CheckCircle2 size={13} style="color: var(--accent);" />
+      <CheckCircle2 size={13} style="color: #16a34a;" />
       已是最新版本
       <button
         class="ml-auto text-[12px] opacity-70 hover:opacity-100"
@@ -112,18 +112,18 @@
   {:else if state.kind === 'available'}
     <div class="flex flex-col gap-2">
       <div class="flex items-center gap-2 text-[12px]">
-        <Download size={13} style="color: var(--accent);" />
+        <Download size={13} style="color: #2563eb;" />
         <span style="color: var(--foreground);">发现新版本 v{state.version}</span>
       </div>
       {#if state.notes}
         <div class="text-[11px] leading-relaxed rounded-md p-2 max-h-24 overflow-auto whitespace-pre-wrap"
-             style="background: var(--border-subtle); color: var(--muted-foreground);">
+             style="background: #f3f4f6; color: var(--muted-foreground);">
           {state.notes}
         </div>
       {/if}
       <button
-        class="flex items-center justify-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-md transition-colors"
-        style="background: var(--accent); color: var(--primary-foreground, #fff);"
+        class="flex items-center justify-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-md transition-colors hover:opacity-90"
+        style="background: #2563eb; color: #ffffff;"
         onclick={downloadAndInstall}
       >
         <Download size={13} />
@@ -138,28 +138,28 @@
           {state.contentLength > 0 ? `${percent}%` : '下载中…'}
         </span>
       </div>
-      <div class="h-1.5 rounded-full overflow-hidden" style="background: var(--border-subtle);">
+      <div class="h-1.5 rounded-full overflow-hidden" style="background: #e5e7eb;">
         {#if state.contentLength > 0}
-          <div class="h-full rounded-full transition-all duration-150" style="width: {percent}%; background: var(--accent);"></div>
+          <div class="h-full rounded-full transition-all duration-150" style="width: {percent}%; background: #2563eb;"></div>
         {:else}
-          <div class="h-full w-1/3 rounded-full animate-pulse" style="background: var(--accent);"></div>
+          <div class="h-full w-1/3 rounded-full animate-pulse" style="background: #2563eb;"></div>
         {/if}
       </div>
     </div>
   {:else if state.kind === 'downloaded' || state.kind === 'installing'}
-    <div class="flex items-center gap-2 text-[12px]" style="color: var(--accent);">
+    <div class="flex items-center gap-2 text-[12px]" style="color: #2563eb;">
       <Rocket size={13} class="animate-pulse" />
       安装中,即将重启…
     </div>
   {:else if state.kind === 'error'}
     <div class="flex flex-col gap-2">
-      <div class="flex items-start gap-2 text-[12px]" style="color: var(--destructive);">
+      <div class="flex items-start gap-2 text-[12px]" style="color: #dc2626;">
         <AlertCircle size={13} class="mt-0.5 shrink-0" />
         <span class="break-all">{state.message}</span>
       </div>
       <button
         class="self-start text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80"
-        style="color: var(--accent);"
+        style="color: #2563eb;"
         onclick={() => checkUpdate(false)}
       >重试</button>
     </div>
