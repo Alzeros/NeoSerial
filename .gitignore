@@ -33,8 +33,10 @@ err.log
 # Screenshots
 *.png
 *.jpg
+!src/assets/*.png
 !assets/*.png
-!assets/*.ico
+!src-tauri/icons/*.png
+!src-tauri/icons/*.ico
 
 # Shot scripts
 shot*.ps1
