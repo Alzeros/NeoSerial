@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import { check } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
   import { RefreshCw, Download, Rocket, CheckCircle2, AlertCircle } from 'lucide-svelte';
@@ -72,10 +71,7 @@
     }
   }
 
-  // 挂载时静默检查一次(失败不影响主界面)
-  onMount(() => {
-    checkUpdate(true);
-  });
+  // 不自动检查——手动点"检查"按钮触发(避免每次开设置都请求 github,国内访问不稳定)
 
   // 进度百分比(contentLength=0 时显示不确定态)
   const percent = $derived(
