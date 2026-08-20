@@ -81,6 +81,9 @@ pub struct UiSettings {
     pub auto_scroll: bool,
     pub ring_buffer_capacity: usize,
     pub show_timestamp: bool,
+    /// 日志区最左侧行号(本次连接期间 index)开关,旧配置无此字段时默认 false
+    #[serde(default)]
+    pub show_line_index: bool,
     pub log_send: bool,
     /// 日志区字号（px），默认 14
     #[serde(default = "default_log_font_size")]
@@ -228,6 +231,7 @@ impl Settings {
                 auto_scroll: true,
                 ring_buffer_capacity: 5000,
                 show_timestamp: true,
+                show_line_index: false,
                 log_send: true,
                 log_font_size: default_log_font_size(),
                 log_line_height: default_log_line_height(),
@@ -332,6 +336,7 @@ impl LegacySettings {
                 auto_scroll: self.ui.auto_scroll,
                 ring_buffer_capacity: self.ui.ring_buffer_capacity,
                 show_timestamp: def.ui.show_timestamp,
+                show_line_index: false,
                 log_send: def.ui.log_send,
                 log_font_size: def.ui.log_font_size,
                 log_line_height: def.ui.log_line_height,

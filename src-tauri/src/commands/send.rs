@@ -45,7 +45,7 @@ pub fn send(
     // 乐观回显：入队前先 emit tx-line + 写文件日志。
     // 串口写入受驱动延迟影响（USB 延迟定时器，实测每条 20-60ms 甚至更久），
     // 若等写入完成再回显，界面会显得卡顿。这里发起即回显，写线程静默写。
-    emit_tx_line(&app_handle, &handle.rx_history, &handle.window_label, data.clone());
+    emit_tx_line(&app_handle, &handle.rx_history, &handle.window_label, &handle.line_index, data.clone());
 
     // 通过 channel 发送给写线程（SendSilent：写线程只写不 emit，避免重复回显）
     handle.write_tx.send(WriteCommand::SendSilent(data))
@@ -58,7 +58,7 @@ pub fn send(
 /// - log_send=false 时不回显也不记录（"记录发送"开关）
 /// - 与 write 线程解耦：发起即打时间戳，不受串口写阻塞影响
 /// - tx-line 定向到该连接归属的窗口(emit_to 读 window_label RwLock),多窗口下不串流
-pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, window_label: &Arc<RwLock<String>>, data: Vec<u8>) {
+pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, window_label: &Arc<RwLock<String>>, line_index: &Arc<std::sync::atomic::AtomicU64>, data: Vec<u8>) {
     let (cfg, sender) = match app_handle.try_state::<AppState>() {
         Some(state) => {
             let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
@@ -76,7 +76,8 @@ pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, 
     };
     let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
     if log_send {
-        let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[]);
+        let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+        let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[], idx);
         let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
         let _ = app_handle.emit_to(&wl, "tx-line", line.clone());
         // 喂后端收发历史(tx),供 agent 经 get_history_since 读用户/自己发过的命令。

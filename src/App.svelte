@@ -35,6 +35,7 @@
     scriptRunCount,
     scriptRunState,
     showTimestamp,
+    showLineIndex,
     txBytes,
     windowPort,
   } from '$lib/stores';
@@ -71,6 +72,7 @@
     connectionParams.flowControl = s.serial_defaults.flow_control;
     lineEnding.value = s.ui.line_ending;
     showTimestamp.value = s.ui.show_timestamp;
+    showLineIndex.value = s.ui.show_line_index ?? false;
     autoScroll.value = s.ui.auto_scroll;
     displayMode.value = s.ui.display_mode === 'Hex' ? 'hex' : 'ascii';
     textEncoding.value = (s.ui?.text_encoding || 'Ascii') === 'Utf8' ? 'utf8' : (s.ui?.text_encoding || 'Ascii') === 'Gbk' ? 'gbk' : 'ascii';
@@ -116,6 +118,7 @@
         line_ending: lineEnding.value,
         auto_scroll: autoScroll.value,
         show_timestamp: showTimestamp.value,
+        show_line_index: showLineIndex.value,
         log_send: logSendContent.value,
         log_font_size: logFontSize.value,
         log_line_height: logLineHeight.value,

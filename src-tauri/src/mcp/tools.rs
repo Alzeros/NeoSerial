@@ -293,7 +293,7 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
 fn do_send(shared: &McpShared, port: &str, data: Vec<u8>) -> Result<Arc<RxHistory>, String> {
     let conn = shared.connections.lock().map_err(|e| e.to_string())?;
     let handle = conn.get(port).ok_or_else(|| format!("端口 {} 未连接", port))?;
-    emit_tx_line(&shared.app_handle, &handle.rx_history, &handle.window_label, data.clone());
+    emit_tx_line(&shared.app_handle, &handle.rx_history, &handle.window_label, &handle.line_index, data.clone());
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
     Ok(handle.rx_history.clone())
 }
@@ -321,11 +321,14 @@ pub struct GetHistorySinceReq {
     pub is_hex: Option<bool>,
 }
 
-/// 历史行:方向(rx/tx)+ 文本(按 is_hex 选 ascii/hex)。
+/// 历史行:方向(rx/tx)+ 文本(按 is_hex 选 ascii/hex)+ 行号(index)。
 #[derive(Serialize)]
 pub struct HistoryLine {
     pub dir: String,
     pub text: String,
+    /// 本次连接期间的行号(tx+rx 共用,开端口=1)。
+    /// 旧历史(连接前已存的,line_index=0)按返回顺序回填递增,保证连续可读。
+    pub index: u64,
 }
 
 #[derive(Serialize)]
@@ -360,14 +363,26 @@ pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHist
         }
     };
     let (rows, latest) = rx_history.since(req.seq);
+    // 旧历史(连接前,line_index=0)按返回顺序回填递增,保证连续;
+    // 新数据(连接后)用真实 line_index。
+    let mut fill_idx: u64 = 0;
     let mut lines: Vec<HistoryLine> = rows
         .into_iter()
-        .map(|(_, dir, l)| HistoryLine {
-            dir: match dir {
-                crate::buffer::log_line::Dir::Rx => "rx".to_string(),
-                crate::buffer::log_line::Dir::Tx => "tx".to_string(),
-            },
-            text: if is_hex { l.hex } else { l.ascii },
+        .map(|(_, dir, l)| {
+            let idx = if l.line_index == 0 {
+                fill_idx += 1;
+                fill_idx
+            } else {
+                l.line_index
+            };
+            HistoryLine {
+                dir: match dir {
+                    crate::buffer::log_line::Dir::Rx => "rx".to_string(),
+                    crate::buffer::log_line::Dir::Tx => "tx".to_string(),
+                },
+                text: if is_hex { l.hex } else { l.ascii },
+                index: idx,
+            }
         })
         .collect();
     if let Some(max) = req.max_lines {
@@ -754,7 +769,7 @@ mod tests {
         use crate::buffer::log_line::{Dir, LogLine};
 
         fn rx(content: &[u8]) -> LogLine {
-            LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[])
+            LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[], 0)
         }
 
         let a = Arc::new(RxHistory::new(100));

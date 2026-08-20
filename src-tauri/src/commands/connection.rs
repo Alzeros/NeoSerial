@@ -328,6 +328,7 @@ mod tests {
             baud: 115200,
             rx_history: Arc::new(RxHistory::new(100)),
             window_label: Arc::new(std::sync::RwLock::new(format!("win-{}", port))),
+            line_index: Arc::new(AtomicU64::new(0)),
         }
     }
 

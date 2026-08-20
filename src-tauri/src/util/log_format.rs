@@ -66,10 +66,10 @@ mod tests {
     use super::*;
 
     fn rx_line(ts: &str, content: &[u8]) -> LogLine {
-        LogLine::new(ts.into(), Dir::Rx, content.to_vec(), &[])
+        LogLine::new(ts.into(), Dir::Rx, content.to_vec(), &[], 0)
     }
     fn tx_line(ts: &str, content: &[u8]) -> LogLine {
-        LogLine::new(ts.into(), Dir::Tx, content.to_vec(), &[])
+        LogLine::new(ts.into(), Dir::Tx, content.to_vec(), &[], 0)
     }
 
     #[test]

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
-  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, scrollContainerRef } from '$lib/stores';
+  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
   let scrollContainer: HTMLDivElement;
@@ -366,6 +366,12 @@
             : 'bg-[rgba(196,138,46,0.06)]')
           : 'hover:bg-[rgba(255,255,255,0.03)]'}"
       >
+        <!-- 行号(本次连接期间 index,最左列,等宽数字右对齐) -->
+        {#if showLineIndex.value}
+          <div class="shrink-0 pr-2 mr-2 border-r border-[var(--border)] text-right tabular-nums text-[var(--muted-foreground)]" style="min-width: 3em;">
+            {line.line_index || ''}
+          </div>
+        {/if}
         <!-- 方向 + 时间戳：包在一个框里，右边框与日志内容分隔 -->
         {#if logSendContent.value || showTimestamp.value}
           <div class="flex items-baseline gap-2 shrink-0 pr-2 mr-2 border-r border-[var(--border)]">

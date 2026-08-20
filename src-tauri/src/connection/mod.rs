@@ -68,6 +68,9 @@ pub struct ConnectionHandle {
     /// 事件定向到接管的 GUI 窗口(无需重启线程)。MCP connect 初始 mcp-{port},
     /// GUI 窗口 connect 复用时改成该窗口 label。
     pub window_label: Arc<std::sync::RwLock<String>>,
+    /// 本次连接期间的单调行号计数器(tx+rx 共用)。开端口=0,每构造一行 +1。
+    /// 连接关闭(新建连接)自然重置(新 Arc=0)。供 LogLine.line_index。
+    pub line_index: Arc<AtomicU64>,
 }
 
 /// 发送给前端的 Tx 更新事件。
@@ -161,6 +164,8 @@ pub fn spawn_connection(
     let rx_history = Arc::new(RxHistory::new(10_000));
     // window_label 用 Arc<RwLock>:reader/writer 持 clone,emit 时读;GUI 接管时改值,线程自动用新 label
     let window_label = Arc::new(std::sync::RwLock::new(window_label));
+    // per-conn 行号计数器(开端口=0,每行 +1,新建连接自然重置)
+    let line_index = Arc::new(AtomicU64::new(0));
 
     // 创建写通道
     let (write_tx, write_rx) = bounded::<WriteCommand>(64);
@@ -175,6 +180,7 @@ pub fn spawn_connection(
         baud: params.baud_rate,
         rx_history: rx_history.clone(),
         window_label: window_label.clone(),
+        line_index: line_index.clone(),
     };
 
     // 尝试克隆端口，失败则降级为共享模式
@@ -193,6 +199,7 @@ pub fn spawn_connection(
                 rx_history.clone(),
                 params.port.clone(),
                 window_label.clone(),
+                line_index.clone(),
             );
 
             let w_handle = writer::spawn_writer(
@@ -204,6 +211,7 @@ pub fn spawn_connection(
                 rx_history.clone(),
                 params.port.clone(),
                 window_label.clone(),
+                line_index.clone(),
             );
             
             (r_handle, w_handle, "independent".to_string())
@@ -222,6 +230,7 @@ pub fn spawn_connection(
                 rx_history.clone(),
                 params.port.clone(),
                 window_label.clone(),
+                line_index.clone(),
             );
 
             let w_handle = writer::spawn_writer(
@@ -233,6 +242,7 @@ pub fn spawn_connection(
                 rx_history.clone(),
                 params.port.clone(),
                 window_label.clone(),
+                line_index.clone(),
             );
             
             (r_handle, w_handle, "shared".to_string())

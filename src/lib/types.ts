@@ -9,6 +9,8 @@ export interface LogLine {
   ascii: string;
   hex: string;
   is_error: boolean;
+  /** 本次连接期间的行号(tx+rx 共用,开端口=1)。0 表示旧数据(前端显示为空)。 */
+  line_index: number;
 }
 
 export interface ConnectionState {
@@ -100,6 +102,8 @@ export interface Settings {
     auto_scroll: boolean;
     ring_buffer_capacity: number;
     show_timestamp: boolean;
+    /** 日志区最左侧行号(本次连接期间 index)开关 */
+    show_line_index: boolean;
     log_send: boolean;
     log_font_size: number;
     log_line_height: number;

@@ -55,7 +55,7 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_histo
 /// 把 LineAssembler 中不换行的残尾（如 shell 的 "> " 提示符）补打为一行。
 /// 残尾没有换行符，正常切行永远等不到，需在设备输出间歇（读超时）时主动取出。
 /// 复用 flush_lines：统一处理前端 emit + 文件日志。
-fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>) {
+fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>, line_index: &Arc<AtomicU64>) {
     let Some(tail) = assembler.flush() else {
         return;
     };
@@ -63,7 +63,8 @@ fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHand
         return;
     }
     let ts = now_local_ts();
-    let line = LogLine::new(ts, Dir::Rx, tail, &[]);
+    let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+    let line = LogLine::new(ts, Dir::Rx, tail, &[], idx);
     pending_lines.push(line);
     flush_lines(app_handle, pending_lines, rx_history, window_label);
 }
@@ -77,6 +78,7 @@ pub fn spawn_reader(
     rx_history: Arc<RxHistory>,
     port_name: String,
     window_label: Arc<RwLock<String>>,
+    line_index: Arc<AtomicU64>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         let mut buf = [0u8; 1024];
@@ -93,7 +95,8 @@ pub fn spawn_reader(
                     // 也避免同一逻辑输出（如 help 列表）各行时间戳跳动。
                     let ts = now_local_ts();
                     for raw in lines {
-                        let line = LogLine::new(ts.clone(), Dir::Rx, raw, &[]);
+                        let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                        let line = LogLine::new(ts.clone(), Dir::Rx, raw, &[], idx);
                         pending_lines.push(line);
                     }
 
@@ -118,7 +121,7 @@ pub fn spawn_reader(
                     // 把不换行的残尾（如 shell 的 "> " 提示符）也补打出来，
                     // 避免残留行滞留到下一批、带上下一个时间戳。
                     flush_lines(&app_handle, &mut pending_lines, &rx_history, &window_label);
-                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history, &window_label);
+                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history, &window_label, &line_index);
                 }
                 Err(e) => {
                     // 共享模式下锁错误不致命，继续运行

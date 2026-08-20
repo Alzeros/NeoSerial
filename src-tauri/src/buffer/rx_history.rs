@@ -76,10 +76,10 @@ mod tests {
     use crate::buffer::log_line::{Dir, LogLine};
 
     fn rx(content: &[u8]) -> LogLine {
-        LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[])
+        LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[], 0)
     }
     fn tx(content: &[u8]) -> LogLine {
-        LogLine::new("08:00:00.000".into(), Dir::Tx, content.to_vec(), &[])
+        LogLine::new("08:00:00.000".into(), Dir::Tx, content.to_vec(), &[], 0)
     }
 
     #[test]

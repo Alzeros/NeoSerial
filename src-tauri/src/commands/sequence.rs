@@ -71,11 +71,11 @@ pub fn sequence_run_inner(
     run_count: u32,
     loop_interval: u32,
 ) -> Result<(), String> {
-    // 1. 取连接句柄(write_tx + rx_history + window_label)
-    let (write_tx, rx_history, window_label) = {
+    // 1. 取连接句柄(write_tx + rx_history + window_label + line_index)
+    let (write_tx, rx_history, window_label, line_index) = {
         let conns = connections.lock().map_err(|e| e.to_string())?;
         let handle = conns.get(port).ok_or("未连接串口")?;
-        (handle.write_tx.clone(), handle.rx_history.clone(), handle.window_label.clone())
+        (handle.write_tx.clone(), handle.rx_history.clone(), handle.window_label.clone(), handle.line_index.clone())
     };
     let port = port.to_string();
 
@@ -142,7 +142,7 @@ pub fn sequence_run_inner(
                     // + 文件日志,与 send 命令同一逻辑。log_send=false 时不回显/记录。
                     // (Task 2 deferred minor:原内联逻辑不 push Tx 到 rx_history,
                     //  导致 sequence 发送的命令在 get_history_since 不可见,已修。)
-                    emit_tx_line(&app_handle, &rx_history, &window_label, data.clone());
+                    emit_tx_line(&app_handle, &rx_history, &window_label, &line_index, data.clone());
                     // 塞 channel,writer 异步写(SendSilent:不 emit,emit_tx_line 已 emit)
                     let _ = write_tx.send(WriteCommand::SendSilent(data));
                 }

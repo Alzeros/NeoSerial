@@ -32,6 +32,8 @@ export const displayMode = $state<{ value: 'ascii' | 'hex' }>({ value: 'ascii' }
 /** 文本模式的编码方式：'ascii' | 'utf8' | 'gbk'，默认 ascii */
 export const textEncoding = $state<{ value: 'ascii' | 'utf8' | 'gbk' }>({ value: 'ascii' });
 export const showTimestamp = $state<{ value: boolean }>({ value: true });
+/** 日志区最左侧行号(本次连接期间 index)开关 */
+export const showLineIndex = $state<{ value: boolean }>({ value: false });
 export const autoScroll = $state<{ value: boolean }>({ value: true });
 export const logVersion = $state<{ value: number }>({ value: 0 });
 /** LogView 滚动容器的 DOM 引用，供 App.svelte 的回调函数使用 */

@@ -24,6 +24,7 @@ pub fn spawn_writer(
     rx_history: Arc<RxHistory>,
     port_name: String,
     window_label: Arc<RwLock<String>>,
+    line_index: Arc<AtomicU64>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
         while running.load(std::sync::atomic::Ordering::SeqCst) {
@@ -67,7 +68,8 @@ pub fn spawn_writer(
                                 };
                                 let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
                                 if log_send {
-                                    let line = LogLine::new(now_local_ts(), Dir::Tx, data.clone(), &[]);
+                                    let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                                    let line = LogLine::new(now_local_ts(), Dir::Tx, data.clone(), &[], idx);
                                     let _ = app_handle.emit_to(&wl, "tx-line", line.clone());
                                     // 喂 per-connection 收发历史(tx)。Send 分支(send_file)不经 emit_tx_line,
                                     // 这里补 push,让 get_history_since 也能看到文件发送的 Tx。
