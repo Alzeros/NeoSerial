@@ -13,6 +13,9 @@ use crate::mcp::registry::RegistryHandle;
 pub struct McpShared {
     pub app_handle: tauri::AppHandle,
     pub connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
+    /// 在途连接端口集合,同样必须与 AppState.connecting 是**同一个 Arc** clone,
+    /// 否则 GUI connect 与 agent connect 各占一份,防不住同 port 并发双 spawn。
+    pub connecting: crate::connection::ConnectingSet,
     /// registry 句柄,供 connect/disconnect 工具更新 connections 快照。None 时跳过更新。
     pub registry: Option<RegistryHandle>,
 }

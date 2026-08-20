@@ -164,13 +164,16 @@ impl ServerHandler for NeoserialHandler {
             Tool::new(
                 GET_HISTORY_SINCE,
                 "获取指定端口的收发历史(tx+rx,带方向)。参数: port, seq(基准序号), max_lines(可选,截断最旧), is_hex(可选,默认 false 返回 ascii;true 返回 hex dump,纯 hex 数据应传 true 否则 ascii 显示空)。\
-                 返回 { ok, lines: [{dir, text}], latest_seq }。dir 为 'rx' 或 'tx'。",
+                 返回 { ok, lines: [{dir, text, index, seq}], latest_seq, truncated, dropped }。dir 为 'rx' 或 'tx'。\
+                 latest_seq 是本次实际返回的最后一行序号,始终把它当下次查询的 seq。\
+                 truncated=true 表示还有更多新行被 max_lines 挡住,应立即用 latest_seq 再拉一次直到 false。\
+                 dropped=true 表示游标之后有行已被缓冲容量挤出、取不回来,该段历史不完整。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
                         "port": { "type": "string", "description": "串口名,如 COM3" },
                         "seq": { "type": "integer", "description": "基准序号,返回 seq > 此值 的行" },
-                        "max_lines": { "type": "integer", "description": "最多返回行数,截断最旧" },
+                        "max_lines": { "type": "integer", "description": "最多返回行数,截断最旧。被截断时 latest_seq 只推进到已返回的末行,truncated=true,继续拉即可,不会丢行" },
                         "is_hex": { "type": "boolean", "default": false, "description": "true 返回 hex dump(非可打印字节不丢);纯 hex 数据需传 true" }
                     },
                     "required": ["port", "seq"]
@@ -439,9 +442,19 @@ impl ServerHandler for NeoserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    match tools::connect(&shared, req) {
-                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
-                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    // tools::connect 内含阻塞的 serialport open(实测可卡数秒),
+                    // 直接在这个 async 块里调会占死一个 tokio worker 线程,期间整个
+                    // MCP server 的其它 tool 调用一起卡住。丢到阻塞线程池执行。
+                    let shared_for_connect = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        tools::connect(&shared_for_connect, req)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e.error }),
+                        // 阻塞任务 panic:占位由 ConnectingGuard 的 Drop 清掉,不会留幽灵。
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("连接任务异常终止: {}", e) }),
                     }
                 }
                 _ => serde_json::json!({ "ok": false, "error": format!("未知工具: {}", name) }),

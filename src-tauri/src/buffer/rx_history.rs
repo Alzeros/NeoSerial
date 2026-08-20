@@ -57,6 +57,15 @@ impl RxHistory {
         self.seq.load(Ordering::SeqCst)
     }
 
+    /// buffer 内现存最旧一行的序号(空 buffer 返回 None)。
+    ///
+    /// 用途:让调用方识别"游标已被容量淘汰"。ring buffer 满后 push 会丢最旧行,
+    /// 此后 since(旧游标) 只能返回残余部分且**无任何丢失提示**——agent 会把
+    /// 有空洞的数据当成完整对话流。比对 oldest_seq 与游标即可判定空洞。
+    pub fn oldest_seq(&self) -> Option<u64> {
+        self.inner.lock().ok().and_then(|buf| buf.front().map(|(s, _, _)| *s))
+    }
+
     /// 供 MCP 侧异步等待:notify.notified().await。
     pub fn notify(&self) -> &tokio::sync::Notify {
         &self.notify
@@ -130,6 +139,24 @@ mod tests {
         assert_eq!(rows[0].1, Dir::Tx);
         assert_eq!(rows[1].2.ascii, "c");
         assert_eq!(rows[1].1, Dir::Rx);
+    }
+
+    /// oldest_seq 反映 buffer 内实际最旧行:未溢出时=1,溢出后随之前移。
+    /// get_history_since 靠它判断"游标之后的行是否已被挤出"。
+    #[test]
+    fn test_oldest_seq_tracks_eviction() {
+        let h = RxHistory::new(2);
+        assert_eq!(h.oldest_seq(), None); // 空 buffer
+        h.push(Dir::Rx, rx(b"a")); // seq1
+        assert_eq!(h.oldest_seq(), Some(1));
+        h.push(Dir::Tx, tx(b"b")); // seq2,未满
+        assert_eq!(h.oldest_seq(), Some(1));
+        h.push(Dir::Rx, rx(b"c")); // seq3,seq1 被挤出
+        assert_eq!(h.oldest_seq(), Some(2));
+        h.push(Dir::Rx, rx(b"d")); // seq4,seq2 被挤出
+        assert_eq!(h.oldest_seq(), Some(3));
+        // 游标停在 seq1 的 agent:oldest(3) > seq+1(2) → 中间有洞(seq2 丢了)
+        assert!(h.oldest_seq().unwrap() > 1 + 1);
     }
 
     #[test]

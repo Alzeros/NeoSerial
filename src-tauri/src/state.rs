@@ -14,6 +14,10 @@ pub struct AppState {
     /// (手动断开和 agent 断开操作同一个 Mutex,失去"同一条数据流"意义则败)。
     /// Tauri command 用 resolve_port 从中取出指定端口或唯一连接。
     pub connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
+    /// 在途连接的端口集合(打开串口是阻塞操作,不能持 connections 锁做)。
+    /// 与 McpShared.connecting 必须是**同一个 Arc** clone,否则 GUI 与 agent 各占一份,
+    /// 两边同时 connect 同一 port 时防不住 TOCTOU。见 ConnectingGuard。
+    pub connecting: crate::connection::ConnectingSet,
     pub file_logger: Mutex<Option<FileLogger>>,
     /// 文件日志的行文本通道。start_logging 时写入,stop_logging 时置 None。
     /// reader/writer 线程通过 app_handle.state() 拿到它,把每行格式化后送存盘线程。
@@ -37,6 +41,7 @@ impl AppState {
     pub fn new(handle: AppHandle) -> Self {
         AppState {
             connections: Arc::new(Mutex::new(HashMap::new())),
+            connecting: Arc::new(Mutex::new(std::collections::HashSet::new())),
             file_logger: Mutex::new(None),
             line_sender: Mutex::new(None),
             last_log_path: Mutex::new(None),

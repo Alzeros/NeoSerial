@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use tauri::{State, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::connection::{ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
+use crate::connection::{ConnectingGuard, ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
 use crate::state::AppState;
 
 /// 副窗口自增序号:每开一个新窗口 +1,label = win-{n}。不绑 port——
@@ -83,40 +83,52 @@ pub fn connect(
         flow_control,
     };
 
-    // 持锁贯穿 check→spawn→insert,防 TOCTOU 竞态:
-    // 若 check 与 insert 之间放锁,另一线程可能在此间隙 connect 同一 port,
-    // 双方都通过 contains_key 检查 → 双 spawn → 连接泄漏。全程持同一把锁串行化。
-    let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
     // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label)。
     let caller_label = webview_window.label().to_string();
-    if let Some(existing) = conns.get(&port) {
-        // 僵尸检测:running=false 说明 reader/writer 已退出(拔线等被动断开),
-        // 但 monitoring 线程还没来得及 remove(或线程清理与用户重连有竞态)。
-        // 此时该 handle 已失效,remove 后走正常 spawn 重建,避免报"已连接"卡死重连。
-        if is_zombie(existing) {
-            conns.remove(&port);
-        } else if existing_label_is_mcp(existing) {
-            // port 已连:看是谁连的。MCP 连的(window_label=mcp-xxx)→GUI 接管,改 window_label 为当前窗口,
-            // 事件从此显示在该 GUI 窗口。别的 GUI 窗口连的→报已连接(防两个窗口抢同一 port)。
-            // 接管 MCP 连接:改 window_label,reader/writer 下次 emit 自动用新值
-            if let Ok(mut wl) = existing.window_label.write() {
-                *wl = caller_label.clone();
+
+    // check→占位 持锁(原子,防 TOCTOU),真正的 spawn 放到锁外。
+    // 不能持锁贯穿到 spawn:spawn_connection 内的 serialport open + DTR/RTS 拉高是阻塞
+    // 调用(实测可卡数秒),持全局 connections 锁做它会把其它已连端口的
+    // send/disconnect/get_status/reset_stats 一起冻住。改用 ConnectingGuard 占位守 TOCTOU。
+    let guard = {
+        let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
+        if let Some(existing) = conns.get(&port) {
+            // 僵尸检测:running=false 说明 reader/writer 已退出(拔线等被动断开),
+            // 但 monitoring 线程还没来得及 remove(或线程清理与用户重连有竞态)。
+            // 此时该 handle 已失效,remove 后走正常 spawn 重建,避免报"已连接"卡死重连。
+            if is_zombie(existing) {
+                conns.remove(&port);
+            } else if existing_label_is_mcp(existing) {
+                // port 已连:看是谁连的。MCP 连的(window_label=mcp-xxx)→GUI 接管,改 window_label 为当前窗口,
+                // 事件从此显示在该 GUI 窗口。别的 GUI 窗口连的→报已连接(防两个窗口抢同一 port)。
+                // 接管 MCP 连接:改 window_label,reader/writer 下次 emit 自动用新值
+                if let Ok(mut wl) = existing.window_label.write() {
+                    *wl = caller_label.clone();
+                }
+                // 接管成功:发连接成功事件到当前窗口,让 UI 显示已连
+                drop(conns);
+                let _ = app_handle.emit_to(&caller_label, "connection-state", crate::connection::ConnectionState {
+                    connected: true,
+                    port: Some(port.clone()),
+                    baud_rate: Some(params.baud_rate),
+                });
+                // 接管让一个 mcp-only 连接消失(window_label 从 mcp- 改成 GUI label),
+                // 通知所有窗口刷新 chip。
+                let _ = app_handle.emit("mcp-connections-changed", ());
+                return Ok(());
+            } else {
+                return Err(format!("端口 {} 已连接", port));
             }
-            // 接管成功:发连接成功事件到当前窗口,让 UI 显示已连
-            drop(conns);
-            let _ = app_handle.emit_to(&caller_label, "connection-state", crate::connection::ConnectionState {
-                connected: true,
-                port: Some(port.clone()),
-                baud_rate: Some(params.baud_rate),
-            });
-            // 接管让一个 mcp-only 连接消失(window_label 从 mcp- 改成 GUI label),
-            // 通知所有窗口刷新 chip。
-            let _ = app_handle.emit("mcp-connections-changed", ());
-            return Ok(());
-        } else {
-            return Err(format!("端口 {} 已连接", port));
         }
-    }
+        // 占位:并发的第二个 connect 会在此被挡回,不会二次 spawn。
+        // 该 port 已在途(可能是 agent 正在连)→ 报错让用户重试,而不是阻塞等它开完。
+        match ConnectingGuard::acquire(&state.connecting, &port) {
+            Some(g) => g,
+            None => return Err(format!("端口 {} 正在连接中,请稍后重试", port)),
+        }
+    }; // conns 锁在此释放,只有 guard 还占着位
+
+    // 锁外执行阻塞的打开操作。任何 return 路径上 guard 都会析构并清掉占位。
     let (handle, _mode) = match spawn_connection(params, app_handle.clone(), caller_label, state.connections.clone(), state.registry.clone(), false) {
         Ok(h) => h,
         Err(e) => {
@@ -133,8 +145,13 @@ pub fn connect(
             return Err(e);
         }
     };
-    conns.insert(port.clone(), handle);
-    drop(conns);
+    // 重取锁 insert。占位期间没有别的 connect 能走到 spawn,这里必然是空位。
+    {
+        let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
+        conns.insert(port.clone(), handle);
+    }
+    // 先 insert 再放占位:两者之间到来的 connect 会命中 connections 走正常复用/接管路径。
+    drop(guard);
     Ok(())
 }
 

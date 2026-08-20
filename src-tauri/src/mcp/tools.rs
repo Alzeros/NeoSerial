@@ -7,7 +7,7 @@ use tokio::time::timeout;
 
 use crate::buffer::rx_history::RxHistory;
 use crate::commands::send::emit_tx_line;
-use crate::connection::{spawn_connection, SerialParams, WriteCommand};
+use crate::connection::{spawn_connection, ConnectingGuard, SerialParams, WriteCommand};
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
 
 use super::registry::ConnInfo;
@@ -115,19 +115,28 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
 /// 说明是 monitoring 线程还没来得及清理的僵尸 handle,remove 后重建,避免 agent
 /// 操作死连接。
 pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, ErrorResp> {
-    let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-    if let Some(existing) = conns.get(&req.port) {
-        // 僵尸:running=false → remove 重建(不直接返回 ok,否则操作的是死连接)
-        if !existing.running.load(std::sync::atomic::Ordering::SeqCst) {
-            conns.remove(&req.port);
-        } else {
-            // 复用:port 已连且仍存活 → 直接返回 ok(不重建)。GUI 连的 agent 能操作,反之亦然。
-            return Ok(ConnectResp {
-                ok: true,
-                mode: Some("independent".to_string()),
-            });
+    // check→占位 持锁(原子),阻塞的 spawn 放锁外——否则打开一个坏端口期间,
+    // 全局 connections 锁被独占,其它已连端口的 send/disconnect/get_status 全被挡住。
+    let guard = {
+        let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        if let Some(existing) = conns.get(&req.port) {
+            // 僵尸:running=false → remove 重建(不直接返回 ok,否则操作的是死连接)
+            if !existing.running.load(std::sync::atomic::Ordering::SeqCst) {
+                conns.remove(&req.port);
+            } else {
+                // 复用:port 已连且仍存活 → 直接返回 ok(不重建)。GUI 连的 agent 能操作,反之亦然。
+                return Ok(ConnectResp {
+                    ok: true,
+                    mode: Some("independent".to_string()),
+                });
+            }
         }
-    }
+        // 占位守 TOCTOU:另一个 connect(GUI 或本工具并发调用)在途时挡回,不二次 spawn。
+        match ConnectingGuard::acquire(&shared.connecting, &req.port) {
+            Some(g) => g,
+            None => return Err(ErrorResp::new(format!("端口 {} 正在连接中,请稍后重试", req.port))),
+        }
+    }; // conns 锁在此释放
     let params = SerialParams {
         port: req.port.clone(),
         baud_rate: req.baud_rate,
@@ -144,6 +153,7 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
     // (见 Tauri connect 的复用逻辑)。这里只处理 MCP 首次建连。
     let window_label = format!("mcp-{}", req.port);
+    // 锁外执行阻塞的打开操作。任何 return 路径上 guard 都会析构并清掉占位。
     let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label, shared.connections.clone(), shared.registry.clone(), true) {
         Ok(h) => h,
         Err(e) => {
@@ -159,12 +169,17 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
             }
         }
     };
-    conns.insert(req.port.clone(), handle);
-    // 锁仍持有:构造当前所有连接的完整快照(含刚 insert 的这条),用于整体更新 registry。
-    let snapshot: Vec<ConnInfo> = conns.values()
-        .map(|h| ConnInfo { com: h.port.clone(), baud: h.baud })
-        .collect();
-    drop(conns);
+    // 重取锁 insert + 取快照。占位期间没有别的 connect 能走到 spawn,这里必然是空位。
+    let snapshot: Vec<ConnInfo> = {
+        let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        conns.insert(req.port.clone(), handle);
+        // 持锁期间构造当前所有连接的完整快照(含刚 insert 的这条),用于整体更新 registry。
+        conns.values()
+            .map(|h| ConnInfo { com: h.port.clone(), baud: h.baud })
+            .collect()
+    };
+    // 先 insert 再放占位:两者之间到来的 connect 会命中 connections 走正常复用路径。
+    drop(guard);
     if let Some(reg) = shared.registry.as_ref() {
         let _ = reg.update_connections(snapshot);
     }
@@ -335,7 +350,7 @@ pub struct GetHistorySinceReq {
     pub is_hex: Option<bool>,
 }
 
-/// 历史行:方向(rx/tx)+ 文本(按 is_hex 选 ascii/hex)+ 行号(index)。
+/// 历史行:方向(rx/tx)+ 文本(按 is_hex 选 ascii/hex)+ 行号(index)+ 序号(seq)。
 #[derive(Serialize)]
 pub struct HistoryLine {
     pub dir: String,
@@ -343,19 +358,29 @@ pub struct HistoryLine {
     /// 本次连接期间的行号(tx+rx 共用,开端口=1)。
     /// 旧历史(连接前已存的,line_index=0)按返回顺序回填递增,保证连续可读。
     pub index: u64,
+    /// 该行的全局序号,与请求参数 `seq` 同一空间(index 是 per-conn 行号,不能当游标用)。
+    /// agent 可拿任意一行的 seq 当下次查询游标,实现精确续读与去重。
+    pub seq: u64,
 }
 
 #[derive(Serialize)]
 pub struct GetHistorySinceResp {
     pub ok: bool,
     pub lines: Vec<HistoryLine>,
+    /// 下次查询应传入的游标 = **本次实际返回的最后一行的 seq**。
+    /// 被 max_lines 截断时它不等于全量最大序号——否则被截掉的行永久取不回。
     pub latest_seq: u64,
+    /// true = 还有更多新行未返回(被 max_lines 截断)。
+    /// agent 应立刻用本次的 latest_seq 继续拉,直到 truncated=false。
+    pub truncated: bool,
+    /// true = 检测到空洞:游标之后的部分行已被 ring buffer 容量挤出,无法取回。
+    /// 据此区分"数据不完整"与"没有新数据",而不是把有洞的流当完整流。
+    pub dropped: bool,
 }
 
 /// 拉取序号 > seq 的全部历史行(tx+rx,带方向)。供 agent 主动查对话流/异步 URC。
 /// 用指定 port 的 per-conn rx_history:多连接不串数据。
 pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHistorySinceResp {
-    let is_hex = req.is_hex.unwrap_or(false);
     // 取该 port 的 per-conn rx_history(锁只用于取 Arc,不跨 await)
     let rx_history = match shared.connections.lock() {
         Ok(conns) => match conns.get(&req.port) {
@@ -365,6 +390,8 @@ pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHist
                     ok: false,
                     lines: Vec::new(),
                     latest_seq: 0,
+                    truncated: false,
+                    dropped: false,
                 };
             }
         },
@@ -373,16 +400,32 @@ pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHist
                 ok: false,
                 lines: Vec::new(),
                 latest_seq: 0,
+                truncated: false,
+                dropped: false,
             };
         }
     };
-    let (rows, latest) = rx_history.since(req.seq);
+    build_history_resp(&rx_history, req.seq, req.max_lines, req.is_hex.unwrap_or(false))
+}
+
+/// 从 history 读取并组装响应。与 McpShared / AppHandle 解耦,便于直接单测游标语义
+/// (截断时 latest_seq 必须只推进到已返回的末行,否则丢数据)。
+fn build_history_resp(
+    rx_history: &RxHistory,
+    req_seq: u64,
+    max_lines: Option<usize>,
+    is_hex: bool,
+) -> GetHistorySinceResp {
+    let (rows, latest) = rx_history.since(req_seq);
+    // 空洞检测:buffer 内最旧行已经跳过了游标的下一条(req.seq + 1),说明中间那些行
+    // 被容量挤出、永久取不回。不报的话 agent 无法区分"完整续读"与"中间掉了一段"。
+    let dropped = matches!(rx_history.oldest_seq(), Some(oldest) if oldest > req_seq.saturating_add(1));
     // 旧历史(连接前,line_index=0)按返回顺序回填递增,保证连续;
     // 新数据(连接后)用真实 line_index。
     let mut fill_idx: u64 = 0;
     let mut lines: Vec<HistoryLine> = rows
         .into_iter()
-        .map(|(_, dir, l)| {
+        .map(|(seq, dir, l)| {
             let idx = if l.line_index == 0 {
                 fill_idx += 1;
                 fill_idx
@@ -396,16 +439,29 @@ pub fn get_history_since(shared: &McpShared, req: GetHistorySinceReq) -> GetHist
                 },
                 text: if is_hex { l.hex } else { l.ascii },
                 index: idx,
+                seq,
             }
         })
         .collect();
-    if let Some(max) = req.max_lines {
-        // 最旧优先:截断保留前 max 条(先进先出,不跳过早期数据)
-        if lines.len() > max {
+    // 最旧优先:截断保留前 max 条(先进先出,不跳过早期数据)
+    let truncated = match max_lines {
+        Some(max) if lines.len() > max => {
             lines.truncate(max);
+            true
         }
-    }
-    GetHistorySinceResp { ok: true, lines, latest_seq: latest }
+        _ => false,
+    };
+    // 截断后游标只能推进到"实际返回的最后一行",不能返回全量最大序号:
+    // 否则末行与 latest 之间那批行(agent 从没见过)会被游标跳过而永久丢失,
+    // 且响应里没有任何线索能把游标退回去 —— 对话流出现无法察觉的空洞。
+    // max_lines=0 的极端情况:一行都没返回,游标必须原地不动(返回 req.seq),
+    // 否则一次调用就吞掉整段历史。
+    let latest_seq = if truncated {
+        lines.last().map(|l| l.seq).unwrap_or(req_seq)
+    } else {
+        latest
+    };
+    GetHistorySinceResp { ok: true, lines, latest_seq, truncated, dropped }
 }
 
 // ============ send_and_read (async) ============
@@ -769,6 +825,126 @@ mod tests {
     fn test_parse_send_empty_text_still_adds_ending() {
         let d = parse_send_data("", &Some("Crlf".into()), &None).unwrap();
         assert_eq!(d, b"\r\n");
+    }
+
+    // ============ get_history_since 游标语义(截断不丢数据) ============
+
+    mod history_cursor {
+        use super::super::build_history_resp;
+        use crate::buffer::log_line::{Dir, LogLine};
+        use crate::buffer::rx_history::RxHistory;
+
+        fn line(content: &[u8]) -> LogLine {
+            LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[], 0)
+        }
+
+        fn history_with(n: usize, cap: usize) -> RxHistory {
+            let h = RxHistory::new(cap);
+            for i in 1..=n {
+                h.push(Dir::Rx, line(format!("L{}", i).as_bytes()));
+            }
+            h
+        }
+
+        /// 回归测试(本次修复的核心):截断时 latest_seq 必须等于已返回的末行 seq。
+        /// 旧实现返回全量最大序号 → agent 拿它当游标 → 被截掉的行永久拉不回来。
+        #[test]
+        fn truncated_cursor_stops_at_last_returned_line() {
+            let h = history_with(10, 100);
+            let r = build_history_resp(&h, 0, Some(3), false);
+            assert_eq!(r.lines.len(), 3);
+            assert!(r.truncated);
+            // 保留最旧 3 条 → seq 1,2,3;游标必须停在 3,不能是 10
+            assert_eq!(r.lines.last().unwrap().seq, 3);
+            assert_eq!(r.latest_seq, 3);
+        }
+
+        /// 用返回的 latest_seq 反复续拉,必须完整取回全部 10 行、零重复零丢失。
+        #[test]
+        fn repeated_pulls_cover_every_line() {
+            let h = history_with(10, 100);
+            let mut cursor = 0u64;
+            let mut seen: Vec<String> = Vec::new();
+            loop {
+                let r = build_history_resp(&h, cursor, Some(3), false);
+                if r.lines.is_empty() {
+                    break;
+                }
+                seen.extend(r.lines.iter().map(|l| l.text.clone()));
+                cursor = r.latest_seq;
+                if !r.truncated {
+                    break;
+                }
+            }
+            let expect: Vec<String> = (1..=10).map(|i| format!("L{}", i)).collect();
+            assert_eq!(seen, expect, "续拉应无缝覆盖全部行");
+        }
+
+        /// max_lines=0:一行都没返回,游标必须原地不动。
+        /// 若返回全量最大序号,一次调用就把整段历史吞掉(最坏的丢数据形态)。
+        #[test]
+        fn zero_max_lines_does_not_advance_cursor() {
+            let h = history_with(5, 100);
+            let r = build_history_resp(&h, 0, Some(0), false);
+            assert!(r.lines.is_empty());
+            assert!(r.truncated);
+            assert_eq!(r.latest_seq, 0, "游标不得前移,否则 5 行全丢");
+            // 用返回的游标重拉,数据还在
+            let again = build_history_resp(&h, r.latest_seq, None, false);
+            assert_eq!(again.lines.len(), 5);
+        }
+
+        /// 未截断时 latest_seq 仍是全量最大序号,truncated=false。
+        #[test]
+        fn untruncated_returns_full_latest() {
+            let h = history_with(4, 100);
+            let r = build_history_resp(&h, 0, Some(10), false);
+            assert_eq!(r.lines.len(), 4);
+            assert!(!r.truncated);
+            assert_eq!(r.latest_seq, 4);
+            // max_lines 恰好等于行数,也不算截断
+            let exact = build_history_resp(&h, 0, Some(4), false);
+            assert!(!exact.truncated);
+            assert_eq!(exact.latest_seq, 4);
+        }
+
+        /// 无新数据:空 lines,游标不回退。
+        #[test]
+        fn no_new_data_keeps_cursor() {
+            let h = history_with(3, 100);
+            let r = build_history_resp(&h, 3, Some(10), false);
+            assert!(r.lines.is_empty());
+            assert!(!r.truncated);
+            assert_eq!(r.latest_seq, 3);
+            assert!(!r.dropped);
+        }
+
+        /// ring buffer 容量溢出:游标之后的行已被挤出 → dropped=true。
+        /// 这段数据取不回来,但至少 agent 能知道流不完整,而非误判"没数据"。
+        #[test]
+        fn evicted_lines_reported_as_dropped() {
+            let h = history_with(10, 3); // 只留 seq 8,9,10
+            let r = build_history_resp(&h, 2, None, false);
+            assert!(r.dropped, "游标 2 之后的 seq 3..7 已被挤出,应报 dropped");
+            assert_eq!(r.lines.len(), 3);
+            assert_eq!(r.lines.first().unwrap().seq, 8);
+            // 未溢出的正常续读不误报
+            let fresh = history_with(3, 100);
+            assert!(!build_history_resp(&fresh, 0, None, false).dropped);
+            // 游标紧邻 buffer 内最旧行(oldest == seq+1),是无缝续读,不算空洞
+            assert!(!build_history_resp(&h, 7, None, false).dropped);
+        }
+
+        /// 每行都带 seq,且与请求参数同一空间:可用任意一行的 seq 当游标续读。
+        #[test]
+        fn per_line_seq_usable_as_cursor() {
+            let h = history_with(5, 100);
+            let all = build_history_resp(&h, 0, None, false);
+            let mid = all.lines[1].seq; // 第二行 seq=2
+            let rest = build_history_resp(&h, mid, None, false);
+            assert_eq!(rest.lines.len(), 3);
+            assert_eq!(rest.lines.first().unwrap().text, "L3");
+        }
     }
 
     // ============ per-connection history 隔离契约 ============

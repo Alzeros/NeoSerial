@@ -32,6 +32,11 @@ impl<T: Clone> RingBuffer<T> {
         self.buf.iter().cloned().collect()
     }
 
+    /// 当前最旧元素的引用（空返回 None）。只读队首，不像 snapshot 那样克隆整个缓冲。
+    pub fn front(&self) -> Option<&T> {
+        self.buf.front()
+    }
+
     pub fn clear(&mut self) {
         self.buf.clear();
     }

@@ -3,7 +3,7 @@ pub mod reader;
 pub mod writer;
 pub mod port_wrapper;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
@@ -113,6 +113,50 @@ pub struct ErrorEvent {
 pub struct ConnectionMode {
     /// "independent" 表示独立句柄模式，"shared" 表示共享端口降级模式
     pub mode: String,
+}
+
+/// 在途连接的端口集合。connect 在放掉 `connections` 锁之前把 port 记进来占位,
+/// 打开完成(或失败)后移除。见 [`ConnectingGuard`]。
+pub type ConnectingSet = Arc<Mutex<HashSet<String>>>;
+
+/// 在途连接占位守卫:创建时把 port 记入 `connecting` 集合,Drop 时自动移除。
+///
+/// 为什么需要它:`spawn_connection` 里的 `serialport::open()` 与 DTR/RTS 拉高是**阻塞**
+/// 驱动调用(Windows 上实测可卡数百 ms 到十几秒)。若为了防 TOCTOU 而全程持 `connections`
+/// 全局锁,打开一个坏端口期间,其它所有已连端口的 send/disconnect/get_status/reset_stats
+/// 都会被这把锁挡住——正好违背"并发收发不阻塞"。
+///
+/// 所以拆成:持锁期间只做检查 + 占位(原子),阻塞的 open 放到锁外,完成后重取锁 insert。
+/// 占位守住了 TOCTOU:并发的第二个 connect 即使看到 `connections` 里没有该 port,
+/// 也会在 `acquire` 处被挡回,不会二次 spawn 造成连接泄漏。
+///
+/// 用 RAII 而非手动 remove:`spawn_connection` 失败有多条 early return 分支(端口占用
+/// 文案、通用错误…),漏掉任一条都会留下永久幽灵占位,该端口从此再也连不上。
+pub struct ConnectingGuard {
+    set: ConnectingSet,
+    port: String,
+}
+
+impl ConnectingGuard {
+    /// 尝试为 port 占位。已有在途连接返回 None(调用方应报"正在连接中")。
+    ///
+    /// **必须在持 `connections` 锁期间调用**——"port 不在 connections"的检查与占位
+    /// 只有在同一临界区内才是原子的。锁序固定为 connections → connecting,勿反向。
+    pub fn acquire(set: &ConnectingSet, port: &str) -> Option<ConnectingGuard> {
+        let mut in_flight = set.lock().ok()?;
+        if !in_flight.insert(port.to_string()) {
+            return None;
+        }
+        Some(ConnectingGuard { set: set.clone(), port: port.to_string() })
+    }
+}
+
+impl Drop for ConnectingGuard {
+    fn drop(&mut self) {
+        if let Ok(mut in_flight) = self.set.lock() {
+            in_flight.remove(&self.port);
+        }
+    }
 }
 
 /// 建立串口连接。成功返回 (ConnectionHandle, mode_str)，失败返回错误信息。

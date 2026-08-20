@@ -37,7 +37,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 | `get_status` | 查连接状态 + rx 序号 |
 | `send` | 发数据（不读） |
 | `send_and_read` | 发后阻塞读响应（静默间隙超时） |
-| `get_history_since` | 拉收发历史（tx+rx，带方向，seq 基准） |
+| `get_history_since` | 拉收发历史（tx+rx，带方向，seq 基准，截断可续读不丢行） |
 | `reset_stats` | 清零收发字节统计 |
 | `send_file` | 发送文件（二进制安全，固件/烧录） |
 | `start_logging` / `stop_logging` | 开始/停止存盘（全局） |
@@ -103,6 +103,12 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ### per-connection 收发历史隔离
 
 每个 `ConnectionHandle` 持 `Arc<RxHistory>`（存 (seq, Dir, LogLine)，tx+rx 共用序号）。reader 喂 Rx、`emit_tx_line` 喂 Tx。`send_and_read` 从该连接 history 读、`get_history_since` 返回该连接的，多连接不串数据。
+
+`get_history_since` 的游标契约：返回的 `latest_seq` 是**本次实际返回的最后一行**的 seq，不是全量最大序号。被 `max_lines` 截断时 `truncated=true`，agent 用 `latest_seq` 继续拉即可无缝续读；若返回全量最大序号，被截掉那批行会被游标跳过而永久丢失。每行另带 `seq` 供精确续读/去重。缓冲容量（10,000 行）溢出导致游标之后有行被挤出时 `dropped=true`，让 agent 能区分“数据不完整”与“没有新数据”。
+
+### 连接建立不阻塞其它端口
+
+`serialport::open()` + DTR/RTS 拉高是阻塞驱动调用（Windows 实测可卡数秒）。connect 只在持 `connections` 锁期间做检查并往 `connecting` 集合插入占位（`ConnectingGuard`，RAII 保证任何失败路径都清位），阻塞的打开放到锁外，完成后重取锁 insert。占位守住 TOCTOU（并发第二个 connect 被挡回而非二次 spawn），同时打开某端口期间其它已连端口的 send/disconnect/get_status 不受影响。MCP 侧的 `connect` 另经 `spawn_blocking` 执行，避免占死 tokio worker 拖住整个 MCP server。
 
 ### 前端
 
