@@ -56,6 +56,11 @@ pub fn spawn_writer(
                                         let cfg = state.settings.lock().ok().map(|s| DisplayConfig {
                                             show_timestamp: s.ui.show_timestamp,
                                             log_send: s.ui.log_send,
+                                            dir_label: if s.ui.log_dir_label == "full" {
+                                                crate::util::log_format::DirLabel::Full
+                                            } else {
+                                                crate::util::log_format::DirLabel::Short
+                                            },
                                         });
                                         let sender = state
                                             .line_sender
