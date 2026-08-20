@@ -104,18 +104,27 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
 }
 
 /// 连接串口(复用 spawn_connection + 端口占用文案)。
-/// **复用语义**:若该 port 已被(GUI 或前次 MCP)连接,直接复用返回 ok——
+/// **复用语义**:若该 port 已被(GUI 或前次 MCP)连接且仍存活,直接复用返回 ok——
 /// 不报冲突、不重建。agent 与人共享同一连接:agent 发命令的事件显示在 GUI 窗口
 /// (用该连接的 window_label),GUI 能看到;agent 读同一份 rx_history。
 /// 这符合 CLAUDE.md "NeoSerial 持有串口,agent 不直接占端口"——MCP 操作已有连接。
+///
+/// **僵尸检测**:若 port 已存在但 running=false(reader/writer 已退出,如拔线),
+/// 说明是 monitoring 线程还没来得及清理的僵尸 handle,remove 后重建,避免 agent
+/// 操作死连接。
 pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, ErrorResp> {
     let mut conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-    // 复用:port 已连 → 直接返回 ok(不重建)。GUI 连的 agent 能操作,反之亦然。
     if let Some(existing) = conns.get(&req.port) {
-        return Ok(ConnectResp {
-            ok: true,
-            mode: Some("independent".to_string()),
-        });
+        // 僵尸:running=false → remove 重建(不直接返回 ok,否则操作的是死连接)
+        if !existing.running.load(std::sync::atomic::Ordering::SeqCst) {
+            conns.remove(&req.port);
+        } else {
+            // 复用:port 已连且仍存活 → 直接返回 ok(不重建)。GUI 连的 agent 能操作,反之亦然。
+            return Ok(ConnectResp {
+                ok: true,
+                mode: Some("independent".to_string()),
+            });
+        }
     }
     let params = SerialParams {
         port: req.port.clone(),
@@ -133,7 +142,7 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
     // (见 Tauri connect 的复用逻辑)。这里只处理 MCP 首次建连。
     let window_label = format!("mcp-{}", req.port);
-    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label) {
+    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label, shared.connections.clone(), shared.registry.clone()) {
         Ok(h) => h,
         Err(e) => {
             let lower = e.to_lowercase();

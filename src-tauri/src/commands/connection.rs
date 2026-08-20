@@ -90,10 +90,14 @@ pub fn connect(
     // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label)。
     let caller_label = webview_window.label().to_string();
     if let Some(existing) = conns.get(&port) {
-        // port 已连:看是谁连的。MCP 连的(window_label=mcp-xxx)→GUI 接管,改 window_label 为当前窗口,
-        // 事件从此显示在该 GUI 窗口。别的 GUI 窗口连的→报已连接(防两个窗口抢同一 port)。
-        let existing_label = existing.window_label.read().ok().map(|s| s.clone()).unwrap_or_default();
-        if existing_label.starts_with("mcp-") {
+        // 僵尸检测:running=false 说明 reader/writer 已退出(拔线等被动断开),
+        // 但 monitoring 线程还没来得及 remove(或线程清理与用户重连有竞态)。
+        // 此时该 handle 已失效,remove 后走正常 spawn 重建,避免报"已连接"卡死重连。
+        if is_zombie(existing) {
+            conns.remove(&port);
+        } else if existing_label_is_mcp(existing) {
+            // port 已连:看是谁连的。MCP 连的(window_label=mcp-xxx)→GUI 接管,改 window_label 为当前窗口,
+            // 事件从此显示在该 GUI 窗口。别的 GUI 窗口连的→报已连接(防两个窗口抢同一 port)。
             // 接管 MCP 连接:改 window_label,reader/writer 下次 emit 自动用新值
             if let Ok(mut wl) = existing.window_label.write() {
                 *wl = caller_label.clone();
@@ -106,10 +110,11 @@ pub fn connect(
                 baud_rate: Some(params.baud_rate),
             });
             return Ok(());
+        } else {
+            return Err(format!("端口 {} 已连接", port));
         }
-        return Err(format!("端口 {} 已连接", port));
     }
-    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), caller_label) {
+    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), caller_label, state.connections.clone(), state.registry.clone()) {
         Ok(h) => h,
         Err(e) => {
             // 端口被占用类:Windows "Access is denied" / "being used by another process"
@@ -128,6 +133,20 @@ pub fn connect(
     conns.insert(port.clone(), handle);
     drop(conns);
     Ok(())
+}
+
+/// 判断已有连接的 window_label 是否为 MCP 前缀(mcp-xxx)。
+/// MCP 首次建连时 window_label = mcp-{port};GUI connect 命中时接管改成本窗口 label。
+fn existing_label_is_mcp(h: &ConnectionHandle) -> bool {
+    h.window_label.read().ok().map(|s| s.starts_with("mcp-")).unwrap_or(false)
+}
+
+/// 判断已有连接是否为僵尸(reader/writer 已退出但 handle 仍残留在 map)。
+/// 被动断开(拔线)时 reader 报错退出 → monitoring 线程未及时 remove 前,
+/// 此 handle running=false 但仍在 map 中。重连 connect 命中它时按僵尸处理:
+/// remove 后重建,不报"已连接"卡死重连。
+fn is_zombie(h: &ConnectionHandle) -> bool {
+    !h.running.load(std::sync::atomic::Ordering::SeqCst)
 }
 
 #[tauri::command]
@@ -332,6 +351,14 @@ mod tests {
         }
     }
 
+    /// 构造僵尸 handle:running=false,模拟 reader/writer 已退出(拔线等被动断开)
+    /// 但 handle 仍残留在 connections map 的状态。
+    fn mock_zombie_handle(port: &str) -> ConnectionHandle {
+        let mut h = mock_handle(port);
+        h.running.store(false, std::sync::atomic::Ordering::SeqCst);
+        h
+    }
+
     #[test]
     fn test_resolve_port_none_single_connection() {
         let mut conns = HashMap::new();
@@ -367,5 +394,33 @@ mod tests {
         conns.insert("COM3".to_string(), mock_handle("COM3"));
         let err = resolve_port(&conns, Some("COM9".to_string())).unwrap_err();
         assert!(err.contains("COM9"), "应包含端口名,实际: {}", err);
+    }
+
+    // ===== 僵尸连接检测契约 =====
+    // 拔线等被动断开时 reader 报错退出 → monitoring 线程 remove 前,
+    // handle 仍残留在 map 且 running=false。重连 connect 命中时按僵尸处理,
+    // 不报"已连接"卡死重连。以下测试锁定判定逻辑:running=false 即僵尸。
+
+    #[test]
+    fn test_alive_handle_not_zombie() {
+        // 正常存活连接:running=true → 非僵尸
+        let h = mock_handle("COM3");
+        assert!(!is_zombie(&h), "存活连接不应判为僵尸");
+    }
+
+    #[test]
+    fn test_dead_handle_is_zombie() {
+        // reader/writer 已退出:running=false → 僵尸
+        let h = mock_zombie_handle("COM3");
+        assert!(is_zombie(&h), "running=false 的残留 handle 应判为僵尸");
+    }
+
+    #[test]
+    fn test_zombie_label_not_mcp() {
+        // 僵尸 handle 的 window_label 判定不受 running 影响:
+        // win-{port} label 非 mcp 前缀,existing_label_is_mcp 返回 false。
+        // (确认僵尸分支靠 running 判定,不与 mcp 接管分支混淆)
+        let h = mock_zombie_handle("COM3");
+        assert!(!existing_label_is_mcp(&h));
     }
 }

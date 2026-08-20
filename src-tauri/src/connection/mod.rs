@@ -3,7 +3,8 @@ pub mod reader;
 pub mod writer;
 pub mod port_wrapper;
 
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 
 use crossbeam_channel::{bounded, Sender};
@@ -116,10 +117,16 @@ pub struct ConnectionMode {
 /// 策略：
 /// 1. 首先尝试 port.try_clone()，为读/写线程各持有一个独立句柄（无锁，性能最优）
 /// 2. 如果克隆失败（某些 USB 转串口芯片不支持），降级为 Arc<Mutex<>> 共享单个端口
+///
+/// `connections` 与 `registry`:监控线程在 reader/writer 退出后(含拔线等被动断开),
+/// 从 map remove 本连接的僵尸 handle 并更新 registry——否则重连会撞到残留条目报"已连接"。
+/// 主动 disconnect 也走同一 remove 路径(disconnect 先 remove,此处幂等)。
 pub fn spawn_connection(
     params: SerialParams,
     app_handle: tauri::AppHandle,
     window_label: String,
+    connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
+    registry: Option<crate::mcp::registry::RegistryHandle>,
 ) -> Result<(ConnectionHandle, String), String> {
     let data_bits = match params.data_bits {
         DataBits::Five => serialport::DataBits::Five,
@@ -261,6 +268,8 @@ pub fn spawn_connection(
     let app_handle_clone = app_handle.clone();
     let running_clone = running.clone();
     let exit_clone = exit.clone();
+    let connections_clone = connections.clone();
+    let registry_clone = registry.clone();
     std::thread::spawn(move || {
         // 阻塞等待两个线程真正退出
         let _ = reader_handle.join();
@@ -270,6 +279,30 @@ pub fn spawn_connection(
         if let Ok(mut e) = exit_clone.0.lock() {
             *e = true;
             exit_clone.1.notify_all();
+        }
+        // 从 connections map 移除本连接的僵尸 handle 并更新 registry。
+        // 被动断开(拔线)时 reader 报错退出 → 此处 remove,避免重连撞残留条目报"已连接"。
+        // 主动 disconnect 已先 remove 此 key,这里 remove 幂等返回 None,不冲突。
+        // 仅当 map 里仍是本 handle(同地址)才 remove——防止把 disconnect 后用同 port 新建的
+        // 连接误删(极小竞态窗口:disconnect 与重连几乎同时)。地址比较兜底。
+        let snapshot: Vec<crate::mcp::registry::ConnInfo> = {
+            if let Ok(mut conns) = connections_clone.lock() {
+                // 用 Arc 地址比较:map 里该 port 的 handle 若仍是本次 spawn 的同一个,
+                // 则是僵尸,remove;若已是新连接(重连覆盖了),则不动。
+                let ours = conns.get(&port_name).map(|h| Arc::as_ptr(&h.window_label) as usize);
+                let is_ours = ours.is_some_and(|addr| addr == (Arc::as_ptr(&window_label_clone) as usize));
+                if is_ours {
+                    conns.remove(&port_name);
+                }
+                conns.values()
+                    .map(|h| crate::mcp::registry::ConnInfo { com: h.port.clone(), baud: h.baud })
+                    .collect()
+            } else {
+                Vec::new()
+            }
+        };
+        if let Some(reg) = registry_clone.as_ref() {
+            let _ = reg.update_connections(snapshot);
         }
         // 定向通知该连接归属的窗口:连接已断开(线程退出,可能是被动断开如拔线)
         if let Ok(wl) = window_label_clone.read() {
