@@ -41,7 +41,7 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'NeoSerial v__VERSION__'
-          releaseBody: 'v__VERSION__'
+          releaseBody: ''
           releaseDraft: false
           prerelease: false
           # 自动生成 latest.json 供 updater endpoint 使用;NSIS 优先
