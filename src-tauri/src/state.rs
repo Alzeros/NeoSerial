@@ -25,6 +25,10 @@ pub struct AppState {
     pub mcp_port: Mutex<Option<u16>>,
     /// MCP registry 句柄,进程退出时调 unregister 注销。
     pub registry: Option<RegistryHandle>,
+    /// 开窗时若带 port,把 {窗口label→(port,baud)} 记进此 pending,
+    /// 新窗口 onMount 调 take_pending_takeover 取走后自动 connect 接管。
+    /// 用 pending 而非 emit 事件:窗口 JS 加载有先后,事件可能早于监听注册丢失。
+    pub pending_takeover: Mutex<std::collections::HashMap<String, (String, u32)>>,
     #[allow(dead_code)]
     pub handle: AppHandle,
 }
@@ -39,6 +43,7 @@ impl AppState {
             settings: Mutex::new(crate::config::settings::Settings::load()),
             mcp_port: Mutex::new(None),
             registry: None,
+            pending_takeover: Mutex::new(std::collections::HashMap::new()),
             handle,
         }
     }

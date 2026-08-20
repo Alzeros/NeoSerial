@@ -44,14 +44,32 @@ export async function resetStats(port: string): Promise<void> {
   await invoke('reset_stats', { port });
 }
 
-/** 开一个新串口窗口(完整界面的复制品,空白未连接)。用户进去自己选端口连接。 */
-export async function openPortWindow(): Promise<void> {
-  await invoke('open_port_window');
+/** 开一个新串口窗口(完整界面的复制品)。
+ *  - 不传 port:空白未连接窗口,用户进去自己选端口连接。
+ *  - 传 port:开窗后发 auto-connect-port 全局事件带 {label,port,baud},
+ *    新窗口 onMount 匹配自己的 label 后自动 connect 接管该 MCP 连接。 */
+export async function openPortWindow(port?: string, baud?: number): Promise<void> {
+  await invoke('open_port_window', { port: port ?? null, baud: baud ?? null });
 }
 
 /** 副窗口 onMount 调:按本窗口 label 反推 port,查连接状态。 */
 export async function getWindowConnState(): Promise<WindowConnState> {
   return await invoke<WindowConnState>('get_window_conn_state');
+}
+
+/** agent 连了但还没 GUI 接管的端口列表(window_label 仍是 mcp- 前缀)。 */
+export interface McpOnlyConn {
+  port: string;
+  baud: number;
+}
+export async function getMcpOnlyConnections(): Promise<McpOnlyConn[]> {
+  return await invoke<McpOnlyConn[]>('get_mcp_only_connections');
+}
+
+/** 新窗口 onMount 调:取走"本窗口被要求自动接管的端口"(openPortWindow(port) 时记的)。
+ *  返回 null 表示无待接管(普通开窗)。取走即删(一次性)。 */
+export async function takePendingTakeover(): Promise<McpOnlyConn | null> {
+  return await invoke<McpOnlyConn | null>('take_pending_takeover');
 }
 
 /** 查活跃会话(其他窗口数 + 连接数),供 main 关闭二次确认。 */
@@ -253,4 +271,10 @@ export interface SequenceChangedEvent {
 }
 export function onSequenceChanged(cb: (e: SequenceChangedEvent) => void) {
   return getCurrentWebview().listen<SequenceChangedEvent>('sequence-changed', (e) => cb(e.payload));
+}
+
+/** mcp-connections-changed 事件:agent 连接/断开或 GUI 接管后,全局触发,
+ *  让所有窗口刷新"待接管"chip 列表。payload 为空。 */
+export function onMcpConnectionsChanged(cb: () => void) {
+  return getCurrentWebview().listen('mcp-connections-changed', () => cb());
 }

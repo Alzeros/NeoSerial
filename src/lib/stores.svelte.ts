@@ -4,6 +4,9 @@ import { defaultScriptCommand, defaultScriptPage, defaultScriptModule, presetScr
 export const connected = $state<{ value: boolean }>({ value: false });
 export const currentPort = $state<{ value: string | null }>({ value: null });
 export const availablePorts = $state<{ value: string[] }>({ value: [] });
+/** agent 连了但还没 GUI 窗口接管的端口(window_label 仍是 mcp- 前缀)。
+ *  供 main 窗口 + 号旁渲染快捷 chip:点击 = 开窗口并接管该连接。 */
+export const mcpOnlyConnections = $state<{ value: { port: string; baud: number }[] }>({ value: [] });
 /** 本窗口绑定的 port:副窗口(win-{port})从 label 反推得到;main 窗口为 null。
  *  所有 invoke 调用(send/disconnect/sequence 等)用它定位目标连接。 */
 export const windowPort = $state<{ value: string | null }>({ value: null });

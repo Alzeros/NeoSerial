@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
-use tauri::{State, Emitter, WebviewUrl, WebviewWindowBuilder};
+use tauri::{State, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
 use crate::connection::{ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
 use crate::state::AppState;
@@ -109,12 +109,15 @@ pub fn connect(
                 port: Some(port.clone()),
                 baud_rate: Some(params.baud_rate),
             });
+            // 接管让一个 mcp-only 连接消失(window_label 从 mcp- 改成 GUI label),
+            // 通知所有窗口刷新 chip。
+            let _ = app_handle.emit("mcp-connections-changed", ());
             return Ok(());
         } else {
             return Err(format!("端口 {} 已连接", port));
         }
     }
-    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), caller_label, state.connections.clone(), state.registry.clone()) {
+    let (handle, _mode) = match spawn_connection(params, app_handle.clone(), caller_label, state.connections.clone(), state.registry.clone(), false) {
         Ok(h) => h,
         Err(e) => {
             // 端口被占用类:Windows "Access is denied" / "being used by another process"
@@ -162,6 +165,63 @@ pub fn disconnect(
     disconnect_port(&state, &app_handle, &resolved)
 }
 
+/// 接管窗口关闭时:把它持有的连接按出身处理。
+/// - mcp_origin=true(agent 经 MCP 建的,GUI 接管的):改回 `mcp-{port}` 回退接管,
+///   连接留着不断,agent 继续用,+ 号红点恢复。
+/// - mcp_origin=false(GUI 自己 connect 新建的):断开连接(原语义,关窗口即断)。
+///
+/// 为什么区分:接管 mcp 连接是 GUI"借走"显示,关窗口应还回去不断开;
+/// GUI 自建的连接没人"等用",关窗口应断开避免泄漏。
+pub fn release_takeover(state: &AppState, app_handle: &tauri::AppHandle, window_label: &str) {
+    // 先扫出本窗口持有的连接:区分 mcp_origin 决定回退还是断开。
+    let (mcp_ports, gui_ports): (Vec<String>, Vec<String>) = {
+        let conns = state.connections.lock().ok();
+        let Some(conns) = conns else { return };
+        let mut mcp = Vec::new();
+        let mut gui = Vec::new();
+        for h in conns.values() {
+            let is_ours = h.window_label.read().ok().map(|wl| wl.as_str() == window_label).unwrap_or(false);
+            if is_ours {
+                if h.mcp_origin.load(std::sync::atomic::Ordering::SeqCst) {
+                    mcp.push(h.port.clone());
+                } else {
+                    gui.push(h.port.clone());
+                }
+            }
+        }
+        (mcp, gui)
+    };
+    // mcp 出身的:改回 mcp label 回退(连接留着)
+    if !mcp_ports.is_empty() {
+        let conns = state.connections.lock().ok();
+        if let Some(conns) = conns {
+            for h in conns.values() {
+                let is_ours = h.window_label.read().ok().map(|wl| wl.as_str() == window_label).unwrap_or(false);
+                if is_ours && h.mcp_origin.load(std::sync::atomic::Ordering::SeqCst) {
+                    let mcp_label = format!("mcp-{}", h.port);
+                    if let Ok(mut wl) = h.window_label.write() {
+                        *wl = mcp_label;
+                    }
+                }
+            }
+        }
+        // 红点状态变化:回退的连接重新进 mcp-only 列表
+        let _ = app_handle.emit("mcp-connections-changed", ());
+        // 通知原窗口:本窗口不再接管,UI 显示断开(连接还在但归 mcp 了)
+        for p in &mcp_ports {
+            let _ = app_handle.emit_to(window_label, "connection-state", crate::connection::ConnectionState {
+                connected: false,
+                port: Some(p.clone()),
+                baud_rate: None,
+            });
+        }
+    }
+    // GUI 出身的:断开(关窗口即断,原语义)
+    for p in &gui_ports {
+        let _ = disconnect_port(state, app_handle, p);
+    }
+}
+
 /// 内部:断开指定 port 的连接(已解析 port)。供 disconnect command 与窗口关闭
 /// (CloseRequested)复用。取 handle 放锁后再等线程退出(持 connections 锁等 1s
 /// 会阻塞所有其他操作,死锁风险——exit 用 handle.exit 内部锁,与 connections 锁无关)。
@@ -192,6 +252,8 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
         port: Some(port.to_string()),
         baud_rate: None,
     });
+    // 连接被移除,mcp-only 集合可能变化,通知所有窗口刷新 chip。
+    let _ = app_handle.emit("mcp-connections-changed", ());
     Ok(())
 }
 
@@ -205,6 +267,29 @@ pub fn list_ports_inner() -> Vec<String> {
 #[tauri::command]
 pub fn list_ports() -> Result<Vec<String>, String> {
     Ok(list_ports_inner())
+}
+
+/// 查询"agent 连了但还没 GUI 窗口接管"的端口:即 window_label 仍是 mcp- 前缀的连接。
+/// 供 main 窗口 + 号旁渲染快捷 chip:点击 = 开窗口并接管该连接。
+/// GUI 接管后 window_label 改成本窗口 label,此处不再返回(从 chip 列表消失)。
+#[derive(serde::Serialize)]
+pub struct McpOnlyConn {
+    pub port: String,
+    pub baud: u32,
+}
+#[tauri::command]
+pub fn get_mcp_only_connections(state: State<'_, AppState>) -> Result<Vec<McpOnlyConn>, String> {
+    let conns = state.connections.lock().map_err(|e| e.to_string())?;
+    let mut list: Vec<McpOnlyConn> = conns.iter()
+        .filter(|(_, h)| {
+            // window_label 仍是 mcp- 前缀 = agent 连的、GUI 还没接管
+            h.window_label.read().ok().map(|s| s.starts_with("mcp-")).unwrap_or(false)
+        })
+        .map(|(_, h)| McpOnlyConn { port: h.port.clone(), baud: h.baud })
+        .collect();
+    // 按 port 排序,保证 chip 顺序稳定(COM 号顺序)
+    list.sort_by(|a, b| a.port.cmp(&b.port));
+    Ok(list)
 }
 
 /// 查询是否有"需要二次确认关闭"的活跃会话:其他可见窗口 + 活跃连接。
@@ -229,8 +314,14 @@ pub fn has_active_sessions(state: State<'_, AppState>, app_handle: tauri::AppHan
     Ok(ActiveSessions { other_windows, connections })
 }
 
-/// 前端调用:开一个新串口窗口(完整界面的复制品,空白未连接)。
-/// label = win-{自增序号},不绑 port——用户进去自己在左上角选端口/波特率再点连接。
+/// 前端调用:开一个新串口窗口(完整界面的复制品)。
+/// - 不传 port:空白未连接窗口,用户进去自己选端口连接。
+/// - 传 port:把 {label→port,baud} 记进 pending,新窗口 onMount 调
+///   take_pending_takeover 取走后自动 connect 接管该 MCP 连接。
+///   用 pending 而非 emit 事件:窗口 JS 加载有先后,事件可能早于监听注册而丢失;
+///   pending 由新窗口 ready 后主动查询,无时序依赖。
+///
+/// label = win-{自增序号},不绑 port——用户在任何窗口都能选任意 port 连。
 ///
 /// **必须 async fn**:Windows 下创建窗口的同步 command 会死锁(spec 警告)。
 /// async 让建窗在 Tauri 主线程异步执行,command 立即返回不阻塞。
@@ -238,9 +329,17 @@ pub fn has_active_sessions(state: State<'_, AppState>, app_handle: tauri::AppHan
 /// 窗口配置与 main 一致(tauri.conf.json):尺寸 1216x750、minWidth 1216、
 /// decorations:false(用自定义 TitleBar,否则会有两排窗口按钮)。
 #[tauri::command]
-pub async fn open_port_window(app_handle: tauri::AppHandle) -> Result<(), String> {
+pub async fn open_port_window(app_handle: tauri::AppHandle, port: Option<String>, baud: Option<u32>) -> Result<(), String> {
     let n = WINDOW_SEQ.fetch_add(1, AtomicOrdering::SeqCst);
     let label = format!("win-{}", n);
+    // 若带 port:先记进 pending(开窗前记,保证新窗口 onMount 查询时已存在)
+    if let Some(p) = &port {
+        if let Ok(mut pending) = app_handle.try_state::<AppState>()
+            .ok_or("无法访问应用状态")?
+            .pending_takeover.lock() {
+            pending.insert(label.clone(), (p.clone(), baud.unwrap_or(115200)));
+        }
+    }
     WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
         .title("NeoSerial")
         .inner_size(1216.0, 750.0)
@@ -250,6 +349,17 @@ pub async fn open_port_window(app_handle: tauri::AppHandle) -> Result<(), String
         .build()
         .map_err(|e| format!("创建窗口失败: {}", e))?;
     Ok(())
+}
+
+/// 新窗口 onMount 查"本窗口是否被要求自动接管某端口"。
+/// open_port_window(port) 开窗时把 {label→port,baud} 记进 pending,
+/// 新窗口 ready 后调此查询(避免事件早于监听注册丢失)。
+/// 取走即删(一次性)。
+#[tauri::command]
+pub fn take_pending_takeover(state: State<'_, AppState>, webview_window: tauri::WebviewWindow) -> Result<Option<McpOnlyConn>, String> {
+    let label = webview_window.label().to_string();
+    let mut pending = state.pending_takeover.lock().map_err(|e| e.to_string())?;
+    Ok(pending.remove(&label).map(|(port, baud)| McpOnlyConn { port, baud }))
 }
 
 /// 窗口 onMount 调:按本窗口 label 查"该窗口是否已连了某个 port"。
@@ -348,6 +458,7 @@ mod tests {
             rx_history: Arc::new(RxHistory::new(100)),
             window_label: Arc::new(std::sync::RwLock::new(format!("win-{}", port))),
             line_index: Arc::new(AtomicU64::new(0)),
+            mcp_origin: Arc::new(AtomicBool::new(false)),
         }
     }
 

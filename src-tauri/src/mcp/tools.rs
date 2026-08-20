@@ -100,6 +100,8 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
     if let Some(reg) = shared.registry.as_ref() {
         let _ = reg.update_connections(snapshot);
     }
+    // 通知所有 GUI 窗口刷新"待接管"chip:agent 断了某端口,chip 应消失。
+    let _ = shared.app_handle.emit("mcp-connections-changed", ());
     Ok(())
 }
 
@@ -142,7 +144,7 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
     // (见 Tauri connect 的复用逻辑)。这里只处理 MCP 首次建连。
     let window_label = format!("mcp-{}", req.port);
-    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label, shared.connections.clone(), shared.registry.clone()) {
+    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label, shared.connections.clone(), shared.registry.clone(), true) {
         Ok(h) => h,
         Err(e) => {
             let lower = e.to_lowercase();
@@ -166,6 +168,9 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     if let Some(reg) = shared.registry.as_ref() {
         let _ = reg.update_connections(snapshot);
     }
+    // 通知所有 GUI 窗口刷新"待接管"chip 列表:agent 新连了端口,可能需要 GUI 接管。
+    // 用全局 emit:chip 是全局连接视图,所有窗口都要看到变化。
+    let _ = shared.app_handle.emit("mcp-connections-changed", ());
     Ok(ConnectResp { ok: true, mode: Some(mode) })
 }
 

@@ -72,6 +72,10 @@ pub struct ConnectionHandle {
     /// 本次连接期间的单调行号计数器(tx+rx 共用)。开端口=0,每构造一行 +1。
     /// 连接关闭(新建连接)自然重置(新 Arc=0)。供 LogLine.line_index。
     pub line_index: Arc<AtomicU64>,
+    /// 连接出身是否为 MCP:true=agent 经 MCP connect 建的(GUI 接管后关窗口
+    /// 应回退到 mcp label,连接留着);false=GUI 窗口自己 connect 新建的
+    /// (关窗口应断开)。供 CloseRequested 区分回退还是断开。
+    pub mcp_origin: Arc<AtomicBool>,
 }
 
 /// 发送给前端的 Tx 更新事件。
@@ -127,6 +131,7 @@ pub fn spawn_connection(
     window_label: String,
     connections: Arc<Mutex<HashMap<String, ConnectionHandle>>>,
     registry: Option<crate::mcp::registry::RegistryHandle>,
+    mcp_origin: bool,
 ) -> Result<(ConnectionHandle, String), String> {
     let data_bits = match params.data_bits {
         DataBits::Five => serialport::DataBits::Five,
@@ -173,6 +178,8 @@ pub fn spawn_connection(
     let window_label = Arc::new(std::sync::RwLock::new(window_label));
     // per-conn 行号计数器(开端口=0,每行 +1,新建连接自然重置)
     let line_index = Arc::new(AtomicU64::new(0));
+    // 连接出身:MCP 建的=true(关窗口回退不断),GUI 建的=false(关窗口断开)
+    let mcp_origin = Arc::new(AtomicBool::new(mcp_origin));
 
     // 创建写通道
     let (write_tx, write_rx) = bounded::<WriteCommand>(64);
@@ -188,6 +195,7 @@ pub fn spawn_connection(
         rx_history: rx_history.clone(),
         window_label: window_label.clone(),
         line_index: line_index.clone(),
+        mcp_origin: mcp_origin.clone(),
     };
 
     // 尝试克隆端口，失败则降级为共享模式
@@ -304,6 +312,8 @@ pub fn spawn_connection(
         if let Some(reg) = registry_clone.as_ref() {
             let _ = reg.update_connections(snapshot);
         }
+        // 连接被清理(拔线等被动断开),mcp-only 集合变化,通知所有 GUI 窗口刷新 chip。
+        let _ = app_handle_clone.emit("mcp-connections-changed", ());
         // 定向通知该连接归属的窗口:连接已断开(线程退出,可能是被动断开如拔线)
         if let Ok(wl) = window_label_clone.read() {
             let _ = app_handle_clone.emit_to(&*wl, "connection-state", ConnectionState {

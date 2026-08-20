@@ -4,6 +4,13 @@ src-tauri/target/
 **/*.rs.bk
 *.pdb
 
+# Tauri 构建输出(portable/安装包,不入库)
+*.exe
+*.msi
+*.nsis
+# 更新检查的运行时版本缓存
+exe_version_check.txt
+
 # Node / Vite
 node_modules/
 dist/

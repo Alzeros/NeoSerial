@@ -8,7 +8,7 @@ mod state;
 mod util;
 
 use tauri::Manager;
-use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions};
+use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions, get_mcp_only_connections, take_pending_takeover};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands};
 use commands::logging::{start_logging, stop_logging, is_logging};
@@ -153,16 +153,13 @@ pub fn run() {
                         }
                     }
                 }
-                // 窗口关闭生命周期:副窗口(win-{port})关→断该 port 连接;main 关→断所有+注销 registry+退 app。
-                // 清理在 close 前完成(优于 Destroyed 事后通知):disconnect 同步等线程退出(≤1s)。
+                // 窗口关闭生命周期:main 关→断所有连接+注销 registry+退 app;
+                // 副窗口(win-*)关→回退本窗口接管的连接(改回 mcp label,不断开)后放行。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let label = window.label().to_string();
                     let app_handle = window.app_handle();
                     if let Some(state) = app_handle.try_state::<AppState>() {
-                        if let Some(port) = crate::connection::label_to_port(&label) {
-                            // 副窗口:断该 port 连接后放行关闭。未连接(空窗口)则直接关。
-                            let _ = crate::commands::connection::disconnect_port(&state, &app_handle, &port);
-                        } else {
+                        if label == "main" {
                             // main 窗口:拦截关闭,遍历断所有连接 + 注销 registry,再 app.exit(0)。
                             // 退 app 会触发各窗口关闭,这里 prevent 避免重复,由 exit 统一收尾。
                             api.prevent_close();
@@ -179,6 +176,10 @@ pub fn run() {
                                 let _ = reg.unregister();
                             }
                             app_handle.exit(0);
+                        } else {
+                            // 副窗口(win-{自增}):回退本窗口接管的连接(改回 mcp label,
+                            // 连接不断),让 + 号红点恢复。未接管任何连接时为空操作。
+                            let _ = crate::commands::connection::release_takeover(&state, &app_handle, &label);
                         }
                     }
                 }
@@ -196,6 +197,8 @@ pub fn run() {
             open_port_window,
             get_window_conn_state,
             has_active_sessions,
+            get_mcp_only_connections,
+            take_pending_takeover,
             send,
             send_file,
             get_settings,

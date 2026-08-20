@@ -44,6 +44,7 @@
     getSettings,
     getWindowConnState,
     saveSettings,
+    takePendingTakeover,
     onConnectionMode,
     onConnectionState,
     onError,
@@ -54,6 +55,7 @@
     onTxLine,
     onTxUpdate,
   } from '$lib/tauri';
+  import { connect as connectPort } from '$lib/tauri';
 
   async function handleRxLine(line: LogLine) {
     // 自动滚动由 LogView 内部 $effect + requestAnimationFrame 处理
@@ -183,6 +185,27 @@
         }
       })
       .catch((e) => console.error('获取窗口连接状态失败:', e));
+
+    // 若本窗口是被"快捷打开接管某 MCP 端口"创建的(openPortWindow(port) 记了 pending),
+    // 取走后自动 connect 接管。用 pending 而非事件:窗口 JS 加载有先后,事件可能早于监听丢失。
+    // 接管走 connect 的"已存在 mcp 连接"分支,只改 window_label 不重开串口,参数不实际用。
+    takePendingTakeover()
+      .then((t) => {
+        if (t) {
+          // 先把下拉框选成目标 port,避免接管后下拉框还显别的端口
+          connectionParams.port = t.port;
+          connectionParams.baudRate = t.baud;
+          connectPort({
+            port: t.port,
+            baud_rate: t.baud,
+            data_bits: connectionParams.dataBits,
+            parity: connectionParams.parity,
+            stop_bits: connectionParams.stopBits,
+            flow_control: connectionParams.flowControl,
+          }).catch((e) => console.error('自动接管失败:', e));
+        }
+      })
+      .catch((e) => console.error('查询待接管失败:', e));
 
     // 启动时加载持久化设置
     getSettings()
