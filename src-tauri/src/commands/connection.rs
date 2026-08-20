@@ -105,12 +105,16 @@ pub fn connect(
                 if let Ok(mut wl) = existing.window_label.write() {
                     *wl = caller_label.clone();
                 }
+                // 回传该连接**实际**的波特率(MCP 建连时用的),不是本次请求的
+                // params.baud_rate——接管不重开串口,请求参数并未生效;若回传请求值,
+                // UI 会显示 9600 而硬件实际跑 115200,用户按错的波特率排查问题。
+                let actual_baud = existing.baud;
                 // 接管成功:发连接成功事件到当前窗口,让 UI 显示已连
                 drop(conns);
                 let _ = app_handle.emit_to(&caller_label, "connection-state", crate::connection::ConnectionState {
                     connected: true,
                     port: Some(port.clone()),
-                    baud_rate: Some(params.baud_rate),
+                    baud_rate: Some(actual_baud),
                 });
                 // 接管让一个 mcp-only 连接消失(window_label 从 mcp- 改成 GUI label),
                 // 通知所有窗口刷新 chip。

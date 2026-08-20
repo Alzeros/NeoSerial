@@ -171,9 +171,10 @@ pub struct McpSettings {
     /// 改后需重启软件生效（setup 时读一次决定是否起 server）。
     #[serde(default = "default_mcp_auto_start")]
     pub auto_start: bool,
-    /// MCP server 监听端口（默认 34594）。
-    /// 固定端口:claude mcp add 配一次永久有效。改端口后需重新配置 Claude Code。
-    /// 端口被占时 MCP 不起(设置页提示)。
+    /// MCP server **首选**监听端口（默认 34594）。
+    /// 被占时自动向上递增(最多 +20)找空闲绑定——多实例场景第二个实例必然撞首选端口。
+    /// 实际绑定端口见设置页(get_mcp_status)与 registry。
+    /// claude mcp add 的固定 URL 只命中绑到首选端口的实例;改端口后需重新配置。
     #[serde(default = "default_mcp_port")]
     pub port: u16,
 }

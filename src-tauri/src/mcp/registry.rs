@@ -51,13 +51,18 @@ fn read_all(path: &Path) -> Vec<RegistryEntry> {
     }
 }
 
-/// 原子写全部条目:写临时文件 + rename(避免多实例同时写的竞争撕裂数据)。
+/// 原子写全部条目:写临时文件 + rename。
+///
+/// tmp 文件名必须带 pid:rename 才是原子交换点,tmp 本身不是。若多实例共用一个
+/// tmp 名,A 写 tmp → B 覆写 tmp → A rename,落盘的是 B 的半成品,"原子写"荡然无存。
+/// 各写各的 tmp 后,并发场景退化为"后 rename 者胜"(丢更新),由 upsert 的补登记
+/// + 5s 心跳自愈,不会撕裂 JSON。
 fn write_all(path: &Path, entries: &[RegistryEntry]) -> Result<(), String> {
     let s = serde_json::to_string_pretty(entries).map_err(|e| e.to_string())?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| format!("建目录失败: {}", e))?;
     }
-    let tmp = path.with_extension("json.tmp");
+    let tmp = path.with_extension(format!("json.tmp.{}", std::process::id()));
     fs::write(&tmp, s).map_err(|e| format!("写临时文件失败: {}", e))?;
     fs::rename(&tmp, path).map_err(|e| format!("rename 失败: {}", e))?;
     Ok(())
@@ -69,6 +74,9 @@ pub struct RegistryHandle {
     pid: u32,
     port: u16,
     path: PathBuf,
+    /// 本实例的登记时间。upsert 补登记(条目被并发写覆盖丢失)时用它回填,
+    /// 保持"实例启动时间"语义不随补登记漂移。
+    started_at: u64,
 }
 
 impl RegistryHandle {
@@ -89,34 +97,45 @@ impl RegistryHandle {
         all.retain(|e| e.pid != pid);
         all.push(entry);
         write_all(&path, &all)?;
-        Ok(RegistryHandle { pid, port, path })
+        Ok(RegistryHandle { pid, port, path, started_at: now })
+    }
+
+    /// 读-改-写本实例条目;条目不存在时**补登记**再改(自愈)。
+    ///
+    /// 为什么必须补登记:registry 是多实例共用文件,read→改→write 整体并非跨进程
+    /// 原子,两实例并发写会互相覆盖(丢更新);文件损坏时 read_all 兜底返回空。
+    /// 这些情况都会让本实例条目凭空消失——若只更新"已存在的",丢了就丢到重启,
+    /// agent 从此发现不了本实例。补登记让 5s 心跳兜底:最坏丢 5s 可见性。
+    fn upsert(&self, apply: impl FnOnce(&mut RegistryEntry)) -> Result<(), String> {
+        let mut all = read_all(&self.path);
+        let entry = match all.iter_mut().position(|e| e.pid == self.pid) {
+            Some(i) => &mut all[i],
+            None => {
+                all.push(RegistryEntry {
+                    pid: self.pid,
+                    port: self.port,
+                    connections: vec![],
+                    started_at: self.started_at,
+                    heartbeat_at: self.started_at,
+                });
+                all.last_mut().expect("刚 push 过,非空")
+            }
+        };
+        apply(entry);
+        entry.heartbeat_at = now_secs();
+        write_all(&self.path, &all)
     }
 
     /// 更新本实例的 connections(完整快照整体替换)。
-    /// connect 成功后/disconnect 后由 tools 构造当前所有连接的快照传入,
-    /// read_all → 改本 pid 的 connections + heartbeat → write_all。
-    /// 传空 Vec 即表示无连接(全部断开)。
+    /// connect 成功后/disconnect 后由 tools 构造当前所有连接的快照传入。
+    /// 传空 Vec 即表示无连接(全部断开)。条目丢失时经 upsert 补登记。
     pub fn update_connections(&self, conns: Vec<ConnInfo>) -> Result<(), String> {
-        let mut all = read_all(&self.path);
-        for e in all.iter_mut() {
-            if e.pid == self.pid {
-                e.connections = conns.clone();
-                e.heartbeat_at = now_secs();
-            }
-        }
-        write_all(&self.path, &all)
+        self.upsert(move |e| e.connections = conns)
     }
 
-    /// 刷新心跳时间。
+    /// 刷新心跳时间。条目丢失时经 upsert 补登记(5s 一次,是自愈的主通道)。
     pub fn heartbeat(&self) -> Result<(), String> {
-        let mut all = read_all(&self.path);
-        let now = now_secs();
-        for e in all.iter_mut() {
-            if e.pid == self.pid {
-                e.heartbeat_at = now;
-            }
-        }
-        write_all(&self.path, &all)
+        self.upsert(|_| {})
     }
 
     /// 注销本实例。
@@ -289,7 +308,7 @@ mod tests {
         };
         write_all(&path, &[entry]).unwrap();
         // 构造 handle 指向同一临时文件(测试模块可访问私有字段)
-        let handle = RegistryHandle { pid: 200, port: 30000, path: path.clone() };
+        let handle = RegistryHandle { pid: 200, port: 30000, path: path.clone(), started_at: 1 };
         // 调 update_connections 写入两个连接快照
         handle.update_connections(vec![
             ConnInfo { com: "COM3".into(), baud: 115200 },
@@ -318,10 +337,54 @@ mod tests {
             started_at: 1, heartbeat_at: 1,
         };
         write_all(&path, &[entry]).unwrap();
-        let handle = RegistryHandle { pid: 300, port: 40000, path: path.clone() };
+        let handle = RegistryHandle { pid: 300, port: 40000, path: path.clone(), started_at: 1 };
         handle.update_connections(vec![]).unwrap();
         let all = read_all(&path);
         assert_eq!(all[0].connections.len(), 0);
+        let _ = fs::remove_file(&path);
+    }
+
+    // ============ upsert 自愈契约 ============
+    // registry 的 read→改→write 跨进程不原子:并发写互相覆盖、文件损坏时 read_all
+    // 返回空,都会让本实例条目凭空消失。upsert 发现条目不存在必须补登记,
+    // 否则 agent 到实例重启前都发现不了它。
+
+    /// 条目被并发写覆盖丢失后,update_connections 应补登记本实例(不动别的实例)。
+    #[test]
+    fn test_update_connections_reregisters_missing_entry() {
+        let path = tmp_path();
+        // registry 里只有别的实例,没有本实例条目(模拟被并发写覆盖)
+        write_all(&path, &[RegistryEntry {
+            pid: 1, port: 11111,
+            connections: vec![],
+            started_at: 5, heartbeat_at: 5,
+        }]).unwrap();
+        let handle = RegistryHandle { pid: 400, port: 50000, path: path.clone(), started_at: 42 };
+        handle.update_connections(vec![ConnInfo { com: "COM3".into(), baud: 115200 }]).unwrap();
+        let all = read_all(&path);
+        assert_eq!(all.len(), 2, "应补登记本实例且保留别的实例");
+        let mine = all.iter().find(|e| e.pid == 400).expect("本实例条目应被补回");
+        assert_eq!(mine.port, 50000);
+        assert_eq!(mine.started_at, 42, "补登记应保留原 started_at,不漂移");
+        assert_eq!(mine.connections.len(), 1);
+        assert_eq!(mine.connections[0].com, "COM3");
+        let _ = fs::remove_file(&path);
+    }
+
+    /// 文件整个丢失/损坏(read_all 返回空)后,heartbeat 也能把自己写回来。
+    /// heartbeat 每 5s 一次,是自愈的主通道:最坏丢 5s 可见性,不是丢到重启。
+    #[test]
+    fn test_heartbeat_reregisters_after_file_loss() {
+        let path = tmp_path();
+        let _ = fs::remove_file(&path); // 文件不存在:read_all 返回空
+        let handle = RegistryHandle { pid: 500, port: 60000, path: path.clone(), started_at: 7 };
+        handle.heartbeat().unwrap();
+        let all = read_all(&path);
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].pid, 500);
+        assert_eq!(all[0].port, 60000);
+        assert_eq!(all[0].started_at, 7);
+        assert!(all[0].heartbeat_at >= 7, "heartbeat_at 应被刷新为当前时间");
         let _ = fs::remove_file(&path);
     }
 }

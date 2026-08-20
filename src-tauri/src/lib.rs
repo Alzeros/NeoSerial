@@ -68,8 +68,11 @@ struct McpStatusResp {
 /// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
 /// 返回 RegistryHandle(供 connect/disconnect 工具调 update_connections)。
 fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registry::RegistryHandle> {
-    // 从设置读固定端口(默认 34594),不递增——被占则失败提示用户改端口
-    let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(23333);
+    // 从设置读首选端口(默认 34594)。被占时 bind_port 向上递增最多 20 个找空闲——
+    // 这是多实例设计的一部分:第二个实例必然撞首选端口,递增绑定后把实际端口写进
+    // registry,agent 经 registry(或从 34594 起逐端口探测)找到实际端口。
+    // 固定 URL 配置(claude mcp add http://localhost:34594/mcp)只命中绑到首选端口的实例。
+    let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(34594);
     let (port, listener) = match mcp::server::bind_port(port) {
         Ok(p) => p,
         Err(e) => {
