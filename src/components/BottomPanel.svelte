@@ -14,6 +14,7 @@
     paused,
     sendText,
     showTimestamp,
+    showLineIndex,
     appendLogLine,
     windowPort,
   } from '$lib/stores';
@@ -179,6 +180,11 @@
         <button data-m-pause class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
       {/if}
       <div class="ml-auto flex items-center gap-4 flex-shrink-0">
+        <label data-m-lineidx class="switch flex-shrink-0 min-w-[96px]">
+          <input type="checkbox" bind:checked={showLineIndex.value} />
+          <span class="switch-track"></span>
+          <span class="switch-label">行号</span>
+        </label>
         <label data-m-hexdisp class="switch flex-shrink-0 min-w-[96px]">
           <input type="checkbox" checked={displayMode.value === 'hex'} onchange={(e) => (displayMode.value = (e.target as HTMLInputElement).checked ? 'hex' : 'ascii')} />
           <span class="switch-track"></span>

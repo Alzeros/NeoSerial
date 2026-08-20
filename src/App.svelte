@@ -155,6 +155,16 @@
     saveSettings(base).catch((e) => console.error('同步记录发送开关失败:', e));
   });
 
+  // 行号开关:即时同步后端内存 state + 落盘(开关切换立即持久化,不丢设置)
+  $effect(() => {
+    const v = showLineIndex.value;
+    const base = cachedSettings.value;
+    if (!base) return;
+    if (base.ui.show_line_index === v) return;
+    base.ui.show_line_index = v;
+    saveSettings(base).catch((e) => console.error('同步行号开关失败:', e));
+  });
+
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
 

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
-  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, showLineIndex } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { saveSettings, getMcpStatus, openUrl } from '$lib/tauri';
   import { Github } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
@@ -393,22 +393,6 @@
                   onclick={() => changeDirLabel('full')}
                 >发送 / 接收</button>
               </div>
-            </div>
-
-            <!-- 行号开关:本次连接期间的行号(最左列),即时生效落盘 -->
-            <div class="flex items-center gap-3 mb-4">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">行号</span>
-              <label class="flex items-center gap-2 text-[13px] text-[var(--muted-foreground)] cursor-pointer">
-                <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]"
-                  bind:checked={showLineIndex.value}
-                  onchange={async () => {
-                    const base = cachedSettings.value;
-                    if (base) {
-                      try { await saveSettings({ ...base, ui: { ...base.ui, show_line_index: showLineIndex.value } }); } catch (e) { console.error('保存行号设置失败:', e); }
-                    }
-                  }} />
-                显示行号(本次连接期间,从 1 递增)
-              </label>
             </div>
 
             <!-- 预览 -->
