@@ -1,41 +1,56 @@
 <script lang="ts">
   import { check } from '@tauri-apps/plugin-updater';
   import { relaunch } from '@tauri-apps/plugin-process';
-  import { RefreshCw, Download, Rocket, CheckCircle2, AlertCircle } from 'lucide-svelte';
+  import { RefreshCw, Download, Rocket } from 'lucide-svelte';
 
-  // 状态机:idle → checking → available(version,notes)/up-to-date → downloading → downloaded → installing
+  // 版本号由父组件(SettingsDialog 已懒加载)传入,避免卡片重复请求。
+  let { version = '' }: { version?: string } = $props();
+
+  // 状态机:idle → checking → available(→ downloading → installing);失败回落 error。
+  //
+  // idle 与"检查为最新"合并:up-to-date 不做成独立状态机节点,而是 idle 上的
+  // latest 子标记——检查完成且为最新时置 true,显示"已是最新版本"绿点反馈,
+  // 3s 后回落 false(无状态行)。idle 与 latest 共用同一布局(版本号 + 检查更新
+  // 按钮),只是状态行有则显示无则塌陷,减少状态复杂度。
   type State =
-    | { kind: 'idle' }
+    | { kind: 'idle'; latest: boolean }
     | { kind: 'checking' }
-    | { kind: 'up-to-date' }
-    | { kind: 'available'; version: string; notes: string }
+    | { kind: 'available'; version: string }
     | { kind: 'downloading'; contentLength: number; downloaded: number }
-    | { kind: 'downloaded' }
     | { kind: 'installing' }
-    | { kind: 'error'; message: string };
+    | { kind: 'error' };
 
-  let state = $state<State>({ kind: 'idle' });
+  let state = $state<State>({ kind: 'idle', latest: false });
 
-  async function checkUpdate(silent = false) {
+  // latest 反馈态的回落定时器(检查为最新后 3s 回到无状态行 idle)。
+  let flashTimer: ReturnType<typeof setTimeout> | undefined;
+
+  // 置 latest 反馈态,3s 后回落。多处复用(检查为最新 / 下载时发现已无更新)。
+  function flashLatest() {
+    if (flashTimer) clearTimeout(flashTimer);
+    state = { kind: 'idle', latest: true };
+    flashTimer = setTimeout(() => {
+      if (state.kind === 'idle' && state.latest) {
+        state = { kind: 'idle', latest: false };
+      }
+    }, 3000);
+  }
+
+  async function checkUpdate() {
+    // checking 态忽略重复触发(不 disabled——保持可点 + 文字反馈,弱网下用户多点
+    // 不会因 disabled 无反馈而焦躁;重复请求被忽略即可,实现成本最低)。
+    if (state.kind === 'checking') return;
     state = { kind: 'checking' };
     try {
       const update = await check();
       if (update?.available) {
-        state = { kind: 'available', version: update.version, notes: update.body ?? '' };
+        state = { kind: 'available', version: update.version };
       } else {
-        state = { kind: 'up-to-date' };
-        if (silent) {
-          // 静默检查为最新时不打扰,恢复 idle(3s 后)
-          setTimeout(() => { state = { kind: 'idle' }; }, 3000);
-        }
+        flashLatest();
       }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      state = { kind: 'error', message: msg };
-      if (silent) {
-        // 静默检查失败不打扰,恢复 idle
-        setTimeout(() => { state = { kind: 'idle' }; }, 3000);
-      }
+    } catch {
+      // 统一文案,不区分网络/其他错误类型(投入产出比不划算,后续按反馈再细分)
+      state = { kind: 'error' };
     }
   }
 
@@ -45,7 +60,7 @@
       // 重新 check 拿 update 对象(check 内部有缓存,重复调用无副作用)
       const update = await check();
       if (!update?.available) {
-        state = { kind: 'up-to-date' };
+        flashLatest();
         return;
       }
       state = { kind: 'downloading', contentLength: 0, downloaded: 0 };
@@ -65,13 +80,12 @@
       });
       state = { kind: 'installing' };
       await relaunch();
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      state = { kind: 'error', message: msg };
+    } catch {
+      state = { kind: 'error' };
     }
   }
 
-  // 不自动检查——手动点"检查"按钮触发(避免每次开设置都请求 github,国内访问不稳定)
+  // 不自动检查——手动点按钮触发(避免每次开设置都请求 github,国内访问不稳定)
 
   // 进度百分比(contentLength=0 时显示不确定态)
   const percent = $derived(
@@ -81,87 +95,108 @@
   );
 </script>
 
-<div class="rounded-lg border p-4 mt-4 w-full max-w-sm mx-auto" style="border-color: var(--border);">
-  {#if state.kind === 'idle'}
-    <div class="flex items-center justify-between">
-      <span class="text-[12px]" style="color: var(--muted-foreground);">检查更新</span>
+<!-- 一张卡:外壳不变,内部内容随状态切换(不做成多个不同布局)。
+     浅灰背景(非纯白卡片 + 边框);有更新时 2px accent 边框强调,更显眼。
+     border 恒为 2px(available 时 accent 色,其余 transparent),避免状态切换时尺寸跳动。 -->
+<div
+  class="rounded-lg p-4 mt-4 w-full max-w-[280px] mx-auto transition-colors"
+  style="background: var(--border-subtle); border: 2px solid {state.kind === 'available' ? 'var(--primary)' : 'transparent'};"
+>
+  <!-- 顶行:左标题 + 右按钮(标题加粗 13px;available 时标题用 accent 色) -->
+  <div class="flex items-center justify-between gap-3">
+    {#if state.kind === 'available'}
+      <span class="text-[13px] font-semibold" style="color: var(--primary);">发现新版本 v{state.version}</span>
+    {:else}
+      <span class="text-[13px] font-semibold" style="color: var(--foreground);">
+        当前版本 {version || '0.1.3'}
+      </span>
+    {/if}
+
+    <!-- 右侧按钮:按状态切换文案/样式。downloading/installing 不显示按钮
+         (提示移到下方进度/安装行),其余态:
+           - idle(含 latest 反馈)/ error:检查更新 / 重试,次要样式(非强调色)
+           - checking:文字变"检查中…"保持可点(忽略重复触发)
+           - available:立即更新,accent 强调色,与次要按钮形成视觉区分 -->
+    {#if state.kind === 'idle'}
       <button
-        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80"
-        style="color: #2563eb;"
-        onclick={() => checkUpdate(false)}
+        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80 shrink-0"
+        style="color: var(--primary);"
+        onclick={checkUpdate}
       >
         <RefreshCw size={13} />
-        检查
+        检查更新
       </button>
-    </div>
-  {:else if state.kind === 'checking'}
-    <div class="flex items-center gap-2 text-[12px]" style="color: var(--muted-foreground);">
-      <RefreshCw size={13} class="animate-spin" />
-      检查中…
-    </div>
-  {:else if state.kind === 'up-to-date'}
-    <div class="flex items-center gap-2 text-[12px]" style="color: var(--muted-foreground);">
-      <CheckCircle2 size={13} style="color: #16a34a;" />
-      已是最新版本
+    {:else if state.kind === 'checking'}
       <button
-        class="ml-auto text-[12px] opacity-70 hover:opacity-100"
+        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md shrink-0"
         style="color: var(--muted-foreground);"
-        onclick={() => checkUpdate(false)}
-      >再次检查</button>
-    </div>
-  {:else if state.kind === 'available'}
-    <div class="flex flex-col gap-2">
-      <div class="flex items-center gap-2 text-[12px]">
-        <Download size={13} style="color: #2563eb;" />
-        <span style="color: var(--foreground);">发现新版本 v{state.version}</span>
-      </div>
-      {#if state.notes}
-        <div class="text-[11px] leading-relaxed rounded-md p-2 max-h-24 overflow-auto whitespace-pre-wrap"
-             style="background: #f3f4f6; color: var(--muted-foreground);">
-          {state.notes}
-        </div>
-      {/if}
+        onclick={checkUpdate}
+      >
+        <RefreshCw size={13} class="animate-spin" />
+        检查中…
+      </button>
+    {:else if state.kind === 'available'}
       <button
-        class="flex items-center justify-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-md transition-colors hover:opacity-90"
-        style="background: #2563eb; color: #ffffff;"
+        class="flex items-center justify-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-md transition-colors hover:opacity-90 shrink-0"
+        style="background: var(--primary); color: var(--primary-foreground);"
         onclick={downloadAndInstall}
       >
         <Download size={13} />
-        下载并安装
+        立即更新
       </button>
+    {:else if state.kind === 'error'}
+      <button
+        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80 shrink-0"
+        style="color: var(--primary);"
+        onclick={checkUpdate}
+      >
+        <RefreshCw size={13} />
+        重试
+      </button>
+    {/if}
+  </div>
+
+  <!-- 状态行:仅 checking / idle.latest / error 显示(圆点 + 文字,11px 次要文字色;
+       available 时状态行用 accent 色承载在标题上,此处不再显示)。
+       idle(未检查)/ available 不显示该行,高度塌陷不留占位——idle 态无操作,
+       强占空白无信息量。有内容时卡片自然增高,属预期。 -->
+  {#if state.kind === 'checking'}
+    <div class="flex items-center gap-1.5 mt-1.5 text-[11px]" style="color: var(--muted-foreground);">
+      <span class="w-2 h-2 rounded-full inline-block animate-pulse shrink-0" style="background: #9ca3af;"></span>
+      正在检查更新…
     </div>
-  {:else if state.kind === 'downloading'}
-    <div class="flex flex-col gap-1.5">
-      <div class="flex items-center justify-between text-[12px]">
-        <span style="color: var(--foreground);">下载中…</span>
-        <span style="color: var(--muted-foreground);">
-          {state.contentLength > 0 ? `${percent}%` : '下载中…'}
-        </span>
+  {:else if state.kind === 'idle' && state.latest}
+    <div class="flex items-center gap-1.5 mt-1.5 text-[11px]" style="color: var(--muted-foreground);">
+      <span class="w-2 h-2 rounded-full inline-block shrink-0" style="background: #16a34a;"></span>
+      已是最新版本
+    </div>
+  {:else if state.kind === 'error'}
+    <div class="flex items-center gap-1.5 mt-1.5 text-[11px]" style="color: var(--muted-foreground);">
+      <span class="w-2 h-2 rounded-full inline-block shrink-0" style="background: #dc2626;"></span>
+      更新失败,请重试
+    </div>
+  {/if}
+
+  <!-- 下载/安装子状态(available 点击"立即更新"后):顶行标题"发现新版本"保留,
+       右侧按钮不再渲染,下方显示进度条 / 安装提示。复用同一张卡框架。 -->
+  {#if state.kind === 'downloading'}
+    <div class="flex flex-col gap-1.5 mt-3">
+      <div class="flex items-center justify-between text-[11px]" style="color: var(--muted-foreground);">
+        <span>下载中…</span>
+        <span>{state.contentLength > 0 ? `${percent}%` : '下载中…'}</span>
       </div>
-      <div class="h-1.5 rounded-full overflow-hidden" style="background: #e5e7eb;">
+      <div class="h-1.5 rounded-full overflow-hidden" style="background: var(--border);">
         {#if state.contentLength > 0}
-          <div class="h-full rounded-full transition-all duration-150" style="width: {percent}%; background: #2563eb;"></div>
+          <div class="h-full rounded-full transition-all duration-150" style="width: {percent}%; background: var(--primary);"></div>
         {:else}
-          <div class="h-full w-1/3 rounded-full animate-pulse" style="background: #2563eb;"></div>
+          <div class="h-full w-1/3 rounded-full animate-pulse" style="background: var(--primary);"></div>
         {/if}
       </div>
     </div>
-  {:else if state.kind === 'downloaded' || state.kind === 'installing'}
-    <div class="flex items-center gap-2 text-[12px]" style="color: #2563eb;">
-      <Rocket size={13} class="animate-pulse" />
+  {:else if state.kind === 'installing'}
+    <div class="flex items-center gap-1.5 mt-3 text-[11px]" style="color: var(--primary);">
+      <Rocket size={12} class="animate-pulse" />
       安装中,即将重启…
-    </div>
-  {:else if state.kind === 'error'}
-    <div class="flex flex-col gap-2">
-      <div class="flex items-start gap-2 text-[12px]" style="color: #dc2626;">
-        <AlertCircle size={13} class="mt-0.5 shrink-0" />
-        <span class="break-all">{state.message}</span>
-      </div>
-      <button
-        class="self-start text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80"
-        style="color: #2563eb;"
-        onclick={() => checkUpdate(false)}
-      >重试</button>
     </div>
   {/if}
 </div>

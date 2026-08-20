@@ -237,12 +237,9 @@
               <img src={appIcon} alt="NeoSerial" class="w-16 h-16 mb-3 rounded-lg shadow-sm" />
               <div class="text-[15px] font-semibold text-[var(--foreground)] mb-1">NeoSerial</div>
               <div class="text-[13px] text-[var(--muted-foreground)] mb-4">串口通信调试工具</div>
-              <div class="text-[13px] text-[var(--muted-foreground)]">
-                版本 <span class="text-[var(--foreground)] font-medium">{version.value || '0.1.3'}</span>
-              </div>
               <!-- GitHub 源码链接 -->
               <button
-                class="mt-3 mb-1 flex items-center gap-1.5 text-[12px] transition-opacity hover:opacity-70"
+                class="mb-1 flex items-center gap-1.5 text-[12px] transition-opacity hover:opacity-70"
                 style="color: var(--muted-foreground);"
                 onclick={() => openUrl('https://github.com/Alzeros/NeoSerial')}
                 title="在浏览器打开 GitHub 源码"
@@ -250,8 +247,8 @@
                 <Github size={13} />
                 GitHub 源码
               </button>
-              <!-- 更新检查卡片 -->
-              <UpdaterCard />
+              <!-- 更新检查卡片:版本号已懒加载,作 prop 传入(卡片内部展示) -->
+              <UpdaterCard version={version.value} />
             </div>
           {:else if activeSection === 'general'}
             <!-- 通用：预设波特率 -->
