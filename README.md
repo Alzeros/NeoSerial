@@ -1,6 +1,6 @@
 # NeoSerial
 
-本机自用的串口调试工具，面向通信模组嵌入式开发。经典工程软件风格（参考 SSCOM/XCOM）。Tauri 2 + Svelte 5 + Rust + serialport。
+面向通信模组嵌入式开发的串口调试工具。Tauri 2 + Svelte 5 + Rust + serialport。
 
 **单 exe 多窗口** + **内嵌 MCP server**（Claude Code 等 AI agent 经由它操作串口）+ **自动更新**。
 
@@ -26,7 +26,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 - **多窗口**：点标题栏 `+` 开新窗口（完整界面的复制品），各窗口独立选端口连接，并发收发不阻塞。窗口 label 用 `win-{自增}`，与连接解耦。
 - **MCP 共享连接**：agent `connect` 一个已被 GUI 连的端口 → 复用，不报冲突。`ConnectionHandle.window_label`（`Arc<RwLock>`）记录连接归属窗口，GUI 接管 MCP 连接时改此值，reader/writer 线程下次 emit 自动用新 label，无需重启线程。
 - **事件定向**：所有事件（rx-line/tx-line/sequence-progress 等）用 `emit_to(window_label)` 定向到归属窗口，前端用 `getCurrentWebview().listen` 接收，多窗口不串流。
-- **能力（capability）**：`capabilities/default.json` 的 `windows: ["main", "win-*"]` 用通配符授权所有窗口的 listen/start-dragging/close 等权限。
+- **能力（capability）**：`capabilities/default.json` 的 `windows: ["main", "win-*"]` 用通配符授权所有窗口的监听/窗口控制/文件读写等权限。
 
 ### MCP 工具（15 个）
 
@@ -44,7 +44,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 | `sequence_run` / `sequence_stop` | 脚本序列（批量命令+循环+延时，自动化测试） |
 | `get_settings` / `save_settings` | 读/写配置（持久化） |
 
-agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`，按 COM 口找已连实例，或从默认端口 34594 起 `get_status` 探测。Claude Code 配置：
+agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`，优先找连接目标 COM 且心跳新鲜（30s 内）的实例；无则找空闲实例，再退化为从默认端口 34594 起逐端口 `get_status` 探测。Claude Code 配置：
 
 ```
 claude mcp add --transport http neoserial http://localhost:34594/mcp
@@ -168,7 +168,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 - 设置 → 关于 → 检查更新（手动，避免每次开设置都请求）
 - 主源 `dl.neo.loc.cc`（自建服务器，国内可达）+ GitHub release fallback
 - minisign 签名验证，下载安装后自动 relaunch
-- CI：打 `v*` tag 触发 GitHub Actions（tauri-action）构建+签名+发布，latest.json 同步到镜像
+- CI：打 `v*` tag 触发 GitHub Actions（tauri-action）构建+签名+发布；镜像源由外部同步 latest.json
 
 ### 统计
 
