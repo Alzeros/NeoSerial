@@ -23,8 +23,11 @@
     try {
       const ports = await listPorts();
       availablePorts.value = ports;
-      if (ports.length > 0 && !connectionParams.port) {
-        connectionParams.port = ports[0]!;
+      // 默认显示一个端口:优先保持当前选的(上次连的 last_port),不在可用列表则取第一个
+      if (ports.length > 0) {
+        if (!connectionParams.port || !ports.includes(connectionParams.port)) {
+          connectionParams.port = ports[0]!;
+        }
       }
     } catch (e) {
       console.error('获取端口列表失败:', e);
