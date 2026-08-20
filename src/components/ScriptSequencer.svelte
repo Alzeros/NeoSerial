@@ -106,8 +106,10 @@
     }
   }
 
-  import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, loadSequenceAuto, saveSequenceAuto, sequenceRun, sequenceStop, send } from '$lib/tauri';
+  import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, loadSequenceAuto, saveSequenceAuto, sequenceRun, sequenceStop, send, onSequenceChanged } from '$lib/tauri';
   import { connected, windowPort } from '$lib/stores';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
+  import { onMount } from 'svelte';
 
   // 单行发送：点编号按钮即发送该行（用本行 hex/enter 设置）
   async function sendOne(index: number) {
@@ -229,6 +231,19 @@
   // 组件挂载时自动加载
   $effect(() => {
     if (!autoSaveLoaded) autoLoad();
+  });
+
+  // 多窗口快捷指令同步:其他窗口改了 sequence.json 并保存时,广播 sequence-changed。
+  // 本窗口收到(非自己触发的)→ reload 同步。若自己有未保存改动(autoSaveTimer pending)
+  // → 跳过(等自己保存,最后保存的赢;改动频率低,冲突概率极小)。
+  const myLabel = getCurrentWebview().label;
+  onMount(() => {
+    const unlisten = onSequenceChanged((e) => {
+      if (e.source === myLabel) return; // 自己触发的跳过
+      if (autoSaveTimer) return;        // 自己有未保存改动,跳过避免丢失
+      autoLoad();                        // reload 同步
+    });
+    return () => { unlisten.then((f) => f()); };
   });
 
   // 清空需二次确认：点"清空"只弹确认浮层，确认后才真正清空

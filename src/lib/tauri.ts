@@ -245,3 +245,12 @@ export function onError(cb: (error: ErrorEvent) => void) {
 export function onConnectionMode(cb: (mode: ConnectionMode) => void) {
   return getCurrentWebview().listen<ConnectionMode>('connection-mode', (e) => cb(e.payload));
 }
+
+/** sequence-changed 事件:其他窗口改了快捷指令,本窗口收到后 reload 同步。
+ *  payload.source 是改动来源窗口 label,前端用它跳过自己触发的更新。 */
+export interface SequenceChangedEvent {
+  source: string;
+}
+export function onSequenceChanged(cb: (e: SequenceChangedEvent) => void) {
+  return getCurrentWebview().listen<SequenceChangedEvent>('sequence-changed', (e) => cb(e.payload));
+}

@@ -229,8 +229,14 @@ pub fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>, Stri
 
 /// 自动保存序列配置到默认路径（%APPDATA%/neoserial/sequence.json）。
 /// 前端数据变化时自动调用，无需用户手动选择路径。
+/// 保存后广播 "sequence-changed"(带 source label),其他窗口收到后 reload,
+/// 实现多窗口快捷指令同步(避免 A 窗口改了 B 窗口不知道,后续保存覆盖 A 的改动)。
 #[tauri::command]
-pub fn save_sequence_auto(data: Vec<serde_json::Value>) -> Result<(), String> {
+pub fn save_sequence_auto(
+    app_handle: tauri::AppHandle,
+    webview_window: tauri::WebviewWindow,
+    data: Vec<serde_json::Value>,
+) -> Result<(), String> {
     let appdata = std::env::var("APPDATA")
         .map(std::path::PathBuf::from)
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
@@ -239,6 +245,10 @@ pub fn save_sequence_auto(data: Vec<serde_json::Value>) -> Result<(), String> {
     let path = dir.join("sequence.json");
     let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
     std::fs::write(&path, text).map_err(|e| e.to_string())?;
+    // 广播给所有窗口(含自己,前端按 source label 跳过自己)
+    let _ = app_handle.emit("sequence-changed", serde_json::json!({
+        "source": webview_window.label()
+    }));
     Ok(())
 }
 
