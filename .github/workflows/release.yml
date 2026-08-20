@@ -48,6 +48,27 @@ jobs:
           includeUpdaterJson: true
           updaterJsonPreferNsis: true
 
+      # portable 版:直接取编译产物 neoserial.exe(前端 dist 已嵌入二进制,
+      # 裸 exe 不依赖外部文件,Win11 预装 WebView2 即可运行)。
+      # 不走 bundle 流程——与 NSIS 安装版共用同一二进制,只是分发形态不同。
+      # 命名与安装版对齐:NeoSerial_{ver}_x64-portable.exe。
+      # softprops/action-gh-release 原样用文件名,故先在文件系统重命名再上传。
+      - name: Rename portable exe
+        shell: pwsh
+        run: |
+          $exe = "src-tauri/target/release/neoserial.exe"
+          if (-not (Test-Path $exe)) { throw "portable exe 未找到: $exe" }
+          $ver = '${{ github.ref_name }}'.TrimStart('v')
+          Rename-Item $exe "NeoSerial_${ver}_x64-portable.exe"
+          Write-Host "Renamed to NeoSerial_${ver}_x64-portable.exe"
+
+      - name: Upload portable build to release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: src-tauri/target/release/NeoSerial_*_x64-portable.exe
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+
   # 把 latest.json 同步到自建服务器(国内可达),作 updater 备用源
   # 用 Linux job:Windows OpenSSH 对私钥文件权限检查过严(Bad permissions),
   # Linux 的 OpenSSH chmod 600 即可,绕开这个坑
