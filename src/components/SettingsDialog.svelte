@@ -2,7 +2,8 @@
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
-  import { saveSettings, getMcpStatus } from '$lib/tauri';
+  import { saveSettings, getMcpStatus, openUrl } from '$lib/tauri';
+  import { Github } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
@@ -239,6 +240,16 @@
               <div class="text-[13px] text-[var(--muted-foreground)]">
                 版本 <span class="text-[var(--foreground)] font-medium">{version.value || '0.1.3'}</span>
               </div>
+              <!-- GitHub 源码链接 -->
+              <button
+                class="mt-3 mb-1 flex items-center gap-1.5 text-[12px] transition-opacity hover:opacity-70"
+                style="color: var(--muted-foreground);"
+                onclick={() => openUrl('https://github.com/Alzeros/NeoSerial')}
+                title="在浏览器打开 GitHub 源码"
+              >
+                <Github size={13} />
+                GitHub 源码
+              </button>
               <!-- 更新检查卡片 -->
               <UpdaterCard />
             </div>

@@ -21,6 +21,32 @@ fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
 }
 
+/// 用系统默认浏览器打开 URL(关于页 GitHub 链接)。
+/// 不用 shell plugin scope:直接 spawn 系统 opener(Windows:cmd /c start)。
+#[tauri::command]
+fn open_url(url: String) -> std::result::Result<(), String> {
+    #[cfg(target_os = "windows")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("cmd");
+        c.args(["/c", "start", "", &url]);
+        c
+    };
+    #[cfg(target_os = "macos")]
+    let mut cmd = {
+        let mut c = std::process::Command::new("open");
+        c.arg(&url);
+        c
+    };
+    #[cfg(all(not(target_os = "windows"), not(target_os = "macos")))]
+    let mut cmd = {
+        let mut c = std::process::Command::new("xdg-open");
+        c.arg(&url);
+        c
+    };
+    cmd.spawn().map_err(|e| format!("打开链接失败: {}", e))?;
+    Ok(())
+}
+
 /// 查询 MCP server 运行状态:是否在跑 + 实际监听端口。
 /// 供前端设置页显示实际连接指令。
 #[tauri::command]
@@ -161,6 +187,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             greet,
+            open_url,
             get_mcp_status,
             connect,
             disconnect,

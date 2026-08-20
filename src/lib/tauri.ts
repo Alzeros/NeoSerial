@@ -63,6 +63,11 @@ export async function hasActiveSessions(): Promise<ActiveSessions> {
   return await invoke<ActiveSessions>('has_active_sessions');
 }
 
+/** 用系统默认浏览器打开 URL(关于页 GitHub 链接)。 */
+export async function openUrl(url: string): Promise<void> {
+  await invoke('open_url', { url });
+}
+
 // ============ MCP ============
 
 export interface McpStatus {
