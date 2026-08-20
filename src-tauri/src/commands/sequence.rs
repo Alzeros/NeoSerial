@@ -1,5 +1,5 @@
-use std::collections::HashSet;
-use std::sync::{LazyLock, Mutex};
+use std::collections::{HashMap, HashSet};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
 
@@ -54,14 +54,30 @@ pub fn sequence_run(
     loop_interval: u32,
     port: Option<String>,
 ) -> Result<(), String> {
-    // 1. 解析 port + 取连接句柄(write_tx + rx_history + window_label)。与 SEQUENCE_RUNNING
-    //    解耦:此步失败不影响集合(尚未 insert),无需清理。
-    let (write_tx, rx_history, port, window_label) = {
+    let resolved = {
         let conns = state.connections.lock().map_err(|e| e.to_string())?;
-        let resolved = resolve_port(&conns, port)?;
-        let handle = conns.get(&resolved).ok_or("未连接串口")?;
-        (handle.write_tx.clone(), handle.rx_history.clone(), resolved, handle.window_label.clone())
+        resolve_port(&conns, port)?
     };
+    sequence_run_inner(app_handle.clone(), &state.connections, &resolved, commands, run_count, loop_interval)
+}
+
+/// 内部:跑脚本序列(已解析 port)。供 sequence_run command 与 MCP 工具复用。
+/// app_handle 用 owned(被 thread::spawn move 进闭包,& 会逃逸借用)。
+pub fn sequence_run_inner(
+    app_handle: tauri::AppHandle,
+    connections: &Arc<Mutex<HashMap<String, crate::connection::ConnectionHandle>>>,
+    port: &str,
+    commands: Vec<SequenceCommand>,
+    run_count: u32,
+    loop_interval: u32,
+) -> Result<(), String> {
+    // 1. 取连接句柄(write_tx + rx_history + window_label)
+    let (write_tx, rx_history, window_label) = {
+        let conns = connections.lock().map_err(|e| e.to_string())?;
+        let handle = conns.get(port).ok_or("未连接串口")?;
+        (handle.write_tx.clone(), handle.rx_history.clone(), handle.window_label.clone())
+    };
+    let port = port.to_string();
 
     // 2. SEQUENCE_RUNNING: insert-then-check 契约。已含该 port → 拒绝;
     //    否则 insert,释放锁。线程内靠 contains 判断是否被 stop。
@@ -170,8 +186,23 @@ pub fn sequence_stop(
         let conns = state.connections.lock().map_err(|e| e.to_string())?;
         resolve_port(&conns, port)?
     };
+    sequence_stop_inner(&state.connections, &resolved)
+}
+
+/// 内部:停指定 port 的运行序列(已解析 port)。供 command 与 MCP 工具复用。
+pub fn sequence_stop_inner(
+    connections: &Arc<Mutex<HashMap<String, crate::connection::ConnectionHandle>>>,
+    port: &str,
+) -> Result<(), String> {
+    // 校验 port 已连接
+    {
+        let conns = connections.lock().map_err(|e| e.to_string())?;
+        if !conns.contains_key(port) {
+            return Err(format!("端口 {} 未连接", port));
+        }
+    }
     if let Ok(mut g) = SEQUENCE_RUNNING.lock() {
-        g.remove(&resolved);
+        g.remove(port);
     }
     Ok(())
 }

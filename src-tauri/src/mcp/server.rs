@@ -45,6 +45,14 @@ const GET_STATUS: &str = "get_status";
 const SEND_AND_READ: &str = "send_and_read";
 const SEND: &str = "send";
 const GET_HISTORY_SINCE: &str = "get_history_since";
+const RESET_STATS: &str = "reset_stats";
+const SEND_FILE: &str = "send_file";
+const START_LOGGING: &str = "start_logging";
+const STOP_LOGGING: &str = "stop_logging";
+const SEQUENCE_RUN: &str = "sequence_run";
+const SEQUENCE_STOP: &str = "sequence_stop";
+const GET_SETTINGS: &str = "get_settings";
+const SAVE_SETTINGS: &str = "save_settings";
 
 pub struct NeoserialHandler {
     shared: Arc<McpShared>,
@@ -168,6 +176,111 @@ impl ServerHandler for NeoserialHandler {
                     "required": ["port", "seq"]
                 })),
             ),
+            Tool::new(
+                RESET_STATS,
+                "清零指定端口的收发字节统计。参数: port。返回 { ok } 或 { ok:false }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" }
+                    },
+                    "required": ["port"],
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                SEND_FILE,
+                "发送文件(二进制安全,用于固件/二进制烧录)。参数: port, path(文件绝对路径)。分块 1024 字节写入。返回 { ok, sent } 或 { ok:false, error }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" },
+                        "path": { "type": "string", "description": "文件绝对路径" }
+                    },
+                    "required": ["port", "path"],
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                START_LOGGING,
+                "开始存盘(全局,所有连接的收发都进同一文件)。参数: path(可选,传则新建/覆盖该文件;不传用上次路径续写,无上次路径则生成默认路径)。返回 { ok, path }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": { "type": "string", "description": "日志文件绝对路径,可选" }
+                    },
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                STOP_LOGGING,
+                "停止存盘。无参数。返回 { ok }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                SEQUENCE_RUN,
+                "跑脚本序列:多条命令批量下发,支持循环和行间延时(用于自动化测试/批量配置)。参数: port, commands(命令数组,每项含 command/hex/enter/delay_ms), run_count(循环次数), loop_interval(可选,轮间隔 ms)。返回 { ok } 或 { ok:false, error }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" },
+                        "commands": {
+                            "type": "array",
+                            "description": "命令数组",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "command": { "type": "string", "description": "命令内容" },
+                                    "hex": { "type": "boolean", "default": false, "description": "是否 hex 数据" },
+                                    "enter": { "type": "boolean", "default": true, "description": "是否追加 CRLF 行尾" },
+                                    "delay_ms": { "type": "integer", "default": 0, "description": "行间延时 ms" }
+                                },
+                                "required": ["command"]
+                            }
+                        },
+                        "run_count": { "type": "integer", "description": "循环次数" },
+                        "loop_interval": { "type": "integer", "default": 0, "description": "轮间隔 ms" }
+                    },
+                    "required": ["port", "commands", "run_count"]
+                })),
+            ),
+            Tool::new(
+                SEQUENCE_STOP,
+                "停止指定 port 的运行序列。参数: port。返回 { ok } 或 { ok:false, error }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" }
+                    },
+                    "required": ["port"],
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                GET_SETTINGS,
+                "读取当前配置(波特率预设/显示模式/编码/MCP 设置等)。无参数。返回 { ok, settings }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                SAVE_SETTINGS,
+                "保存配置(持久化到 settings.json)。参数: settings(完整 Settings 对象,从 get_settings 拿原值改后回传)。返回 { ok } 或 { ok:false, error }。注意:部分项(如 MCP 端口)改后需重启生效。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "settings": { "type": "object", "description": "完整 Settings 对象" }
+                    },
+                    "required": ["settings"],
+                    "additionalProperties": false
+                })),
+            ),
         ];
         async move { Ok(ListToolsResult { tools, ..Default::default() }) }
     }
@@ -228,6 +341,84 @@ impl ServerHandler for NeoserialHandler {
                         }
                     };
                     serde_json::to_value(tools::get_history_since(&shared, req)).unwrap_or_default()
+                }
+                RESET_STATS => {
+                    let req: tools::ResetStatsReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    serde_json::to_value(tools::reset_stats(&shared, req)).unwrap_or_default()
+                }
+                SEND_FILE => {
+                    let req: tools::SendFileReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    match tools::send_file(&shared, req) {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    }
+                }
+                START_LOGGING => {
+                    let req: tools::StartLoggingReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    match tools::start_logging(&shared, req) {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    }
+                }
+                STOP_LOGGING => {
+                    match tools::stop_logging(&shared) {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    }
+                }
+                SEQUENCE_RUN => {
+                    let req: tools::SequenceRunReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    match tools::sequence_run(&shared, req) {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    }
+                }
+                SEQUENCE_STOP => {
+                    let req: tools::SequenceStopReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    match tools::sequence_stop(&shared, req) {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    }
+                }
+                GET_SETTINGS => {
+                    serde_json::to_value(tools::get_settings(&shared)).unwrap_or_default()
+                }
+                SAVE_SETTINGS => {
+                    let req: tools::SaveSettingsReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    match tools::save_settings(&shared, req) {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    }
                 }
                 SEND_AND_READ => {
                     let req: tools::SendAndReadReq = match serde_json::from_value(args) {

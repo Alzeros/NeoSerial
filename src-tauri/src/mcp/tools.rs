@@ -2,7 +2,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio::time::timeout;
 
 use crate::buffer::rx_history::RxHistory;
@@ -457,6 +457,256 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
         seq0,
         seq1: cur_seq,
     })
+}
+
+// ============ reset_stats ============
+
+#[derive(Deserialize)]
+pub struct ResetStatsReq {
+    pub port: String,
+}
+
+#[derive(Serialize)]
+pub struct ResetStatsResp {
+    pub ok: bool,
+}
+
+/// 清零指定 port 的收发字节统计。
+pub fn reset_stats(shared: &McpShared, req: ResetStatsReq) -> ResetStatsResp {
+    let conns = match shared.connections.lock() {
+        Ok(c) => c,
+        Err(_) => return ResetStatsResp { ok: false },
+    };
+    if let Some(h) = conns.get(&req.port) {
+        h.tx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
+        h.rx_bytes.store(0, std::sync::atomic::Ordering::SeqCst);
+        ResetStatsResp { ok: true }
+    } else {
+        ResetStatsResp { ok: false }
+    }
+}
+
+// ============ send_file ============
+
+#[derive(Deserialize)]
+pub struct SendFileReq {
+    pub port: String,
+    pub path: String,
+}
+
+#[derive(Serialize)]
+pub struct SendFileResp {
+    pub ok: bool,
+    pub sent: usize,
+}
+
+/// 发送文件(二进制安全)。分块 1024 字节写入,返回已发送字节数。
+pub fn send_file(shared: &McpShared, req: SendFileReq) -> Result<SendFileResp, ErrorResp> {
+    let write_tx = {
+        let conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        conns.get(&req.port)
+            .ok_or_else(|| ErrorResp::new(format!("端口 {} 未连接", req.port)))?
+            .write_tx.clone()
+    };
+    let file = std::fs::File::open(&req.path).map_err(|e| ErrorResp::new(format!("打开文件失败: {}", e)))?;
+    let total = file.metadata().map_err(|e| ErrorResp::new(e.to_string()))?.len() as usize;
+    if total == 0 {
+        return Ok(SendFileResp { ok: true, sent: 0 });
+    }
+    use std::io::Read;
+    let mut reader = std::io::BufReader::new(file);
+    let mut buf = [0u8; 1024];
+    let mut sent = 0usize;
+    loop {
+        let n = reader.read(&mut buf).map_err(|e| ErrorResp::new(format!("读取文件失败: {}", e)))?;
+        if n == 0 { break; }
+        let chunk = buf[..n].to_vec();
+        write_tx.send(WriteCommand::Send(chunk))
+            .map_err(|e| ErrorResp::new(format!("发送队列写入失败: {}", e)))?;
+        sent += n;
+    }
+    Ok(SendFileResp { ok: true, sent })
+}
+
+// ============ logging (全局,不接 port) ============
+
+#[derive(Deserialize)]
+pub struct StartLoggingReq {
+    pub path: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct StartLoggingResp {
+    pub ok: bool,
+    pub path: String,
+}
+
+/// 开始存盘(全局,所有连接的收发都进同一文件)。传 path 新建/覆盖,不传用上次路径续写。
+pub fn start_logging(shared: &McpShared, req: StartLoggingReq) -> Result<StartLoggingResp, ErrorResp> {
+    use crate::logging::file_logger::FileLogger;
+    use crate::util::time_fmt::now_local_compact;
+    let state = shared.app_handle.try_state::<crate::state::AppState>()
+        .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
+    let (actual_path, append) = match req.path {
+        Some(p) => (p, false),
+        None => {
+            let last = state.last_log_path.lock().ok().and_then(|g| g.clone());
+            match last {
+                Some(p) => (p, true),
+                None => {
+                    let filename = format!("{}.log", now_local_compact());
+                    let appdata = std::env::var("APPDATA")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
+                    let p = appdata.join("neoserial").join("logs").join(filename)
+                        .to_string_lossy().to_string();
+                    (p, false)
+                }
+            }
+        }
+    };
+    let (error_tx, _error_rx) = crossbeam_channel::unbounded();
+    let logger = FileLogger::start(
+        std::path::PathBuf::from(&actual_path), error_tx, append,
+    ).map_err(|e| ErrorResp::new(format!("启动日志失败: {}", e)))?;
+    {
+        let mut last = state.last_log_path.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        *last = Some(actual_path.clone());
+    }
+    let sender = logger.line_sender();
+    {
+        let mut fl = state.file_logger.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        *fl = Some(logger);
+    }
+    {
+        let mut ss = state.line_sender.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        *ss = Some(sender);
+    }
+    Ok(StartLoggingResp { ok: true, path: actual_path })
+}
+
+#[derive(Serialize)]
+pub struct StopLoggingResp {
+    pub ok: bool,
+}
+
+/// 停止存盘。
+pub fn stop_logging(shared: &McpShared) -> Result<StopLoggingResp, ErrorResp> {
+    let state = shared.app_handle.try_state::<crate::state::AppState>()
+        .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
+    if let Ok(mut ss) = state.line_sender.lock() {
+        *ss = None;
+    }
+    let mut fl = state.file_logger.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+    if let Some(logger) = fl.take() {
+        logger.stop();
+    }
+    Ok(StopLoggingResp { ok: true })
+}
+
+// ============ sequence_run / sequence_stop ============
+
+/// MCP 简化版序列命令:command 必填,其余可选(enabled 默认 true,enter 默认 true)。
+#[derive(Deserialize)]
+pub struct McpSequenceCommand {
+    pub command: String,
+    #[serde(default)]
+    pub hex: bool,
+    #[serde(default = "default_true")]
+    pub enter: bool,
+    #[serde(default)]
+    pub delay_ms: u32,
+}
+fn default_true() -> bool { true }
+
+#[derive(Deserialize)]
+pub struct SequenceRunReq {
+    pub port: String,
+    pub commands: Vec<McpSequenceCommand>,
+    pub run_count: u32,
+    #[serde(default)]
+    pub loop_interval: u32,
+}
+
+#[derive(Serialize)]
+pub struct SequenceRunResp {
+    pub ok: bool,
+}
+
+/// 跑脚本序列:多条命令批量下发,支持循环(run_count)和行间延时。与 GUI sequence_run 同逻辑。
+pub fn sequence_run(shared: &McpShared, req: SequenceRunReq) -> Result<SequenceRunResp, ErrorResp> {
+    use crate::commands::sequence::{sequence_run_inner, SequenceCommand};
+    // 转 GUI 的 SequenceCommand
+    let cmds: Vec<SequenceCommand> = req.commands.into_iter().map(|c| SequenceCommand {
+        enabled: true,
+        command: c.command,
+        hex: c.hex,
+        enter: c.enter,
+        delay_ms: c.delay_ms,
+    }).collect();
+    sequence_run_inner(shared.app_handle.clone(), &shared.connections, &req.port, cmds, req.run_count, req.loop_interval)
+        .map(|_| SequenceRunResp { ok: true })
+        .map_err(ErrorResp::new)
+}
+
+#[derive(Deserialize)]
+pub struct SequenceStopReq {
+    pub port: String,
+}
+
+#[derive(Serialize)]
+pub struct SequenceStopResp {
+    pub ok: bool,
+}
+
+/// 停止指定 port 的运行序列。
+pub fn sequence_stop(shared: &McpShared, req: SequenceStopReq) -> Result<SequenceStopResp, ErrorResp> {
+    use crate::commands::sequence::sequence_stop_inner;
+    sequence_stop_inner(&shared.connections, &req.port)
+        .map(|_| SequenceStopResp { ok: true })
+        .map_err(ErrorResp::new)
+}
+
+// ============ get_settings / save_settings ============
+
+#[derive(Serialize)]
+pub struct GetSettingsResp {
+    pub ok: bool,
+    pub settings: Option<crate::config::settings::Settings>,
+}
+
+/// 读当前配置(波特率预设/显示模式/编码/MCP 设置等)。
+pub fn get_settings(shared: &McpShared) -> GetSettingsResp {
+    let state = match shared.app_handle.try_state::<crate::state::AppState>() {
+        Some(s) => s,
+        None => return GetSettingsResp { ok: false, settings: None },
+    };
+    let s = state.settings.lock().ok().map(|g| g.clone());
+    GetSettingsResp { ok: s.is_some(), settings: s }
+}
+
+#[derive(Deserialize)]
+pub struct SaveSettingsReq {
+    pub settings: crate::config::settings::Settings,
+}
+
+#[derive(Serialize)]
+pub struct SaveSettingsResp {
+    pub ok: bool,
+}
+
+/// 保存配置(持久化到 settings.json)。改后部分项(如 MCP 端口)需重启生效。
+pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSettingsResp, ErrorResp> {
+    let state = shared.app_handle.try_state::<crate::state::AppState>()
+        .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
+    {
+        let mut s = state.settings.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+        *s = req.settings;
+    }
+    // 落盘(用默认路径 %APPDATA%/neoserial/settings.json)
+    let s = state.settings.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+    s.save().map_err(|e| ErrorResp::new(format!("保存失败: {}", e)))?;
+    Ok(SaveSettingsResp { ok: true })
 }
 
 #[cfg(test)]
