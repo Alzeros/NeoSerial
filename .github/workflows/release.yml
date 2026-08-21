@@ -69,27 +69,68 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ github.token }}
 
-  # 把 latest.json 同步到自建服务器(国内可达),作 updater 备用源
+  # 把 latest.json + 安装包同步到自建服务器(国内可达),作 updater 主源。
+  # 关键:tauri-action 生成的 latest.json 里 url 指向 GitHub release,国内直连
+  # 不稳(实测超时)。这里把安装包也 scp 到镜像,并把 json 里所有 url 改写成
+  # 镜像地址(https://dl.neo.loc.cc/{filename}),下载器走镜像源。
   # 用 Linux job:Windows OpenSSH 对私钥文件权限检查过严(Bad permissions),
-  # Linux 的 OpenSSH chmod 600 即可,绕开这个坑
+  # Linux 的 OpenSSH chmod 600 即可,绕开这个坑。
   mirror:
     needs: publish
     runs-on: ubuntu-latest
     steps:
-      - name: Download latest.json from release + scp to mirror
+      - name: Mirror latest.json + installers and rewrite URLs
         continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
+          MIRROR_HOST: '38.14.254.128'
+          MIRROR_USER: neoserial
+          MIRROR_PATH: /var/www/neoserial
+          MIRROR_URL: https://dl.neo.loc.cc
         run: |
           set -e
-          # 从 release 下载 latest.json
-          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "latest.json" --dir /tmp
+          mkdir -p /tmp/mirror
+          # 1. 从 release 下载 latest.json
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "latest.json" --dir /tmp/mirror
           echo "Downloaded latest.json"
-          # 还原私钥(base64 decode),末尾补换行(OpenSSH 私钥要求文件末尾有 LF)
+
+          # 2. 提取 latest.json 里所有 url 指向的文件名(GitHub release 下载地址),
+          # 去重后从 release 下载这些安装包到本地,准备 scp 到镜像。
+          # url 形如 .../releases/download/{tag}/{filename},取末段文件名。
+          filenames=$(jq -r '.platforms[].url' /tmp/mirror/latest.json | sed 's|.*/||' | sort -u)
+          if [ -z "$filenames" ]; then
+            echo "WARN: latest.json 中未找到 url,跳过安装包镜像"
+          else
+            for f in $filenames; do
+              gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --pattern "$f" --dir /tmp/mirror
+              echo "Downloaded installer: $f"
+            done
+          fi
+
+          # 3. 还原私钥(base64 decode),末尾补换行(OpenSSH 私钥要求文件末尾有 LF)
           echo "$SERVER_SSH_KEY_B64" | base64 -d > /tmp/id_ed25519
           printf '\n' >> /tmp/id_ed25519
           chmod 600 /tmp/id_ed25519
-          # scp 上传
-          scp -i /tmp/id_ed25519 -o StrictHostKeyChecking=accept-new -P 22 /tmp/latest.json neoserial@38.14.254.128:/var/www/neoserial/latest.json
-          echo "Uploaded to dl.neo.loc.cc"
+          SSH_OPTS="-i /tmp/id_ed25519 -o StrictHostKeyChecking=accept-new -P 22"
+
+          # 4. scp 安装包到镜像根目录(覆盖旧文件)
+          if [ -n "$filenames" ]; then
+            scp $SSH_OPTS /tmp/mirror/$filenames "$MIRROR_USER@$MIRROR_HOST:$MIRROR_PATH/"
+            echo "Uploaded installers to $MIRROR_PATH/"
+          fi
+
+          # 5. 改写 latest.json:把所有 url 从 GitHub release 地址替换成镜像地址。
+          # 用 jq 遍历 platforms 下每个对象,对 url 保留文件名、换前缀为镜像 URL。
+          jq --arg base "$MIRROR_URL" '
+            .platforms |= with_entries(
+              .value.url = ($base + "/" + (.value.url | split("/") | last))
+            )
+          ' /tmp/mirror/latest.json > /tmp/mirror/latest.json.rewritten
+          mv /tmp/mirror/latest.json.rewritten /tmp/mirror/latest.json
+          echo "Rewritten urls to mirror. New latest.json:"
+          cat /tmp/mirror/latest.json
+
+          # 6. scp 改写后的 latest.json 到镜像
+          scp $SSH_OPTS /tmp/mirror/latest.json "$MIRROR_USER@$MIRROR_HOST:$MIRROR_PATH/latest.json"
+          echo "Uploaded latest.json to $MIRROR_PATH/"
