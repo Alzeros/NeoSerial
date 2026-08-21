@@ -99,6 +99,24 @@
     }
   }
 
+  // Ctrl+A 限定在日志区范围:容器是普通 div,不可聚焦,浏览器 Ctrl+A 默认全选
+  // 整个文档(顶栏+日志+底栏全选,即"选中整个软件框")。给容器加 tabindex=-1 使
+  // 其可鼠标点击聚焦,再拦截 Ctrl+A 用 Range 手动选区只覆盖日志区内容——符合
+  // "按模块框/输入框划定范围"的预期。用 -1 不进 Tab 序列,不干扰输入框键盘导航;
+  // focus:outline-none 去掉点击聚焦后的默认焦点环(选中高亮已足够提示)。
+  // 焦点在输入框时此 handler 不触发,输入框 Ctrl+A 仍是浏览器默认选自身。
+  function handleLogKeydown(e: KeyboardEvent) {
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'a' || e.key === 'A')) {
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel || !scrollContainer) return;
+      const range = document.createRange();
+      range.selectNodeContents(scrollContainer);
+      sel.removeAllRanges();
+      sel.addRange(range);
+    }
+  }
+
   function handleSearchInputKeydown(e: KeyboardEvent) {
     if (e.key === 'Enter') {
       e.preventDefault();
@@ -354,7 +372,11 @@
 
   <div
     bind:this={scrollContainer}
-    class="flex-1 overflow-y-auto overflow-x-auto px-3 py-4"
+    tabindex="-1"
+    role="log"
+    aria-label="串口日志"
+    onkeydown={handleLogKeydown}
+    class="flex-1 overflow-y-auto overflow-x-auto px-3 py-4 outline-none"
     style="font-family: var(--log-font-family); font-size: var(--log-font-size); line-height: var(--log-line-height);"
   >
     {#each logLines as line, i (i)}
