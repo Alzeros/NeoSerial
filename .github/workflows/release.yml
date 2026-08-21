@@ -41,7 +41,20 @@ jobs:
         with:
           tagName: v__VERSION__
           releaseName: 'NeoSerial v__VERSION__'
-          releaseBody: ''
+          # release 说明:CI 创建 release 时写入 body。bug 修复列表每次发布前更新,
+          # 下载说明部分稳定复用(GitHub release 页会自动列出所有附件,故只做描述性指引,
+          # 不写死文件名/版本号)。__VERSION__ 由 tauri-action 替换为版本号。
+          releaseBody: |
+            ## 修复
+
+            - **Ctrl+A 全选范围限定**：点击日志区后按 Ctrl+A 只选中日志内容，不再误选整个软件框；焦点在发送输入框/搜索框时仍按各自范围全选
+            - **MCP connect 回传实际波特率**：连接成功后回传真实波特率，并增强注册表自愈能力
+            - **历史查询截断丢数据修复**：修复 `get_history_since` 截断导致丢数据的问题，同时优化连接并发处理
+
+            ## 下载
+
+            - **安装版**（`*-setup.exe`，NSIS 安装程序）：推荐，支持自动更新
+            - **免安装版**（`*-portable.exe`，裸 exe）：解压即用，无需安装，需系统已安装 WebView2（Win11 预装）
           releaseDraft: false
           prerelease: false
           # 自动生成 latest.json 供 updater endpoint 使用;NSIS 优先
