@@ -499,11 +499,12 @@
   </div>
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
-  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2">
+  <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
+  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2 overflow-x-auto">
     {#each currentModulePages() as page, i}
       <button
         data-page-tab
-        class="rounded px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer {i === activeScriptPage.value
+        class="shrink-0 rounded px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer {i === activeScriptPage.value
           ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
           : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
         onclick={() => (activeScriptPage.value = i)}
@@ -513,15 +514,13 @@
         {page.name}
       </button>
     {/each}
-    {#if currentModulePages().length < 6}
-      <button
-        class="rounded px-2 py-1.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
-        onclick={addScriptPage}
-        title="新增页签"
-      >
-        +
-      </button>
-    {/if}
+    <button
+      class="shrink-0 rounded px-2 py-1.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+      onclick={addScriptPage}
+      title="新增页签"
+    >
+      +
+    </button>
   </div>
 
   <!-- 命令序列表格（独立滚动，不撑开外部布局） -->

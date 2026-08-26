@@ -208,7 +208,6 @@ export function switchScriptModule(index: number) {
 // ===== 页签级操作（作用于当前模块） =====
 export function addScriptPage() {
   const pages = currentModulePages();
-  if (pages.length >= 6) return;
   pages.push(defaultScriptPage(`Page${pages.length}`));
 }
 

@@ -71,9 +71,24 @@
   });
 
   function openSearch() {
+    // 已开着再按 Ctrl/F3:只 focus 回搜索框,不动当前查询(避免覆盖正在编辑的词)。
+    if (searchOpen) {
+      searchInput?.focus();
+      searchInput?.select();
+      return;
+    }
+    // 首次打开:Ctrl+F 前若在日志区选中了文本,带进搜索框(浏览器/VSCode 惯例)。
+    // window.getSelection() 拿 DOM 选区;input 内选区不归它管,故只处理"日志区选中文本"。
+    // 多行/超长选区(如选中整片日志)不塞进搜索框——限长 200 字符且无换行才带。
+    const sel = window.getSelection();
+    const picked = sel ? sel.toString().trim() : '';
+    if (picked && picked.length <= 200 && !picked.includes('\n')) {
+      searchQuery = picked;
+    }
     searchOpen = true;
     requestAnimationFrame(() => {
       searchInput?.focus();
+      // 全选便于直接覆盖输入;空查询时光标定位到末尾即可
       searchInput?.select();
     });
   }
