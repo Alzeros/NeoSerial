@@ -171,7 +171,7 @@
 <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
   <!-- 工具条 + 输入行：共用同一水平 padding（px-5），保证六点边缘对齐 -->
   <div class="px-5">
-    <!-- 第一行：接收组（左按钮 + 右开关） -->
+    <!-- 第一行：接收组（左按钮 + 右开关）。右侧开关整体 32px 高容器，让开关与 32px 高的按钮垂直居中对齐 -->
     <div class="flex items-center gap-2 pt-3 pb-2">
       <button data-m-clear class="btn btn-secondary flex-shrink-0 flex items-center justify-center btn-clear-hover" style="height: 32px; width: 96px; padding: 0;" onclick={clearLogLines}>清空</button>
       {#if paused.value}
@@ -179,7 +179,7 @@
       {:else}
         <button data-m-pause class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
       {/if}
-      <div class="ml-auto flex items-center gap-4 flex-shrink-0">
+      <div class="ml-auto flex items-center gap-4 flex-shrink-0 h-8">
         <label data-m-lineidx class="switch flex-shrink-0 min-w-[96px]">
           <input type="checkbox" bind:checked={showLineIndex.value} />
           <span class="switch-track"></span>
@@ -201,7 +201,7 @@
     <!-- 第二行：发送组（左按钮 + 右开关），行距 8px -->
     <div class="flex items-center gap-2 pb-3">
       <button class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
-      <div class="ml-auto flex items-center gap-4 flex-shrink-0">
+      <div class="ml-auto flex items-center gap-4 flex-shrink-0 h-8">
         <label data-m-ts class="switch flex-shrink-0 min-w-[96px]">
           <input type="checkbox" bind:checked={showTimestamp.value} />
           <span class="switch-track"></span>
@@ -286,13 +286,19 @@
       </div>
     {/if}
 
-    <!-- 折叠标题栏 -->
+    <!-- 折叠标题栏：左侧 3px 主色条提示可点，hover 时整条亮一点。
+         显式底色 + 自定义选中色，避免半透明 hover 透出下方路径框、避免默认蓝选中色 -->
     <button
-      class="flex items-center gap-1 px-5 py-1.5 text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer transition-colors border-t border-[var(--border-subtle)]"
+      class="relative w-full flex items-center gap-1.5 px-5 py-1.5 text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer transition-colors border-t border-[var(--border-subtle)] select-none"
+      style="background: var(--background-elevated);"
       onclick={() => (extraOpen = !extraOpen)}
       title={extraOpen ? '收起' : '展开文件发送 / 日志保存'}
     >
-      <span class="inline-block transition-transform {extraOpen ? 'rotate-180' : ''}">▾</span>
+      <span
+        class="absolute left-0 top-0 bottom-0 w-[3px] transition-opacity"
+        style="background: var(--primary); opacity: {extraOpen ? '0.85' : '0.22'};"
+      ></span>
+      <span class="inline-block transition-transform {extraOpen ? 'rotate-180' : ''}" style="font-size: 10px;">▾</span>
       文件发送 / 日志保存
     </button>
   </div>
