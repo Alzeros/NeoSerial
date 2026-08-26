@@ -109,9 +109,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           SERVER_SSH_KEY_B64: ${{ secrets.SERVER_SSH_KEY_B64 }}
-          MIRROR_HOST: '38.14.254.128'
-          MIRROR_USER: neoserial
-          MIRROR_PATH: /var/www/neoserial
+          MIRROR_HOST: ${{ secrets.MIRROR_HOST }}
+          MIRROR_USER: ${{ secrets.MIRROR_USER }}
+          MIRROR_PATH: ${{ secrets.MIRROR_PATH }}
           MIRROR_URL: https://dl.neo.loc.cc
         run: |
           set -e
