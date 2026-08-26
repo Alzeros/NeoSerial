@@ -27,7 +27,9 @@ impl<T: Clone> RingBuffer<T> {
         }
     }
 
-    /// 返回当前所有元素的快照（从旧到新）。
+    /// 返回当前所有元素的快照（从旧到新）。仅测试用：生产路径已改为
+    /// 锁内 iter() 扫描过滤(见 RxHistory::since),不再全量克隆快照。
+    #[cfg(test)]
     pub fn snapshot(&self) -> Vec<T> {
         self.buf.iter().cloned().collect()
     }
@@ -48,14 +50,20 @@ impl<T: Clone> RingBuffer<T> {
         self.buf.iter()
     }
 
+    /// 仅测试用(供 RxHistory::clear 的测试)。
+    #[cfg(test)]
     pub fn clear(&mut self) {
         self.buf.clear();
     }
 
+    /// 仅测试用(断言环缓冲状态)。
+    #[cfg(test)]
     pub fn len(&self) -> usize {
         self.buf.len()
     }
 
+    /// 仅测试用(断言环缓冲状态)。
+    #[cfg(test)]
     pub fn is_empty(&self) -> bool {
         self.buf.is_empty()
     }

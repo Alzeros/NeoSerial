@@ -27,6 +27,9 @@ pub fn spawn_writer(
     line_index: Arc<AtomicU64>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
+        // tx-update 节流:手动发送频率远低于 10Hz,行为不变(立即发);
+        // 文件发送/序列爆发时 ≥100ms 一个,空闲(100ms 无写)与线程退出前补发,终值不丢。
+        let mut tx_update = crate::connection::EventThrottle::new(std::time::Duration::from_millis(100));
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             match write_rx.recv_timeout(std::time::Duration::from_millis(100)) {
                 Ok(cmd) => {
@@ -44,10 +47,13 @@ pub fn spawn_writer(
                     // 数据进入驱动缓冲区后硬件会立即开始发送，小数据包无需 flush 也能及时到达。
                     match port.write_all(&data) {
                         Ok(_) => {
-                            let total = tx_bytes.fetch_add(data.len() as u64, std::sync::atomic::Ordering::SeqCst) + data.len() as u64;
-                            // 读当前 window_label(一次,供本批 emit 用;GUI 接管改 RwLock,下次 write 用新值)
-                            let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
-                            let _ = app_handle.emit_to(&wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
+                            let _ = tx_bytes.fetch_add(data.len() as u64, std::sync::atomic::Ordering::SeqCst);
+                            // tx-update 节流发送(定向到该连接归属的窗口)
+                            if tx_update.on_activity() {
+                                let total = tx_bytes.load(std::sync::atomic::Ordering::SeqCst);
+                                let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+                                let _ = app_handle.emit_to(&wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
+                            }
 
                             if emit_line {
                                 // 从 state 读取显示配置和文件日志 sender
@@ -75,6 +81,7 @@ pub fn spawn_writer(
                                 if log_send {
                                     let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
                                     let line = LogLine::new(now_local_ts(), Dir::Tx, data.clone(), &[], idx);
+                                    let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
                                     let _ = app_handle.emit_to(&wl, "tx-line", line.clone());
                                     // 喂 per-connection 收发历史(tx)。Send 分支(send_file)不经 emit_tx_line,
                                     // 这里补 push,让 get_history_since 也能看到文件发送的 Tx。
@@ -110,8 +117,21 @@ pub fn spawn_writer(
                     }
                 }
                 Err(_) => {
-                    // timeout, continue loop to check running
+                    // timeout:补发被节流压下的 tx-update(空闲 100ms,终值不丢)
+                    if tx_update.take_pending() {
+                        let total = tx_bytes.load(std::sync::atomic::Ordering::SeqCst);
+                        if let Ok(wl) = window_label.read() {
+                            let _ = app_handle.emit_to(&*wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
+                        }
+                    }
                 }
+            }
+        }
+        // 退出前补发 pending 的 tx-update 终值(断开时计数器定格在准确值)
+        if tx_update.take_pending() {
+            let total = tx_bytes.load(std::sync::atomic::Ordering::SeqCst);
+            if let Ok(wl) = window_label.read() {
+                let _ = app_handle.emit_to(&*wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
             }
         }
     })

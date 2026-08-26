@@ -115,6 +115,49 @@ pub struct ConnectionMode {
     pub mode: String,
 }
 
+/// 事件节流器:限制事件最小发射间隔,窗口内被压下的更新记 pending,
+/// 由调用方在空闲/线程退出路径 [`EventThrottle::take_pending`] 补发。
+///
+/// 用于 rx-update/tx-update 这类"终值重要、中间值可合并"的计数器事件:
+/// 高波特率下每次 read/write 都 emit 会以每秒成百上千个事件冲垮 IPC 与前端,
+/// 节流后只有计数器刷新粒度变粗(≤ min_interval + 空闲检测周期),终值永不丢。
+pub struct EventThrottle {
+    min_interval: std::time::Duration,
+    last_emit: Option<std::time::Instant>,
+    pending: bool,
+}
+
+impl EventThrottle {
+    pub fn new(min_interval: std::time::Duration) -> Self {
+        EventThrottle { min_interval, last_emit: None, pending: false }
+    }
+
+    /// 有新数据时调用。返回 true = 到点,应立即 emit;false = 已记 pending。
+    pub fn on_activity(&mut self) -> bool {
+        let due = self.last_emit.map_or(true, |t| t.elapsed() >= self.min_interval);
+        if due {
+            self.last_emit = Some(std::time::Instant::now());
+            self.pending = false;
+            true
+        } else {
+            self.pending = true;
+            false
+        }
+    }
+
+    /// 空闲/退出时调用。返回 true = 有被压下的更新需补发(标记已清)。
+    pub fn take_pending(&mut self) -> bool {
+        if self.pending {
+            self.pending = false;
+            // 补发也占用一个节流窗口,避免空闲补发后紧跟的密集活动立即再发
+            self.last_emit = Some(std::time::Instant::now());
+            true
+        } else {
+            false
+        }
+    }
+}
+
 /// 在途连接的端口集合。connect 在放掉 `connections` 锁之前把 port 记进来占位,
 /// 打开完成(或失败)后移除。见 [`ConnectingGuard`]。
 pub type ConnectingSet = Arc<Mutex<HashSet<String>>>;
@@ -405,5 +448,31 @@ mod tests {
         for port in ["COM1", "COM3", "COM12", "COM255"] {
             assert_eq!(label_to_port(&port_to_label(port)), Some(port.to_string()));
         }
+    }
+
+    #[test]
+    fn test_event_throttle_first_emit_immediate() {
+        let mut t = EventThrottle::new(std::time::Duration::from_secs(3600));
+        assert!(t.on_activity(), "首次应立即放行");
+        assert!(!t.on_activity(), "窗口内应压制并记 pending");
+        assert!(t.take_pending(), "有 pending 需补发");
+        assert!(!t.take_pending(), "取过即清,不重复补发");
+        assert!(!t.on_activity(), "补发占用了窗口,继续压制");
+    }
+
+    #[test]
+    fn test_event_throttle_window_expires() {
+        let mut t = EventThrottle::new(std::time::Duration::from_millis(1));
+        assert!(t.on_activity());
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        assert!(t.on_activity(), "窗口过期后应放行");
+    }
+
+    #[test]
+    fn test_event_throttle_no_pending_no_flush() {
+        let mut t = EventThrottle::new(std::time::Duration::from_secs(3600));
+        assert!(t.on_activity());
+        // 已立即 emit 且无压制,空闲补发应为 no-op
+        assert!(!t.take_pending());
     }
 }

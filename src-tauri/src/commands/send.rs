@@ -141,6 +141,9 @@ fn send_file_impl(
     let mut reader = std::io::BufReader::new(file);
     let mut buf = [0u8; 1024];
     let mut sent = 0usize;
+    // 进度事件节流:旧版每 1KB chunk 一个(1MB 文件 = 1024 个事件),节流到
+    // ≥100ms 一个;循环结束后必发终值(100% 保证到达),进度条只是刷新变粗。
+    let mut last_progress = std::time::Instant::now();
 
     loop {
         let n = reader.read(&mut buf).map_err(|e| format!("读取文件失败: {}", e))?;
@@ -152,13 +155,22 @@ fn send_file_impl(
             .map_err(|e| format!("发送队列写入失败: {}", e))?;
         sent += n;
 
-        // 发送进度事件(定向到该连接归属的窗口)
-        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
-        let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress {
-            sent,
-            total: total_size,
-        });
+        if last_progress.elapsed() >= std::time::Duration::from_millis(100) {
+            last_progress = std::time::Instant::now();
+            let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+            let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress {
+                sent,
+                total: total_size,
+            });
+        }
     }
+
+    // 终值必发:节流可能压掉最后一个 chunk 的更新,这里保证前端进度到 100%。
+    let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+    let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress {
+        sent,
+        total: total_size,
+    });
 
     Ok(sent)
 }

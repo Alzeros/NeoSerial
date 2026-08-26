@@ -7,7 +7,7 @@
   import StatusBar from '$components/StatusBar.svelte';
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
   import {
-    appendLogLine,
+    appendLogLines,
     autoScroll,
     cachedSettings,
     connected,
@@ -48,7 +48,7 @@
     onConnectionMode,
     onConnectionState,
     onError,
-    onRxLine,
+    onRxLines,
     onRxUpdate,
     onSequenceDone,
     onSequenceProgress,
@@ -57,10 +57,10 @@
   } from '$lib/tauri';
   import { connect as connectPort } from '$lib/tauri';
 
-  async function handleRxLine(line: LogLine) {
+  async function handleRxLines(lines: LogLine[]) {
     // 自动滚动由 LogView 内部 $effect + requestAnimationFrame 处理
     // 这里只负责把数据塞进 logLines，无需再 tick + 读 scrollHeight
-    appendLogLine(line);
+    appendLogLines(lines);
   }
 
   // 把加载到的 Settings 回填到各响应式 store
@@ -212,8 +212,8 @@
       .then(applySettings)
       .catch((e) => console.error('加载设置失败:', e));
 
-    const unlistenRxLine = onRxLine((line) => handleRxLine(line));
-    const unlistenTxLine = onTxLine((line) => handleRxLine(line));
+    const unlistenRxLine = onRxLines(handleRxLines);
+    const unlistenTxLine = onTxLine((line) => handleRxLines([line]));
     const unlistenTx = onTxUpdate((u) => (txBytes.value = u.total));
     const unlistenRx = onRxUpdate((u) => (rxBytes.value = u.total));
     const unlistenState = onConnectionState((s) => {

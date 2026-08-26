@@ -13,9 +13,12 @@ use crate::state::AppState;
 use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
-/// 把积攒的行 flush 出去：emit rx-line 给前端 + 送文件日志（若正在记录）。
-/// rx-line 定向到该连接归属的窗口(emit_to 读 window_label RwLock),多窗口下不串流。
+/// 把积攒的行 flush 出去：emit rx-lines 批量事件给前端 + 送文件日志（若正在记录）。
+/// rx-lines 定向到该连接归属的窗口(emit_to 读 window_label RwLock),多窗口下不串流。
 /// RwLock 让 GUI 接管 MCP 连接时改 window_label,reader 自动用新值。
+///
+/// 批量 emit(旧版逐行 rx-line):每行一次 IPC 序列化/跨线程派发,高吞吐下
+/// 前端被事件洪泛。批量化后行内容/顺序/时间戳语义不变,前端一次循环入 store。
 fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>) {
     if lines.is_empty() {
         return;
@@ -44,16 +47,27 @@ fn flush_lines(app_handle: &tauri::AppHandle, lines: &mut Vec<LogLine>, rx_histo
     // 读当前 window_label(GUI 接管时改 RwLock,下次 flush 自动用新值)
     let label = window_label.read().map(|s| s.clone()).unwrap_or_default();
 
-    for line in lines.drain(..) {
-        let _ = app_handle.emit_to(&label, "rx-line", line.clone());
-        // 喂后端收发历史(rx),供 MCP 阻塞读/历史查询。push 触发 Notify 唤醒等待的 send_and_read。
-        rx_history.push(crate::buffer::log_line::Dir::Rx, line.clone());
-        if let (Some(c), Some(tx)) = (&cfg, &sender) {
-            let formatted = format_line_for_file(&line, c, false);
+    let batch: Vec<LogLine> = lines.drain(..).collect();
+    let _ = app_handle.emit_to(&label, "rx-lines", &batch);
+    if let (Some(c), Some(tx)) = (&cfg, &sender) {
+        for line in &batch {
+            let formatted = format_line_for_file(line, c, false);
             if !formatted.is_empty() {
                 let _ = tx.send(formatted);
             }
         }
+    }
+    // 批量入历史:一次锁 + 一次 notify_waiters(逐行 push 每行唤醒一次 send_and_read,
+    // 每次唤醒都触发一轮 since() 扫描;批量后每批只唤醒一次)。供 MCP 阻塞读/历史查询。
+    rx_history.push_many(Dir::Rx, batch);
+}
+
+/// 发送 rx-update 事件(定向到该连接归属的窗口)。total 现读现发,
+/// 节流补发时也是最新累计值,终值不丢。
+fn emit_rx_update(app_handle: &tauri::AppHandle, window_label: &Arc<RwLock<String>>, port: &str, rx_bytes: &Arc<AtomicU64>) {
+    let total = rx_bytes.load(std::sync::atomic::Ordering::SeqCst);
+    if let Ok(wl) = window_label.read() {
+        let _ = app_handle.emit_to(&*wl, "rx-update", crate::connection::RxUpdate { total, port: port.to_string() });
     }
 }
 
@@ -92,6 +106,9 @@ pub fn spawn_reader(
         let mut assembler = LineAssembler::new();
         let mut last_emit = Instant::now();
         let mut pending_lines: Vec<LogLine> = Vec::with_capacity(16);
+        // rx-update 节流:≥100ms 一个(高波特率下每次 read 都发会冲垮 IPC),
+        // 压下的记 pending,读超时(空闲)/线程退出前补发,字节终值不丢。
+        let mut rx_update = crate::connection::EventThrottle::new(std::time::Duration::from_millis(100));
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
             match port.read(&mut buf) {
@@ -113,15 +130,17 @@ pub fn spawn_reader(
                         last_emit = Instant::now();
                     }
 
-                    // 定期发送 rx-update 事件(定向到该连接归属的窗口)
-                    let total = rx_bytes.load(std::sync::atomic::Ordering::SeqCst);
-                    if let Ok(wl) = window_label.read() {
-                        let _ = app_handle.emit_to(&*wl, "rx-update", crate::connection::RxUpdate { total, port: port_name.clone() });
+                    // rx-update 节流发送(定向到该连接归属的窗口)
+                    if rx_update.on_activity() {
+                        emit_rx_update(&app_handle, &window_label, &port_name, &rx_bytes);
                     }
                 }
                 Ok(_) => {
                     // 超时：有数据也可能在等下一批，先 flush 已有行
                     flush_lines(&app_handle, &mut pending_lines, &rx_history, &window_label);
+                    if rx_update.take_pending() {
+                        emit_rx_update(&app_handle, &window_label, &port_name, &rx_bytes);
+                    }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::TimedOut => {
                     // 超时（读超时到）：此刻通常意味着设备输出告一段落，
@@ -129,6 +148,9 @@ pub fn spawn_reader(
                     // 避免残留行滞留到下一批、带上下一个时间戳。
                     flush_lines(&app_handle, &mut pending_lines, &rx_history, &window_label);
                     flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history, &window_label, &line_index);
+                    if rx_update.take_pending() {
+                        emit_rx_update(&app_handle, &window_label, &port_name, &rx_bytes);
+                    }
                 }
                 Err(e) => {
                     // 共享模式下锁错误不致命，继续运行
@@ -154,5 +176,9 @@ pub fn spawn_reader(
         }
         // 线程退出前把残余行 flush
         flush_lines(&app_handle, &mut pending_lines, &rx_history, &window_label);
+        // 补发 pending 的 rx-update 终值(拔线/断开时计数器定格在准确值)
+        if rx_update.take_pending() {
+            emit_rx_update(&app_handle, &window_label, &port_name, &rx_bytes);
+        }
     })
 }

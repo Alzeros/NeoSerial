@@ -1,4 +1,4 @@
-use crossbeam_channel::{Sender, unbounded};
+use crossbeam_channel::{RecvTimeoutError, Sender, unbounded};
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::PathBuf;
@@ -31,18 +31,27 @@ impl FileLogger {
             .spawn(move || {
                 let mut writer = BufWriter::new(file);
                 let mut error_msg: Option<String> = None;
-                for line in rx.iter() {
-                    if let Err(e) = writer.write_all(line.as_bytes()) {
-                        error_msg = Some(format!("存盘失败: {}", e));
-                        break;
-                    }
-                    if let Err(e) = writer.write_all(b"\n") {
-                        error_msg = Some(format!("存盘失败: {}", e));
-                        break;
-                    }
-                    if let Err(e) = writer.flush() {
-                        error_msg = Some(format!("存盘失败: {}", e));
-                        break;
+                // 空闲即落盘:突发批量写(BufWriter 8KB 满自动落),50ms 无新行时统一 flush。
+                // 旧版每行 flush = 每行一次 write syscall,BufWriter 形同虚设;
+                // 代价:应用崩溃时最多丢最后 50ms 的行(旧版 flush 也只到内核页缓存未 fsync,
+                // OS 崩溃两种方案同样丢)。
+                loop {
+                    match rx.recv_timeout(std::time::Duration::from_millis(50)) {
+                        Ok(line) => {
+                            if let Err(e) = writer.write_all(line.as_bytes()) {
+                                error_msg = Some(format!("存盘失败: {}", e));
+                                break;
+                            }
+                            if let Err(e) = writer.write_all(b"\n") {
+                                error_msg = Some(format!("存盘失败: {}", e));
+                                break;
+                            }
+                        }
+                        Err(RecvTimeoutError::Timeout) => {
+                            // 空闲:把攒的行推给内核
+                            let _ = writer.flush();
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
                     }
                 }
                 let _ = writer.flush();

@@ -38,6 +38,26 @@ impl RxHistory {
         seq
     }
 
+    /// 批量插入多行(reader 每 flush 一批,整批送入)。语义与逐行 push 一致:
+    /// 顺序分配连续 seq、按插入序进缓冲。一次加锁 + 一次 notify_waiters——
+    /// 逐行 push 每行唤醒一次 send_and_read 等待者(每次唤醒都触发一轮
+    /// since() 扫描),批量后每批只唤醒一次。
+    pub fn push_many(&self, dir: Dir, lines: Vec<LogLine>) {
+        if lines.is_empty() {
+            return;
+        }
+        let first_seq = self.seq.fetch_add(lines.len() as u64, Ordering::SeqCst) + 1;
+        let entries: Vec<(u64, Dir, LogLine)> = lines
+            .into_iter()
+            .enumerate()
+            .map(|(i, line)| (first_seq + i as u64, dir, line))
+            .collect();
+        if let Ok(mut buf) = self.inner.lock() {
+            buf.push_many(entries);
+        }
+        self.notify.notify_waiters();
+    }
+
     /// 返回 seq > after_seq 的所有行(从旧到新,按插入序)+ 当前最大序号。
     pub fn since(&self, after_seq: u64) -> (Vec<(u64, Dir, LogLine)>, u64) {
         match self.inner.lock() {
@@ -85,6 +105,7 @@ impl RxHistory {
     }
 
     /// 清空历史(测试用)。
+    #[cfg(test)]
     pub fn clear(&self) {
         if let Ok(mut buf) = self.inner.lock() {
             buf.clear();
@@ -112,6 +133,48 @@ mod tests {
         assert_eq!(s1, 1);
         assert_eq!(s2, 2);
         assert_eq!(h.latest_seq(), 2);
+    }
+
+    /// push_many:连续 seq、按插入序可见、可与逐行 push 混用、空批为 no-op。
+    #[test]
+    fn test_push_many_contiguous_seqs() {
+        let h = RxHistory::new(100);
+        h.push_many(
+            Dir::Rx,
+            vec![rx(b"a"), rx(b"b"), rx(b"c")],
+        );
+        let (rows, latest) = h.since(0);
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows[0].0, 1);
+        assert_eq!(rows[1].0, 2);
+        assert_eq!(rows[2].0, 3);
+        assert_eq!(rows.iter().map(|(_, d, _)| *d).collect::<Vec<_>>(), vec![Dir::Rx, Dir::Rx, Dir::Rx]);
+        assert_eq!(latest, 3);
+
+        // 与逐行 push 混用,seq 接续单调
+        h.push(Dir::Tx, tx(b"d"));
+        let (rows, latest) = h.since(3);
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].0, 4);
+        assert_eq!(rows[0].1, Dir::Tx);
+        assert_eq!(latest, 4);
+
+        // 空批 no-op(seq 不前进)
+        let before = h.latest_seq();
+        h.push_many(Dir::Rx, Vec::new());
+        assert_eq!(h.latest_seq(), before);
+    }
+
+    /// push_many 容量溢出:整批进环缓冲,超出容量的最旧行被挤出(与逐行一致)。
+    #[test]
+    fn test_push_many_overflow_drops_oldest() {
+        let h = RxHistory::new(3);
+        h.push(Dir::Rx, rx(b"old1")); // seq1
+        h.push_many(Dir::Rx, vec![rx(b"a"), rx(b"b"), rx(b"c"), rx(b"d")]); // seq2..5
+        let (rows, _) = h.since(0);
+        // 容量 3:只剩 b,c,d
+        assert_eq!(rows.len(), 3);
+        assert_eq!(rows.iter().map(|(_, _, l)| l.ascii.clone()).collect::<Vec<_>>(), vec!["b", "c", "d"]);
     }
 
     #[test]

@@ -219,8 +219,10 @@ export async function saveFileDialog(title?: string, defaultName?: string, filte
 // 用 getCurrentWebview().listen 定向:只收 emit_to 给本窗口(label)的事件。
 // 后端 emit_to(win-{port}),每个副窗口只收自己 port 的事件,多窗口不串流。
 
-export function onRxLine(cb: (line: LogLine) => void) {
-  return getCurrentWebview().listen<LogLine>('rx-line', (e) => cb(e.payload));
+/** rx 批量事件:后端每次 flush 发一个(≤16 行或 5ms),payload 为 LogLine[]。
+ * 旧版逐行 rx-line 已废弃;批量后行内容/顺序/时间戳语义不变。 */
+export function onRxLines(cb: (lines: LogLine[]) => void) {
+  return getCurrentWebview().listen<LogLine[]>('rx-lines', (e) => cb(e.payload));
 }
 
 export interface FileSendProgress {

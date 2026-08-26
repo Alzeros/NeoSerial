@@ -43,8 +43,17 @@ export const logVersion = $state<{ value: number }>({ value: 0 });
 export const scrollContainerRef = $state<{ el: HTMLDivElement | null }>({ el: null });
 
 export function appendLogLine(line: LogLine) {
-  if (paused.value) return;
-  logLines.push(line);
+  appendLogLines([line]);
+}
+
+/** 批量追加(后端 rx-lines 按批到达)。语义与逐行 appendLogLine 一致:
+ * 暂停时丢弃、超过 MAX_LOG_LINES 裁剪;logVersion 每批只 +1,
+ * LogView 的 $derived/$effect 每批只重算一次(Svelte 响应式开销 ↓)。 */
+export function appendLogLines(batch: LogLine[]) {
+  if (paused.value || batch.length === 0) return;
+  for (const line of batch) {
+    logLines.push(line);
+  }
   if (logLines.length > MAX_LOG_LINES) {
     logLines.splice(0, logLines.length - MAX_LOG_LINES);
   }
