@@ -12,19 +12,24 @@
   const txLabel = $derived(logDirLabelStyle.value === 'full' ? '发送' : 'Tx');
   const rxLabel = $derived(logDirLabelStyle.value === 'full' ? '接收' : 'Rx');
 
-  // 收发活跃：字节数变化后置 true，停 ~1.5s 自动落回。
-  // 简单节流：只在数值变化时重置定时器，不每次重渲染。
+  // 收发活跃：字节数增长时置 true，停 ~1.5s 自动落回。
+  // 只看字节增量，不把"是否连接"混进比较——否则连接瞬间会误判为活跃而空转。
   let ioActive = $state(false);
   let ioTimer: ReturnType<typeof setTimeout> | null = null;
+  let lastBytes = 0; // 上次的累计字节数；连接但静默时 total===lastBytes，不呼吸
   $effect(() => {
-    // 依赖订阅
-    const sum = txBytes.value + rxBytes.value + (connected.value ? 1 : 0);
-    if (!connected.value) {
+    // 读取 connected 让 effect 订阅连接状态变化（断开时落回静止）
+    const conn = connected.value;
+    const total = txBytes.value + rxBytes.value;
+    if (!conn) {
       ioActive = false;
+      lastBytes = 0;
       if (ioTimer) { clearTimeout(ioTimer); ioTimer = null; }
       return;
     }
-    if (sum === 0) { ioActive = false; return; }
+    // 字节数没变（连接但静默）→ 不改变呼吸状态
+    if (total === lastBytes) return;
+    lastBytes = total;
     ioActive = true;
     if (ioTimer) clearTimeout(ioTimer);
     ioTimer = setTimeout(() => { ioActive = false; }, 1500);

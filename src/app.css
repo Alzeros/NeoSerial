@@ -645,7 +645,7 @@ table tbody tr {
 }
 
 table tbody tr:hover {
-  background: rgba(74, 91, 168, 0.04);
+  background: var(--overlay-hover);
 }
 
 /* 标签文字（配置区） */
