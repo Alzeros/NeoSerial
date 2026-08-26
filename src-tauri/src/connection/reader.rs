@@ -115,12 +115,13 @@ pub fn spawn_reader(
                 Ok(n) if n > 0 => {
                     rx_bytes.fetch_add(n as u64, std::sync::atomic::Ordering::SeqCst);
                     let lines = assembler.feed(&buf[..n]);
-                    // 同一 read 批次内的所有行共用同一时间戳：保持一批输出整体一致，
-                    // 也避免同一逻辑输出（如 help 列表）各行时间戳跳动。
-                    let ts = now_local_ts();
+                    // 每行独立取时间戳:串口调试常需看各行到达的精确时序
+                    // (响应延迟、分帧间隔)。开销 ~0.5μs/行,远小于 IPC/切分成本,
+                    // 批量 emit 节流收益不受影响(仍攒 16 行/5ms 一批 emit)。
                     for raw in lines {
+                        let ts = now_local_ts();
                         let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                        let line = LogLine::new(ts.clone(), Dir::Rx, raw, &[], idx);
+                        let line = LogLine::new(ts, Dir::Rx, raw, &[], idx);
                         pending_lines.push(line);
                     }
 
