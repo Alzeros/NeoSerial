@@ -2,7 +2,8 @@
 name = "neoserial"
 version = "0.2.7"
 description = "NeoSerial - Serial Port Tool"
-authors = ["you"]
+authors = ["Alzeros"]
+license = "MIT"
 edition = "2021"
 
 [lib]

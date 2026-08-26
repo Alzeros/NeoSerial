@@ -190,3 +190,7 @@ npm run check        # Svelte/TypeScript 类型检查
 ## 源码
 
 [github.com/Alzeros/NeoSerial](https://github.com/Alzeros/NeoSerial)
+
+## 许可证
+
+[MIT](LICENSE)
