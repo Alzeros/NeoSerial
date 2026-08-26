@@ -98,9 +98,26 @@ pub fn emit_tx_line(app_handle: &tauri::AppHandle, rx_history: &Arc<RxHistory>, 
 }
 
 #[tauri::command]
-pub fn send_file(
-    state: State<'_, AppState>,
+pub async fn send_file(
     app_handle: tauri::AppHandle,
+    path: String,
+    port: Option<String>,
+) -> Result<usize, String> {
+    // 文件读取 + 分块入队是阻塞 IO,放主线程会冻结 UI;丢阻塞线程池执行。
+    // 返回值/进度事件语义与同步版一致。
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+        send_file_impl(&state, &handle, path, port)
+    })
+    .await
+    .map_err(|e| format!("文件发送任务执行异常: {}", e))?
+}
+
+/// send_file 的同步实现(在阻塞线程池执行)。逻辑与旧同步 command 逐行一致。
+fn send_file_impl(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
     path: String,
     port: Option<String>,
 ) -> Result<usize, String> {

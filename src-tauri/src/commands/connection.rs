@@ -42,8 +42,7 @@ pub fn resolve_port(
 }
 
 #[tauri::command]
-pub fn connect(
-    state: State<'_, AppState>,
+pub async fn connect(
     app_handle: tauri::AppHandle,
     webview_window: tauri::WebviewWindow,
     port: String,
@@ -53,7 +52,35 @@ pub fn connect(
     stopBits: u8,
     flowControl: String,
 ) -> Result<(), String> {
-    let data_bits = match dataBits.as_str() {
+    // 同步 command 在 Tauri 主线程执行,而 spawn_connection 内的 serialport::open +
+    // DTR/RTS 拉高是阻塞调用(实测可卡数百 ms 到十几秒),期间所有窗口冻结、
+    // 事件停止派发。改 async + spawn_blocking:阻塞打开在线程池执行,
+    // 对前端 invoke 的返回值/时序语义不变(本来就是 Promise)。
+    let handle = app_handle.clone();
+    let caller_label = webview_window.label().to_string();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+        connect_impl(&state, &handle, caller_label, port, baudRate, dataBits, parity, stopBits, flowControl)
+    })
+    .await
+    .map_err(|e| format!("连接任务执行异常: {}", e))?
+}
+
+/// connect 的同步实现(在阻塞线程池执行)。逻辑与旧同步 command 逐行一致
+/// (参数名用 snake_case,camelCase 只保留在 command 层供前端 IPC)。
+#[allow(clippy::too_many_arguments)]
+fn connect_impl(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+    caller_label: String,
+    port: String,
+    baud_rate: u32,
+    data_bits: String,
+    parity: String,
+    stop_bits: u8,
+    flow_control: String,
+) -> Result<(), String> {
+    let data_bits = match data_bits.as_str() {
         "Five" => crate::config::settings::DataBits::Five,
         "Six" => crate::config::settings::DataBits::Six,
         "Seven" => crate::config::settings::DataBits::Seven,
@@ -64,11 +91,11 @@ pub fn connect(
         "Even" => crate::config::settings::Parity::Even,
         _ => crate::config::settings::Parity::None,
     };
-    let stop_bits = match stopBits {
+    let stop_bits = match stop_bits {
         2 => crate::config::settings::StopBits::Two,
         _ => crate::config::settings::StopBits::One,
     };
-    let flow_control = match flowControl.as_str() {
+    let flow_control = match flow_control.as_str() {
         "Software" => crate::config::settings::FlowControl::Software,
         "Hardware" => crate::config::settings::FlowControl::Hardware,
         _ => crate::config::settings::FlowControl::None,
@@ -76,15 +103,15 @@ pub fn connect(
 
     let params = SerialParams {
         port: port.clone(),
-        baud_rate: baudRate,
+        baud_rate,
         data_bits,
         parity,
         stop_bits,
         flow_control,
     };
 
-    // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label)。
-    let caller_label = webview_window.label().to_string();
+    // window_label = 调用方窗口 label(main 连→"main",副窗口连→该窗口 label),
+    // 由 async command 层取自 webview_window 传入。
 
     // check→占位 持锁(原子,防 TOCTOU),真正的 spawn 放到锁外。
     // 不能持锁贯穿到 spawn:spawn_connection 内的 serialport open + DTR/RTS 拉高是阻塞
@@ -174,16 +201,23 @@ fn is_zombie(h: &ConnectionHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn disconnect(
-    state: State<'_, AppState>,
+pub async fn disconnect(
     app_handle: tauri::AppHandle,
     port: Option<String>,
 ) -> Result<(), String> {
-    let resolved = {
-        let conns = state.connections.lock().map_err(|e| e.to_string())?;
-        resolve_port(&conns, port)?
-    };
-    disconnect_port(&state, &app_handle, &resolved)
+    // disconnect_port 会同步等 reader/writer 线程退出(最多 1s),
+    // 放主线程会冻结 UI;丢阻塞线程池执行。
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+        let resolved = {
+            let conns = state.connections.lock().map_err(|e| e.to_string())?;
+            resolve_port(&conns, port)?
+        };
+        disconnect_port(&state, &handle, &resolved)
+    })
+    .await
+    .map_err(|e| format!("断开连接任务执行异常: {}", e))?
 }
 
 /// 接管窗口关闭时:把它持有的连接按出身处理。
@@ -286,8 +320,13 @@ pub fn list_ports_inner() -> Vec<String> {
 }
 
 #[tauri::command]
-pub fn list_ports() -> Result<Vec<String>, String> {
-    Ok(list_ports_inner())
+pub async fn list_ports() -> Result<Vec<String>, String> {
+    // available_ports 在 Windows 走 SetupAPI/注册表枚举(可卡几十~几百 ms),
+    // 不放主线程。
+    let ports = tauri::async_runtime::spawn_blocking(list_ports_inner)
+        .await
+        .map_err(|e| format!("枚举串口任务执行异常: {}", e))?;
+    Ok(ports)
 }
 
 /// 查询"agent 连了但还没 GUI 窗口接管"的端口:即 window_label 仍是 mcp- 前缀的连接。

@@ -12,38 +12,39 @@ impl LineAssembler {
 
     /// 喂入一段字节，返回本次切出的完整行列表（每行不含换行符）。
     /// 未遇换行符的尾段缓存在内部，等下次 feed。
+    ///
+    /// 实现：游标扫描——start 之前是已切出的行(含换行符)，扫描/提取都在
+    /// [start..] 上进行，循环结束一次性 drain 前缀。旧实现每切一行就
+    /// drain(..nl) + 逐字节 remove(0)，每次都是 O(remaining) 的 memmove，
+    /// 多行大 chunk 场景退化为 O(n²)；游标法全程 O(n)。
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<Vec<u8>> {
         self.pending.extend_from_slice(chunk);
         let mut lines = Vec::new();
+        let mut start = 0usize;
 
-        loop {
-            // 找最早的换行符位置
-            let (nl_pos, consumed) = match self.find_newline() {
-                Some(p) => p,
-                None => break,
-            };
-            // 行内容 = pending[..nl_pos]
-            let line: Vec<u8> = self.pending.drain(..nl_pos).collect();
-            // 移除换行符本身（drain 掉 consumed 个字节）
-            for _ in 0..consumed {
-                self.pending.remove(0);
-            }
-            lines.push(line);
+        while let Some((nl_pos, consumed)) = self.find_newline_from(start) {
+            lines.push(self.pending[start..nl_pos].to_vec());
+            start = nl_pos + consumed;
+        }
+        if start > 0 {
+            self.pending.drain(..start);
         }
         lines
     }
 
-    /// 在 pending 开头查找换行符，返回 (行内容结束位置, 换行符字节数)。
+    /// 在 pending[start..] 中查找最早的换行符，返回 (行内容结束位置, 换行符字节数)。
     /// 优先匹配 \r\n（2字节），再 \n / \r（1字节）。
     ///
-    /// 注意：若 \r 为 pending 最后一个字节，不确定是 \r\n 还是 \r，
-    /// 延迟到下一次 feed 再判断，避免跨 read 边界切分时把 \r\n 拆成两行。
-    fn find_newline(&self) -> Option<(usize, usize)> {
-        for i in 0..self.pending.len() {
+    /// 注意：若 \r 为扫描范围内最后一个字节，不确定是 \r\n 还是 \r，
+    /// 返回 None 延迟到下一次 feed 再判断，避免跨 read 边界切分时把 \r\n 拆成两行。
+    fn find_newline_from(&self, start: usize) -> Option<(usize, usize)> {
+        let len = self.pending.len();
+        let mut i = start;
+        while i < len {
             let b = self.pending[i];
             if b == b'\r' {
                 // \r 是最后一个字节 → 可能只是 \r\n 的前半，等更多数据
-                if i + 1 >= self.pending.len() {
+                if i + 1 >= len {
                     return None;
                 }
                 if self.pending[i + 1] == b'\n' {
@@ -54,6 +55,7 @@ impl LineAssembler {
             if b == b'\n' {
                 return Some((i, 1));
             }
+            i += 1;
         }
         None
     }
@@ -159,5 +161,103 @@ mod tests {
     fn test_empty_chunk() {
         let mut a = LineAssembler::new();
         assert!(a.feed(b"").is_empty());
+    }
+
+    // ===== 重构回归对拍 =====
+
+    /// 确定性 LCG 伪随机字节生成。
+    fn lcg(state: &mut u64) -> u8 {
+        *state = state
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        (*state >> 33) as u8
+    }
+
+    /// 参考实现 = 旧算法（逐行 drain + remove(0)），语义与游标版等价。
+    /// 本对拍锁住"重构不改变行为"：随机字节流按随机边界切分喂入，
+    /// 两种实现的输出行、以及结束后的 flush 残尾必须完全一致。
+    fn reference_feed(pending: &mut Vec<u8>, chunk: &[u8]) -> Vec<Vec<u8>> {
+        pending.extend_from_slice(chunk);
+        let mut lines = Vec::new();
+        loop {
+            let found = (0..pending.len()).find_map(|i| {
+                let b = pending[i];
+                if b == b'\r' {
+                    if i + 1 >= pending.len() {
+                        return None; // \r 在末尾 → 延迟判断（与旧实现一致）
+                    }
+                    if pending[i + 1] == b'\n' {
+                        Some((i, 2))
+                    } else {
+                        Some((i, 1))
+                    }
+                } else if b == b'\n' {
+                    Some((i, 1))
+                } else {
+                    None
+                }
+            });
+            let (nl, consumed) = match found {
+                Some(p) => p,
+                None => break,
+            };
+            let line: Vec<u8> = pending.drain(..nl).collect();
+            for _ in 0..consumed {
+                pending.remove(0);
+            }
+            lines.push(line);
+        }
+        lines
+    }
+
+    #[test]
+    fn test_random_stream_matches_reference() {
+        let mut seed: u64 = 0x1234_5678_9abc_def0;
+        // 提高换行符密度的随机流，接近真实串口数据
+        let stream: Vec<u8> = (0..50_000)
+            .map(|_| {
+                let r = lcg(&mut seed);
+                match r % 16 {
+                    0 => b'\r',
+                    1 => b'\n',
+                    _ => r,
+                }
+            })
+            .collect();
+
+        let mut new_asm = LineAssembler::new();
+        let mut new_lines: Vec<Vec<u8>> = Vec::new();
+        let mut ref_pending: Vec<u8> = Vec::new();
+        let mut ref_lines: Vec<Vec<u8>> = Vec::new();
+
+        let mut pos = 0usize;
+        while pos < stream.len() {
+            let chunk_len = (lcg(&mut seed) % 97) as usize + 1;
+            let end = (pos + chunk_len).min(stream.len());
+            let chunk = &stream[pos..end];
+            pos = end;
+            new_lines.extend(new_asm.feed(chunk));
+            ref_lines.extend(reference_feed(&mut ref_pending, chunk));
+        }
+
+        // 结束后 flush 残尾，两种实现的 pending 状态也必须一致
+        let new_tail = new_asm.flush();
+        let ref_tail = if ref_pending.is_empty() {
+            None
+        } else {
+            while matches!(ref_pending.last(), Some(b'\r') | Some(b'\n')) {
+                ref_pending.pop();
+            }
+            if ref_pending.is_empty() {
+                None
+            } else {
+                Some(std::mem::take(&mut ref_pending))
+            }
+        };
+
+        // 测试有效性：足够多的行与残尾场景
+        assert!(new_lines.len() > 100, "随机流应切出足量行,实际 {}", new_lines.len());
+        assert_eq!(new_lines, ref_lines, "切出行必须与参考实现逐行一致");
+        assert_eq!(new_tail, ref_tail, "flush 残尾必须与参考实现一致");
     }
 }

@@ -37,3 +37,7 @@ winres = "0.1"
 
 [profile.release]
 debug = true
+# thin LTO + 单 codegen unit:跨 crate 内联(serialport 热路径、切行逻辑),
+# 纯编译期优化,不影响运行行为。debug=true 保留用于崩溃排查。
+lto = "thin"
+codegen-units = 1

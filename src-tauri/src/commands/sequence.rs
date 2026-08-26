@@ -210,20 +210,30 @@ pub fn sequence_stop_inner(
 /// 保存序列配置。data 为前端序列化后的 JSON（当前是 ScriptModule[]）。
 /// 用 serde_json::Value 透传，不锁定具体结构，便于后续扩展模块类型。
 #[tauri::command]
-pub fn save_sequence_config(
+pub async fn save_sequence_config(
     path: String,
     data: Vec<serde_json::Value>,
 ) -> Result<(), String> {
-    let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())?;
-    Ok(())
+    // 序列化 + 磁盘写入是阻塞操作,不放主线程。
+    tauri::async_runtime::spawn_blocking(move || {
+        let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("保存序列任务执行异常: {}", e))?
 }
 
 /// 加载序列配置。返回原始 JSON 数组，结构判定/旧格式迁移由前端完成
 /// （旧文件是裸 ScriptPage[]，前端检测无 id/pages 字段则包进默认模块）。
 #[tauri::command]
-pub fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>, String> {
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
+pub async fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>, String> {
+    // 磁盘读取是阻塞操作,不放主线程。spawn_blocking 返回双层 Result
+    // (JoinHandle 错误 + 内层 IO 错误),双 `?` 依次展开。
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("加载序列任务执行异常: {}", e))??;
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
@@ -232,39 +242,55 @@ pub fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>, Stri
 /// 保存后广播 "sequence-changed"(带 source label),其他窗口收到后 reload,
 /// 实现多窗口快捷指令同步(避免 A 窗口改了 B 窗口不知道,后续保存覆盖 A 的改动)。
 #[tauri::command]
-pub fn save_sequence_auto(
+pub async fn save_sequence_auto(
     app_handle: tauri::AppHandle,
     webview_window: tauri::WebviewWindow,
     data: Vec<serde_json::Value>,
 ) -> Result<(), String> {
-    let appdata = std::env::var("APPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let dir = appdata.join("neoserial");
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let path = dir.join("sequence.json");
-    let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-    std::fs::write(&path, text).map_err(|e| e.to_string())?;
-    // 广播给所有窗口(含自己,前端按 source label 跳过自己)
-    let _ = app_handle.emit("sequence-changed", serde_json::json!({
-        "source": webview_window.label()
-    }));
-    Ok(())
+    // 序列化 + 磁盘写入是阻塞操作,不放主线程。
+    let source = webview_window.label().to_string();
+    let handle = app_handle.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let appdata = std::env::var("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let dir = appdata.join("neoserial");
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        let path = dir.join("sequence.json");
+        let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        // 广播给所有窗口(含自己,前端按 source label 跳过自己)
+        let _ = handle.emit("sequence-changed", serde_json::json!({
+            "source": source
+        }));
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("自动保存序列任务执行异常: {}", e))?
 }
 
 /// 自动加载序列配置（从 %APPDATA%/neoserial/sequence.json）。
 /// 文件不存在时返回空数组，前端用默认模块。
 #[tauri::command]
-pub fn load_sequence_auto() -> Result<Vec<serde_json::Value>, String> {
-    let appdata = std::env::var("APPDATA")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let path = appdata.join("neoserial").join("sequence.json");
-    if !path.exists() {
-        return Ok(Vec::new());
+pub async fn load_sequence_auto() -> Result<Vec<serde_json::Value>, String> {
+    // 磁盘读取是阻塞操作,不放主线程。文件不存在时返回空数组(前端用默认模块)。
+    // spawn_blocking 返回双层 Result(JoinHandle 错误 + 内层 IO 错误),双 `?` 展开。
+    let text = tauri::async_runtime::spawn_blocking(|| {
+        let appdata = std::env::var("APPDATA")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let path = appdata.join("neoserial").join("sequence.json");
+        if !path.exists() {
+            return Ok(None);
+        }
+        std::fs::read_to_string(&path).map(Some).map_err(|e| e.to_string())
+    })
+    .await
+    .map_err(|e| format!("加载序列任务执行异常: {}", e))??;
+    match text {
+        Some(t) => serde_json::from_str(&t).map_err(|e| e.to_string()),
+        None => Ok(Vec::new()),
     }
-    let text = std::fs::read_to_string(&path).map_err(|e| e.to_string())?;
-    serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
 #[derive(serde::Deserialize)]

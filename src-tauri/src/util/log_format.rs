@@ -30,14 +30,14 @@ impl DirLabel {
 /// - show_timestamp=false 时省略时间戳前缀。
 /// - log_send=false 且方向为 Tx 时返回空字符串（该行不记录）。
 /// - is_hex=true 时 content 用 hex dump，否则用 ascii。
-/// 注：UI 显示用 `line.ascii`/`line.hex`，存盘用 `format_line_for_file`，此函数仅保留给测试。
+/// 注：UI 显示用 `line.ascii`/`line.hex()`（按需计算），存盘用 `format_line_for_file`，此函数仅保留给测试。
 #[allow(dead_code)]
 pub fn format_line(line: &LogLine, cfg: &DisplayConfig, is_hex: bool) -> String {
     if !cfg.log_send && matches!(line.dir, Dir::Tx) {
         return String::new();
     }
     let tag = cfg.dir_label.tag(line.dir);
-    let content = if is_hex { &line.hex } else { &line.ascii };
+    let content = if is_hex { line.hex() } else { line.ascii.clone() };
     if cfg.show_timestamp {
         format!("{} {} {}", line.ts, tag, content)
     } else {
@@ -54,7 +54,7 @@ pub fn format_line_for_file(line: &LogLine, cfg: &DisplayConfig, is_hex: bool) -
     }
     let tag = cfg.dir_label.tag(line.dir);
     let content = if is_hex {
-        line.hex.clone()
+        line.hex()
     } else {
         raw_to_ascii_visible(&line.raw)
     };

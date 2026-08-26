@@ -7,7 +7,6 @@ export interface LogLine {
   dir: Dir;
   raw: number[];
   ascii: string;
-  hex: string;
   is_error: boolean;
   /** 本次连接期间的行号(tx+rx 共用,开端口=1)。0 表示旧数据(前端显示为空)。 */
   line_index: number;

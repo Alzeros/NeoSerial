@@ -86,7 +86,9 @@ pub fn spawn_reader(
     line_index: Arc<AtomicU64>,
 ) -> std::thread::JoinHandle<()> {
     std::thread::spawn(move || {
-        let mut buf = [0u8; 1024];
+        // 4KB 读缓冲:高波特率下减少 read 系统调用次数(1KB 在 921600 波特率下
+        // ~90 次/秒,3M 波特率更高)。行切分与批量 flush 语义与 chunk 大小无关。
+        let mut buf = [0u8; 4096];
         let mut assembler = LineAssembler::new();
         let mut last_emit = Instant::now();
         let mut pending_lines: Vec<LogLine> = Vec::with_capacity(16);

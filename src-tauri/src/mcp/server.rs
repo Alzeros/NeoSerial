@@ -302,7 +302,16 @@ impl ServerHandler for NeoserialHandler {
         let shared = self.shared.clone();
         async move {
             let resp: Value = match name.as_ref() {
-                LIST_PORTS => serde_json::to_value(tools::list_ports(&shared)).unwrap_or_default(),
+                LIST_PORTS => {
+                    // available_ports 在 Windows 走 SetupAPI 枚举(可卡几十~几百 ms),
+                    // 丢到阻塞线程池执行,不占 tokio worker。
+                    let shared_for_tool = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || tools::list_ports(&shared_for_tool)).await;
+                    match result {
+                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("枚举串口任务异常终止: {}", e) }),
+                    }
+                }
                 DISCONNECT => {
                     let req: tools::DisconnectReq = match serde_json::from_value(args) {
                         Ok(r) => r,
@@ -310,9 +319,18 @@ impl ServerHandler for NeoserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    match tools::disconnect(&shared, &shared.app_handle, req) {
-                        Ok(_) => serde_json::json!({ "ok": true }),
-                        Err(e) => serde_json::json!({ "ok": false, "error": e }),
+                    // tools::disconnect 会同步等 reader/writer 线程退出(最多 1s),
+                    // 直接在 async 块里调会占死一个 tokio worker 线程,期间整个
+                    // MCP server 的其它 tool 调用一起卡住。丢到阻塞线程池执行。
+                    let shared_for_tool = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        tools::disconnect(&shared_for_tool, &shared_for_tool.app_handle, req)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(_)) => serde_json::json!({ "ok": true }),
+                        Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e }),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("断开任务异常终止: {}", e) }),
                     }
                 }
                 GET_STATUS => {
@@ -361,9 +379,16 @@ impl ServerHandler for NeoserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    match tools::send_file(&shared, req) {
-                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
-                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    // 文件读取循环是阻塞 IO,丢到阻塞线程池执行。
+                    let shared_for_tool = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        tools::send_file(&shared_for_tool, req)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e.error }),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("发送文件任务异常终止: {}", e) }),
                     }
                 }
                 START_LOGGING => {
@@ -373,15 +398,29 @@ impl ServerHandler for NeoserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    match tools::start_logging(&shared, req) {
-                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
-                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    // 文件创建/目录创建是阻塞 IO,丢到阻塞线程池执行。
+                    let shared_for_tool = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        tools::start_logging(&shared_for_tool, req)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e.error }),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("启动日志任务异常终止: {}", e) }),
                     }
                 }
                 STOP_LOGGING => {
-                    match tools::stop_logging(&shared) {
-                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
-                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    // 文件句柄释放等阻塞操作,丢到阻塞线程池执行。
+                    let shared_for_tool = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        tools::stop_logging(&shared_for_tool)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e.error }),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("停止日志任务异常终止: {}", e) }),
                     }
                 }
                 SEQUENCE_RUN => {
@@ -418,9 +457,16 @@ impl ServerHandler for NeoserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    match tools::save_settings(&shared, req) {
-                        Ok(r) => serde_json::to_value(r).unwrap_or_default(),
-                        Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
+                    // settings.save() 写磁盘 JSON,丢到阻塞线程池执行。
+                    let shared_for_tool = shared.clone();
+                    let result = tokio::task::spawn_blocking(move || {
+                        tools::save_settings(&shared_for_tool, req)
+                    })
+                    .await;
+                    match result {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::json!({ "ok": false, "error": e.error }),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("保存设置任务异常终止: {}", e) }),
                     }
                 }
                 SEND_AND_READ => {

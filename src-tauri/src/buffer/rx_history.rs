@@ -38,18 +38,31 @@ impl RxHistory {
         seq
     }
 
-    /// 返回 seq > after_seq 的所有行(从旧到新,含 tx+rx)+ 当前最大序号。
+    /// 返回 seq > after_seq 的所有行(从旧到新,按插入序)+ 当前最大序号。
     pub fn since(&self, after_seq: u64) -> (Vec<(u64, Dir, LogLine)>, u64) {
-        let rows = match self.inner.lock() {
+        match self.inner.lock() {
             Ok(buf) => {
-                let snap = buf.snapshot();
-                let latest = snap.last().map(|(s, _, _)| *s).unwrap_or_else(|| self.seq.load(Ordering::SeqCst));
-                let filtered: Vec<_> = snap.into_iter().filter(|(s, _, _)| *s > after_seq).collect();
+                // latest 必须取 buffer 内最后一行的 seq(而非原子计数器):
+                // push 里 seq.fetch_add 与 buf.push 不是同一临界区,若返回计数器值,
+                // send_and_read 的游标可能跳过"已分配序号但尚未插入"的行,造成丢数据。
+                let latest = buf
+                    .back()
+                    .map(|(s, _, _)| *s)
+                    .unwrap_or_else(|| self.seq.load(Ordering::SeqCst));
+                // 锁内扫描,只克隆 seq > after_seq 的行。旧实现 snapshot() 先全量深拷贝
+                // 最多 capacity 行(每行 raw/ascii/hex 多次堆分配)再 filter——是 MCP
+                // 热路径(send_and_read 每次唤醒、get_history_since 每次 poll)的主要
+                // 分配风暴。不二分定位:seq 分配与插入非同一临界区,理论上存在短暂
+                // 乱序,二分会漏行;线性扫描保持与旧实现一致的插入序语义。
+                let filtered: Vec<(u64, Dir, LogLine)> = buf
+                    .iter()
+                    .filter(|entry| entry.0 > after_seq)
+                    .cloned()
+                    .collect();
                 (filtered, latest)
             }
             Err(_) => (Vec::new(), self.seq.load(Ordering::SeqCst)),
-        };
-        rows
+        }
     }
 
     /// 当前最大序号(无数据返回 0)。

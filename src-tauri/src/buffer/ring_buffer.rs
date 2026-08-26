@@ -37,6 +37,17 @@ impl<T: Clone> RingBuffer<T> {
         self.buf.front()
     }
 
+    /// 当前最新元素的引用（空返回 None）。只读队尾，不克隆。
+    pub fn back(&self) -> Option<&T> {
+        self.buf.back()
+    }
+
+    /// 按插入序（旧→新）迭代。供 RxHistory::since 在锁内扫描过滤，
+    /// 避免先 snapshot 全量深拷贝再 filter 的分配风暴。
+    pub fn iter(&self) -> std::collections::vec_deque::Iter<'_, T> {
+        self.buf.iter()
+    }
+
     pub fn clear(&mut self) {
         self.buf.clear();
     }

@@ -437,7 +437,7 @@ fn build_history_resp(
                     crate::buffer::log_line::Dir::Rx => "rx".to_string(),
                     crate::buffer::log_line::Dir::Tx => "tx".to_string(),
                 },
-                text: if is_hex { l.hex } else { l.ascii },
+                text: if is_hex { l.hex() } else { l.ascii },
                 index: idx,
                 seq,
             }
@@ -501,8 +501,8 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
             .collect();
         if !new_rx.is_empty() {
             for (_, _, l) in &new_rx {
-                let text = if req.is_hex.unwrap_or(false) { &l.hex } else { &l.ascii };
-                responses.push(text.clone());
+                let text = if req.is_hex.unwrap_or(false) { l.hex() } else { l.ascii.clone() };
+                responses.push(text);
             }
             cur_seq = latest; // 推进到最新(含已跳过的 tx)
             continue; // 拿到新 rx,刷新静默窗口:回循环顶重新等 gap
@@ -522,8 +522,8 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
                     .collect();
                 if !new_rx.is_empty() {
                     for (_, _, l) in &new_rx {
-                        let text = if req.is_hex.unwrap_or(false) { &l.hex } else { &l.ascii };
-                        responses.push(text.clone());
+                        let text = if req.is_hex.unwrap_or(false) { l.hex() } else { l.ascii.clone() };
+                        responses.push(text);
                     }
                     cur_seq = latest;
                     continue;
