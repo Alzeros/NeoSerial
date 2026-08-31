@@ -8,9 +8,9 @@ mod state;
 mod util;
 
 use tauri::Manager;
-use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions, get_mcp_only_connections, take_pending_takeover};
+use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
-use commands::config::{get_settings, save_settings, save_commands};
+use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
 use commands::logging::{start_logging, stop_logging, is_logging};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
 
@@ -144,16 +144,22 @@ pub fn run() {
                 // 能让窗口外框突破 set_min_size/配置的 minWidth（约少 16px），导致右栏右侧被截断。
                 // 这里在拖动 resize 结束时检测，低于阈值则强制拉回（逻辑像素）。
                 tauri::WindowEvent::Resized(_) => {
-                    // 目标内容区 1200，但无边框窗口下 Windows resize grip 会扣约 16px，
-                    // 故阈值取 1216：被扣后落地 1200，右栏不再被截断。
-                    let min_w = 1216.0;
-                    let min_h = 500.0;
-                    if let Ok(size) = window.outer_size() {
-                        let scale = window.scale_factor().unwrap_or(1.0);
-                        let w = size.width as f64 / scale;
-                        let h = size.height as f64 / scale;
-                        if w < min_w || h < min_h {
-                            let _ = window.set_size(tauri::LogicalSize::new(w.max(min_w), h.max(min_h)));
+                    // 只对串口窗口(main / win-*)生效。主题编辑器窗口有自己的最小尺寸
+                    // (720x480,见 open_theme_editor),不能在这里被统一拉到 1216x500:
+                    //   1) 拖动中 Resized -> set_size -> Resized 反复触发,窗口尺寸抖动闪烁;
+                    //   2) set_size 同时写宽和高,缩宽度会把高度顶到 500,缩高度会把宽度顶到 1216。
+                    if window.label() != "theme-editor" {
+                        // 目标内容区 1200，但无边框窗口下 Windows resize grip 会扣约 16px，
+                        // 故阈值取 1216：被扣后落地 1200，右栏不再被截断。
+                        let min_w = 1216.0;
+                        let min_h = 500.0;
+                        if let Ok(size) = window.outer_size() {
+                            let scale = window.scale_factor().unwrap_or(1.0);
+                            let w = size.width as f64 / scale;
+                            let h = size.height as f64 / scale;
+                            if w < min_w || h < min_h {
+                                let _ = window.set_size(tauri::LogicalSize::new(w.max(min_w), h.max(min_h)));
+                            }
                         }
                     }
                 }
@@ -199,6 +205,7 @@ pub fn run() {
             list_ports,
             reset_stats,
             open_port_window,
+            open_theme_editor,
             get_window_conn_state,
             has_active_sessions,
             get_mcp_only_connections,
@@ -217,6 +224,8 @@ pub fn run() {
             load_sequence_config,
             save_sequence_auto,
             load_sequence_auto,
+            export_theme_file,
+            import_theme_file,
 
         ])
         .build(tauri::generate_context!())

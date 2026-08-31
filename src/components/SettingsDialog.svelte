@@ -1,8 +1,9 @@
 <script lang="ts">
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
-  import { presetBaudRates, cachedSettings, theme, themeMeta, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
-  import { saveSettings, getMcpStatus, openUrl } from '$lib/tauri';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
+  import { defaultCustomTheme } from '$lib/customTheme';
+  import { saveSettings, getMcpStatus, openUrl, openThemeEditor } from '$lib/tauri';
   import { Github } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings } from '$lib/types';
@@ -25,6 +26,8 @@
 
   // 主题编辑副本（打开时从 store 拷贝，取消不应用；选中即时预览）
   let editTheme = $state<string>('preset-1');
+  // 自定义主题色板编辑副本（14 色 + 圆角），改动即时预览，保存才落 store
+  let editCustom = $state<Record<string, string>>(defaultCustomTheme());
   // 日志字体编辑副本
   let editFontSize = $state(14);
   let editLineHeight = $state(1.6);
@@ -58,6 +61,7 @@
   export function show(section: Section = 'about') {
     editBaudRates = [...presetBaudRates.value];
     editTheme = theme.value;
+    editCustom = { ...customTheme.value };
     editFontSize = logFontSize.value;
     editLineHeight = logLineHeight.value;
     editDirLabel = logDirLabelStyle.value;
@@ -87,7 +91,26 @@
   // 选中主题：即时预览（应用到 <html>），但不落盘；取消则恢复原值
   function selectTheme(value: string) {
     editTheme = value;
-    applyTheme(value);
+    applyTheme(value, editCustom);
+  }
+
+  // 打开独立主题编辑器窗口（单例，已存在则聚焦）
+  async function openThemeEditorWindow() {
+    // 先把当前选中的 custom 落到 store（编辑器窗口会读 settings 初始化）
+    // 这样在弹窗里选了 custom 卡片后再开编辑器，编辑器看到的是最新色板
+    editTheme = 'custom';
+    // theme.value 必须同步为 custom：<html> 已切到 custom，若 store 仍记 preset-1，
+    // 后续任何 applyTheme(theme.value)（取消设置、theme-changed 广播）都会跳回预设
+    theme.value = 'custom';
+    customTheme.value = { ...editCustom };
+    applyTheme('custom', editCustom);
+    // 关闭设置弹窗，避免两层叠加
+    open = false;
+    try {
+      await openThemeEditor();
+    } catch (e) {
+      console.error('打开主题编辑器失败:', e);
+    }
   }
 
   // 字号/行高：即时预览（带上当前英文/中文字体）
@@ -139,6 +162,7 @@
     presetBaudRates.value = rates;
     // 主题：预览值落盘到 store（<html> 已在选中时应用）
     theme.value = editTheme;
+    customTheme.value = { ...editCustom };
     // 日志字体：预览值落盘到 store
     logFontSize.value = editFontSize;
     logLineHeight.value = editLineHeight;
@@ -152,7 +176,7 @@
       const next: Settings = {
         ...base,
         ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
-        presets: { baud_rates: rates, theme: editTheme },
+        presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
         mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
       };
       try {
@@ -179,8 +203,8 @@
   }
 
   function handleCancel() {
-    // 取消：恢复打开前的主题与字体（撤销预览）
-    applyTheme(theme.value);
+    // 取消：恢复打开前的主题与字体（撤销预览，含自定义色板改动）
+    applyTheme(theme.value, customTheme.value);
     applyLogFont(logFontSize.value, logLineHeight.value, logFontLatin.value, logFontCJK.value);
     logDirLabelStyle.value = origDirLabel;
     logFontLatin.value = origFontLatin;
@@ -423,7 +447,39 @@
                   </div>
                 </button>
               {/each}
+              <!-- 自定义主题卡片：预览色块跟随当前编辑中的色板 -->
+              <button
+                class="flex items-center gap-3 rounded-lg border-2 p-3 transition-all cursor-pointer {editTheme === 'custom'
+                  ? 'border-[var(--primary)]'
+                  : 'border-[var(--border)] hover:border-[var(--border-strong)]'}"
+                onclick={() => selectTheme('custom')}
+              >
+                <div class="relative w-10 h-10 rounded-md flex-shrink-0 border border-[var(--border)]" style="background: {editCustom['background']};">
+                  <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {editCustom['primary']};"></div>
+                </div>
+                <div class="flex flex-col items-start">
+                  <span class="text-[13px] font-medium text-[var(--foreground)]">自定义</span>
+                  <span class="text-[11px] text-[var(--muted-foreground)]">自己调配色板</span>
+                </div>
+              </button>
             </div>
+
+            {#if editTheme === 'custom'}
+              <!-- 自定义主题：打开独立编辑器窗口（大画布 + 实时预览 + 导入导出） -->
+              <div class="my-4 border-t border-[var(--border)]"></div>
+              <div class="flex items-center gap-3 p-3 rounded-md" style="background: var(--background-data); border: 1px solid var(--border);">
+                <div class="relative w-10 h-10 rounded-md flex-shrink-0 border border-[var(--border)]" style="background: {editCustom['background']};">
+                  <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {editCustom['primary']};"></div>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <div class="text-[13px] font-medium text-[var(--foreground)]">自定义主题</div>
+                  <div class="text-[12px] text-[var(--muted-foreground)]">在独立窗口中编辑配色，整个窗口即实时预览。从预设载入再微调，或导入/导出主题文件。</div>
+                </div>
+                <button class="btn btn-primary" style="padding: 6px 14px; white-space: nowrap;" onclick={openThemeEditorWindow}>
+                  打开编辑器 →
+                </button>
+              </div>
+            {/if}
           {:else if activeSection === 'mcp'}
             <!-- MCP 服务：自动启动 + 端口 + 连接指令 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>

@@ -52,6 +52,11 @@ export async function openPortWindow(port?: string, baud?: number): Promise<void
   await invoke('open_port_window', { port: port ?? null, baud: baud ?? null });
 }
 
+/** 打开自定义主题编辑器窗口(单例,已存在则聚焦) */
+export async function openThemeEditor(): Promise<void> {
+  await invoke('open_theme_editor');
+}
+
 /** 副窗口 onMount 调:按本窗口 label 反推 port,查连接状态。 */
 export async function getWindowConnState(): Promise<WindowConnState> {
   return await invoke<WindowConnState>('get_window_conn_state');
@@ -120,6 +125,16 @@ export async function saveSettings(settings: Settings): Promise<void> {
 
 export async function saveCommands(groups: Settings['command_groups']): Promise<void> {
   await invoke('save_commands', { groups });
+}
+
+/** 导出自定义主题 JSON 到指定路径 */
+export async function exportThemeFile(path: string, data: unknown): Promise<void> {
+  await invoke('export_theme_file', { path, data });
+}
+
+/** 从指定路径读入主题 JSON（字段校验在前端 parseThemeFile 做） */
+export async function importThemeFile(path: string): Promise<unknown> {
+  return await invoke('import_theme_file', { path });
 }
 
 // ============ 文件日志 ============
@@ -264,6 +279,12 @@ export function onError(cb: (error: ErrorEvent) => void) {
 
 export function onConnectionMode(cb: (mode: ConnectionMode) => void) {
   return getCurrentWebview().listen<ConnectionMode>('connection-mode', (e) => cb(e.payload));
+}
+
+/** theme-changed 全局事件:主题编辑器保存后广播,其他窗口收到重新加载主题。
+ *  emit(全局) 发给所有 webview,getCurrentWebview().listen 能收到。 */
+export function onThemeChanged(cb: () => void) {
+  return getCurrentWebview().listen('theme-changed', () => cb());
 }
 
 /** sequence-changed 事件:其他窗口改了快捷指令,本窗口收到后 reload 同步。

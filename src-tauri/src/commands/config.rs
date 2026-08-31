@@ -59,3 +59,26 @@ fn save_commands_impl(
     settings.save().map_err(|e| e.to_string())?;
     Ok(())
 }
+
+/// 导出自定义主题到指定路径。data 为前端序列化的主题 JSON(结构由前端定义,透传)。
+#[tauri::command]
+pub async fn export_theme_file(path: String, data: serde_json::Value) -> Result<(), String> {
+    // 序列化 + 磁盘写入是阻塞操作,不放主线程。
+    tauri::async_runtime::spawn_blocking(move || {
+        let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
+        std::fs::write(&path, text).map_err(|e| format!("写入主题文件失败: {}", e))
+    })
+    .await
+    .map_err(|e| format!("导出主题任务执行异常: {}", e))?
+}
+
+/// 从指定路径读入主题 JSON。字段校验由前端完成。
+#[tauri::command]
+pub async fn import_theme_file(path: String) -> Result<serde_json::Value, String> {
+    let text = tauri::async_runtime::spawn_blocking(move || {
+        std::fs::read_to_string(&path).map_err(|e| format!("读取主题文件失败: {}", e))
+    })
+    .await
+    .map_err(|e| format!("导入主题任务执行异常: {}", e))??;
+    serde_json::from_str(&text).map_err(|e| format!("主题文件不是有效 JSON: {}", e))
+}

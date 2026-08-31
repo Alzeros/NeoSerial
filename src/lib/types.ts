@@ -118,6 +118,8 @@ export interface Settings {
   presets: {
     baud_rates: number[];
     theme: string;
+    /** 自定义主题色板：变量名 → 颜色值/数值。空对象 = 未配置过 */
+    custom_theme: Record<string, string>;
   };
   mcp: {
     /** 打开软件时是否自动启动 MCP server,改后重启生效 */

@@ -10,6 +10,11 @@ use crate::state::AppState;
 /// 窗口与连接解耦,用户在任何窗口都能选任意 port 连。
 static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 
+/// 主题编辑器窗口最小尺寸(逻辑像素)。后端 builder / set_min_size 两处共用同一常量,
+/// 前端 ThemeEditor 不再设 CSS min-width/min-height,保证全局只有一个下限。
+const THEME_EDITOR_MIN_W: f64 = 720.0;
+const THEME_EDITOR_MIN_H: f64 = 480.0;
+
 /// 解析目标端口:供 Tauri command / MCP 工具从 `connections` 取出唯一连接或校验指定端口。
 ///
 /// - `None` + 0 连接:报错(未连接)
@@ -408,6 +413,40 @@ pub async fn open_port_window(app_handle: tauri::AppHandle, port: Option<String>
         .resizable(true)
         .build()
         .map_err(|e| format!("创建窗口失败: {}", e))?;
+    Ok(())
+}
+
+/// 打开自定义主题编辑器窗口(单例:已存在则聚焦,不重复开)。
+/// 窗口 label 固定 "theme-editor",前端按 label 渲染 ThemeEditor 组件。
+#[tauri::command]
+pub async fn open_theme_editor(app_handle: tauri::AppHandle) -> Result<(), String> {
+    use tauri::Manager;
+    // 已存在则聚焦置顶(单例语义)
+    if let Some(w) = app_handle.get_webview_window("theme-editor") {
+        w.set_focus().map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+    let window = WebviewWindowBuilder::new(&app_handle, "theme-editor", WebviewUrl::App("index.html".into()))
+        .title("主题编辑器")
+        .inner_size(920.0, 620.0)
+        // 窗口最小尺寸的唯一来源:720x480 逻辑像素。
+        // 720 = 工具条保持单行的下限(左色板 320 + 右侧预览仍有 400);
+        // 480 = 标题栏 + 工具条 + 预览卡 + 底栏都能完整显示的高度。
+        // 前端 ThemeEditor 根容器不再写 min-width/min-height —— CSS 下限若与
+        // OS 下限不是同一个数,拖到临界点时两者会互相拉扯(尺寸抖动、松手弹回、
+        // 缩宽度时高度反增)。
+        .min_inner_size(THEME_EDITOR_MIN_W, THEME_EDITOR_MIN_H)
+        .decorations(false)
+        .resizable(true)
+        .build()
+        .map_err(|e| format!("创建主题编辑器窗口失败: {}", e))?;
+    // 无边框窗口在 Windows 上 builder 的 min_inner_size 不总生效,build 后显式
+    // 再设一次。必须用 LogicalSize 与 builder 保持同一个数 —— 之前用
+    // PhysicalSize(640,420),在缩放 >100% 的屏幕上会被换算成 640/scale 逻辑像素,
+    // 于是 OS 下限和 CSS 下限变成两个不同的值,拖动到临界点时钳制值在两数之间
+    // 反复跳变,就是看到的"整个框一直在闪"。
+    window.set_min_size(Some(tauri::LogicalSize::new(THEME_EDITOR_MIN_W, THEME_EDITOR_MIN_H)))
+        .map_err(|e| format!("设置最小尺寸失败: {}", e))?;
     Ok(())
 }
 

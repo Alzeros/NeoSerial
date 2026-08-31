@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import TitleBar from '$components/TitleBar.svelte';
   import ConnectionBar from '$components/ConnectionBar.svelte';
   import LogView from '$components/LogView.svelte';
   import BottomPanel from '$components/BottomPanel.svelte';
   import StatusBar from '$components/StatusBar.svelte';
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
+  import ThemeEditor from '$components/ThemeEditor.svelte';
   import {
     appendLogLines,
     autoScroll,
@@ -26,6 +28,7 @@
     logFontCJK,
     applyLogFont,
     theme,
+    customTheme,
     applyTheme,
     rxBytes,
     scriptPanelOpen,
@@ -40,6 +43,7 @@
     windowPort,
   } from '$lib/stores';
   import type { LogLine, Settings } from '$lib/types';
+  import { normalizeCustomTheme } from '$lib/customTheme';
   import {
     getSettings,
     getWindowConnState,
@@ -54,6 +58,7 @@
     onSequenceProgress,
     onTxLine,
     onTxUpdate,
+    onThemeChanged,
   } from '$lib/tauri';
   import { connect as connectPort } from '$lib/tauri';
 
@@ -93,10 +98,12 @@
     // 预设波特率：兜底为默认三项
     presetBaudRates.value =
       s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
+    // 自定义主题色板：缺失/非法字段回退默认底稿（旧配置无此字段也安全）
+    customTheme.value = normalizeCustomTheme(s.presets?.custom_theme);
     // 主题：兜底为 preset-1，并应用到 <html>
     const tk = s.presets?.theme || 'preset-1';
     theme.value = tk;
-    applyTheme(tk);
+    applyTheme(tk, customTheme.value);
   }
 
   // 从当前 UI 状态构建可保存的 Settings（基于缓存，避免丢字段）
@@ -131,6 +138,7 @@
       presets: {
         baud_rates: presetBaudRates.value,
         theme: theme.value,
+        custom_theme: customTheme.value,
       },
     };
   }
@@ -170,7 +178,13 @@
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
 
+  // 主题编辑器窗口(label=theme-editor)只渲染 ThemeEditor,不跑串口逻辑
+  const isThemeEditorWindow = getCurrentWebview().label === 'theme-editor';
+
   onMount(() => {
+    // 主题编辑器窗口:不加载串口连接等设置,ThemeEditor 组件自行加载主题
+    if (isThemeEditorWindow) return;
+
     // 所有窗口(main + 副窗口)都是完整串口界面。
     // 副窗口(win-{port})按 label 反推 port 存 windowPort;main 的 label="main" 后端返回 port=None,
     // windowPort 保持 null,等连接成功后从 connection-state 事件同步。
@@ -267,6 +281,16 @@
         }, 5000);
       }
     });
+    // 主题变更:主题编辑器保存后广播,本窗口重新加载主题设置
+    const unlistenTheme = onThemeChanged(() => {
+      getSettings()
+        .then((s) => {
+          customTheme.value = normalizeCustomTheme(s.presets?.custom_theme);
+          theme.value = s.presets?.theme || 'preset-1';
+          applyTheme(theme.value, customTheme.value);
+        })
+        .catch((e) => console.error('重载主题失败:', e));
+    });
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
@@ -282,6 +306,7 @@
       unlistenSeqProgress.then((f) => f());
       unlistenError.then((f) => f());
       unlistenMode.then((f) => f());
+      unlistenTheme.then((f) => f());
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
@@ -325,6 +350,9 @@
   }
 </script>
 
+{#if isThemeEditorWindow}
+  <ThemeEditor />
+{:else}
 {#if showModeNotification.value && connectionMode.mode === 'shared'}
   <div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-md text-[13px] font-medium shadow-lg flex items-center gap-2"
        style="background: var(--warning); color: var(--primary-foreground);">
@@ -382,3 +410,4 @@
   {/if}
   </div>
 </div>
+{/if}

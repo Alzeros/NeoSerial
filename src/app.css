@@ -281,8 +281,9 @@ html[data-theme="preset-4"] {
   --system-hsl: 38 16% 54%;
 }
 
-/* 暗色主题：禁用纸张噪点纹理 */
-html[data-theme="preset-3"] body {
+/* 暗色主题：禁用纸张噪点纹理（custom-dark 由 applyTheme 按自定义背景亮度打上） */
+html[data-theme="preset-3"] body,
+html.custom-dark body {
   background-image: none;
 }
 
@@ -295,6 +296,13 @@ html, body {
   padding: 0;
   height: 100%;
   overflow: hidden;
+}
+
+/* 挂载点撑满视口：子组件用 h-full/w-full 即可精确等于窗口客户区。
+   不要用 100vh/100vw —— 视口单位按 ICB 计算，与真实客户区可能差一个滚动条，
+   一旦与 min-width 叠加就会出现"盒子比窗口大、被裁掉一截"的错位。 */
+#app {
+  height: 100%;
 }
 
 body {

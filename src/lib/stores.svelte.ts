@@ -1,4 +1,5 @@
 import { defaultScriptCommand, defaultScriptPage, defaultScriptModule, presetScriptModules, type LogLine, type ScriptPage, type Settings } from './types';
+import { computeCustomVars, defaultCustomTheme, isCustomDark } from './customTheme';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
@@ -72,7 +73,7 @@ export const rxBytes = $state<{ value: number }>({ value: 0 });
 /** 预设波特率：连接栏下拉用，默认 9600/115200/921600，用户可在设置中增删 */
 export const presetBaudRates = $state<{ value: number[] }>({ value: [9600, 115200, 921600] });
 
-/** 主题预设：4 套完整色板，默认 preset-1（暖米白 + 青绿） */
+/** 主题预设：4 套完整色板 + 自定义，默认 preset-1（暖米白 + 青绿） */
 export type ThemeKey = 'preset-1' | 'preset-2' | 'preset-3' | 'preset-4';
 export const themeMeta: { key: ThemeKey; label: string; bg: string; accent: string }[] = [
   { key: 'preset-1', label: '暖白青', bg: '#F4F1E9', accent: '#0F6E56' },
@@ -80,13 +81,33 @@ export const themeMeta: { key: ThemeKey; label: string; bg: string; accent: stri
   { key: 'preset-3', label: '深海夜航', bg: '#1B2430', accent: '#1D9E75' },
   { key: 'preset-4', label: '暖砂陶', bg: '#F2E9DD', accent: '#B4653F' },
 ];
-/** 当前主题 key */
+/** 当前主题 key：preset-1..preset-4 或 'custom' */
 export const theme = $state<{ value: string }>({ value: 'preset-1' });
 
-/** 应用主题到 <html>：设置 data-theme 属性，CSS 规则自动切换整套色板 */
-export function applyTheme(value: string) {
+/** 自定义主题色板（14 个基础色 + 圆角），持久化到 settings.presets.custom_theme */
+export const customTheme = $state<{ value: Record<string, string> }>({ value: defaultCustomTheme() });
+
+// applyTheme 上次写入 <html> 的内联变量名。内联优先级高于样式表，
+// 切回预设主题时必须清干净，否则残留的自定义色会覆盖预设色板。
+let appliedCustomVars: string[] = [];
+
+/** 应用主题到 <html>：设置 data-theme 属性切换预设色板；
+ *  'custom' 时额外把推导出的完整变量表写为内联样式（覆盖 :root 默认值）。 */
+export function applyTheme(value: string, custom?: Record<string, string>) {
   if (typeof document === 'undefined') return;
-  document.documentElement.setAttribute('data-theme', value);
+  const el = document.documentElement;
+  el.setAttribute('data-theme', value);
+  for (const name of appliedCustomVars) el.style.removeProperty(name);
+  appliedCustomVars = [];
+  el.classList.remove('custom-dark');
+  if (value === 'custom') {
+    const c = custom ?? customTheme.value;
+    const vars = computeCustomVars(c);
+    for (const [k, v] of Object.entries(vars)) el.style.setProperty(k, v);
+    appliedCustomVars = Object.keys(vars);
+    // 深色自定义主题：与 preset-3 一致，由 CSS 规则禁用纸张噪点纹理
+    if (isCustomDark(c)) el.classList.add('custom-dark');
+  }
 }
 
 // ============ 文件日志 ============
