@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
-  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef } from '$lib/stores';
+  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused } from '$lib/stores';
   import type { LogLine } from '$lib/types';
 
   let scrollContainer: HTMLDivElement;
@@ -105,14 +105,70 @@
       e.preventDefault();
       openSearch();
     }
-    if (e.key === 'Escape' && searchOpen) {
-      closeSearch();
+    if (e.key === 'Escape') {
+      if (ctxMenu.show) { ctxMenu.show = false; return; }
+      if (searchOpen) { closeSearch(); return; }
     }
     if (searchOpen && e.key === 'F3') {
       e.preventDefault();
       if (e.shiftKey) prevMatch(); else nextMatch();
     }
   }
+
+  // ============ 右键菜单 ============
+  let ctxMenu = $state<{ x: number; y: number; show: boolean; hasSelection: boolean }>({
+    x: 0, y: 0, show: false, hasSelection: false,
+  });
+
+  function handleContextMenu(e: MouseEvent) {
+    // 输入框/文本域保留浏览器默认菜单（复制/粘贴）
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') return;
+    e.preventDefault();
+    e.stopPropagation();
+    const sel = window.getSelection();
+    ctxMenu.hasSelection = !!(sel && sel.toString().length > 0);
+    // 边界检测：靠近底部翻到上方，靠近右边左移
+    const MW = 110, MH = 140;
+    const vw = window.innerWidth, vh = window.innerHeight;
+    ctxMenu.x = e.clientX + MW > vw ? Math.max(4, vw - MW - 4) : e.clientX;
+    ctxMenu.y = e.clientY + MH > vh ? Math.max(4, e.clientY - MH) : e.clientY;
+    ctxMenu.show = true;
+  }
+
+  function closeCtxMenu() {
+    ctxMenu.show = false;
+  }
+
+  async function ctxCopy() {
+    const sel = window.getSelection();
+    if (sel) {
+      try { await navigator.clipboard.writeText(sel.toString()); } catch { /* 剪贴板不可用 */ }
+    }
+    closeCtxMenu();
+  }
+
+  function ctxClear() {
+    clearLogLines();
+    closeCtxMenu();
+  }
+
+  function ctxTogglePause() {
+    paused.value = !paused.value;
+    closeCtxMenu();
+  }
+
+  function ctxSearch() {
+    openSearch();
+    closeCtxMenu();
+  }
+
+  $effect(() => {
+    if (!ctxMenu.show) return;
+    const close = () => { ctxMenu.show = false; };
+    document.addEventListener('mousedown', close);
+    return () => document.removeEventListener('mousedown', close);
+  });
 
   // Ctrl+A 限定在日志区范围:容器是普通 div,不可聚焦,浏览器 Ctrl+A 默认全选
   // 整个文档(顶栏+日志+底栏全选,即"选中整个软件框")。给容器加 tabindex=-1 使
@@ -333,7 +389,7 @@
 <svelte:window on:keydown={handleGlobalKeydown} />
 
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
-<div class="relative h-full overflow-hidden flex flex-col" style="background: var(--background-data);">
+<div class="relative h-full overflow-hidden flex flex-col" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
   <!-- 搜索栏：右上角浮动，与浏览器 find bar 类似 -->
   {#if searchOpen}
     <div
@@ -439,4 +495,31 @@
       </div>
     {/each}
   </div>
+
+  {#if ctxMenu.show}
+    <div
+      class="fixed z-[200] py-1 rounded-md border shadow-lg min-w-[100px]"
+      style="background: var(--background-elevated); border-color: var(--border); left: {ctxMenu.x}px; top: {ctxMenu.y}px;"
+      onmousedown={(e) => e.stopPropagation()}
+    >
+      {#if ctxMenu.hasSelection}
+        <button
+          class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+          onclick={ctxCopy}
+        >复制</button>
+      {/if}
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        onclick={ctxClear}
+      >清空</button>
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        onclick={ctxTogglePause}
+      >{paused.value ? '继续' : '暂停'}</button>
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        onclick={ctxSearch}
+      >搜索</button>
+    </div>
+  {/if}
 </div>

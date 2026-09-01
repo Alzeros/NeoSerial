@@ -348,6 +348,96 @@
     document.body.style.cursor = '';
     document.body.style.userSelect = '';
   }
+
+  // 全局右键菜单：输入框/文本域 → 自定义菜单（复制/剪切/粘贴/全选）；
+  // 日志区有自己的 oncontextmenu（stopPropagation 不走到这里）；其余区域 → 禁用。
+  let inputMenu = $state<{
+    x: number; y: number; show: boolean;
+    el: HTMLInputElement | HTMLTextAreaElement | null;
+    hasSelection: boolean; canCut: boolean;
+    selStart: number; selEnd: number;
+  }>({ x: 0, y: 0, show: false, el: null, hasSelection: false, canCut: false, selStart: 0, selEnd: 0 });
+
+  function handleContextMenu(e: MouseEvent) {
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA') {
+      const el = target as HTMLInputElement | HTMLTextAreaElement;
+      e.preventDefault();
+      if (el.disabled) return;
+      const start = el.selectionStart ?? 0;
+      const end = el.selectionEnd ?? 0;
+      const hasSel = start !== end;
+      inputMenu.el = el;
+      inputMenu.selStart = start;
+      inputMenu.selEnd = end;
+      inputMenu.hasSelection = hasSel;
+      inputMenu.canCut = hasSel && !el.readOnly;
+      // 边界检测：靠近底部翻到上方，靠近右边左移
+      const MW = 120, MH = 140;
+      const vw = window.innerWidth, vh = window.innerHeight;
+      inputMenu.x = e.clientX + MW > vw ? Math.max(4, vw - MW - 4) : e.clientX;
+      inputMenu.y = e.clientY + MH > vh ? Math.max(4, e.clientY - MH) : e.clientY;
+      inputMenu.show = true;
+      return;
+    }
+    e.preventDefault();
+  }
+
+  function closeInputMenu() {
+    inputMenu.show = false;
+  }
+
+  async function inputCopy() {
+    const el = inputMenu.el;
+    if (!el) return;
+    const text = el.value.substring(inputMenu.selStart, inputMenu.selEnd);
+    try { await navigator.clipboard.writeText(text); } catch { /* 剪贴板不可用 */ }
+    closeInputMenu();
+  }
+
+  async function inputCut() {
+    const el = inputMenu.el;
+    if (!el) return;
+    const start = inputMenu.selStart;
+    const end = inputMenu.selEnd;
+    const text = el.value.substring(start, end);
+    try { await navigator.clipboard.writeText(text); } catch { /* 剪贴板不可用 */ }
+    el.focus();
+    el.setSelectionRange(start, end);
+    document.execCommand('insertText', false, '');
+    closeInputMenu();
+  }
+
+  async function inputPaste() {
+    const el = inputMenu.el;
+    if (!el) return;
+    el.focus();
+    try {
+      const text = await navigator.clipboard.readText();
+      document.execCommand('insertText', false, text);
+    } catch { /* 剪贴板权限拒绝 */ }
+    closeInputMenu();
+  }
+
+  function inputSelectAll() {
+    const el = inputMenu.el;
+    if (!el) return;
+    el.focus();
+    el.select();
+    closeInputMenu();
+  }
+
+  $effect(() => {
+    if (!inputMenu.show) return;
+    const close = () => { inputMenu.show = false; };
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') inputMenu.show = false; };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('mousedown', close);
+      document.removeEventListener('keydown', onKey);
+    };
+  });
 </script>
 
 {#if isThemeEditorWindow}
@@ -365,7 +455,7 @@
   </div>
 {/if}
 
-<div class="flex h-screen w-screen flex-col overflow-hidden">
+<div class="flex h-screen w-screen flex-col overflow-hidden" oncontextmenu={handleContextMenu}>
   <!-- 自定义标题栏（含脚本折叠按钮 + 窗口控制） -->
   <TitleBar />
 
@@ -409,5 +499,30 @@
     </div>
   {/if}
   </div>
+
+  {#if inputMenu.show}
+    <div
+      class="fixed z-[200] py-1 rounded-md border shadow-lg min-w-[100px]"
+      style="background: var(--background-elevated); border-color: var(--border); left: {inputMenu.x}px; top: {inputMenu.y}px;"
+      onmousedown={(e) => e.stopPropagation()}
+    >
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] transition-colors cursor-pointer {inputMenu.hasSelection ? 'hover:bg-[var(--border-subtle)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] opacity-40 cursor-default'}"
+        onclick={inputCopy}
+      >复制</button>
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] transition-colors cursor-pointer {inputMenu.canCut ? 'hover:bg-[var(--border-subtle)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] opacity-40 cursor-default'}"
+        onclick={inputCut}
+      >剪切</button>
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] text-[var(--foreground)] transition-colors cursor-pointer"
+        onclick={inputPaste}
+      >粘贴</button>
+      <button
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] text-[var(--foreground)] transition-colors cursor-pointer"
+        onclick={inputSelectAll}
+      >全选</button>
+    </div>
+  {/if}
 </div>
 {/if}

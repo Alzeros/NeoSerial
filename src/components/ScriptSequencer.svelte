@@ -282,6 +282,9 @@
   let renameState = $state<{ open: boolean; index: number; name: string }>({ open: false, index: -1, name: '' });
 
   function handlePageContextMenu(e: MouseEvent, index: number) {
+    // 输入框右键交给 App 的全局输入菜单，不弹页签菜单
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') return;
     e.preventDefault();
     pageMenu = { open: true, x: clampMenuX(e.clientX), y: clampMenuY(e.clientY), index };
   }
@@ -335,7 +338,16 @@
   });
 
   function handleRowContextMenu(e: MouseEvent, index: number) {
+    // 文本输入框（命令栏）右键交给 App 的输入菜单（复制/剪切/粘贴/全选）
+    const t = e.target as HTMLElement;
+    if (t.tagName === 'INPUT') {
+      const type = (t as HTMLInputElement).type;
+      if (type === 'text' || type === '') return;
+    }
+    if (t.tagName === 'TEXTAREA') return;
+    // 其余（checkbox/number/button 等）触发行菜单
     e.preventDefault();
+    e.stopPropagation();
     rowMenu = { open: true, x: clampMenuX(e.clientX), y: clampMenuY(e.clientY), index };
   }
 
@@ -714,6 +726,7 @@
             bind:value={scriptRunCount.value}
             min="1"
             disabled={scriptRunning.value}
+            oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           />
           <span class="text-[12px] text-[var(--muted-foreground)]">次</span>
         </div>
@@ -726,6 +739,7 @@
             bind:value={scriptLoopInterval.value}
             min="0"
             disabled={scriptRunCount.value <= 1 || scriptRunning.value}
+            oncontextmenu={(e) => { e.preventDefault(); e.stopPropagation(); }}
           />
           <span class="text-[12px] text-[var(--muted-foreground)]">ms</span>
         </div>
