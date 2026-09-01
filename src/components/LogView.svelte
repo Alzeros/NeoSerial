@@ -389,7 +389,7 @@
 <svelte:window on:keydown={handleGlobalKeydown} />
 
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
-<div class="relative h-full overflow-hidden flex flex-col" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
+<div class="relative h-full overflow-hidden flex flex-col" data-theme-target="background-data" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
   <!-- 搜索栏：右上角浮动，与浏览器 find bar 类似 -->
   {#if searchOpen}
     <div

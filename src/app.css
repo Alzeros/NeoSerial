@@ -806,3 +806,24 @@ input[type="text"],
 [data-tauri-drag-region] {
   background: var(--background);
 }
+
+/* ============================================================
+   主题编辑器悬停高亮：把该 CSS 变量临时覆盖为品红色（#FF00FF），
+   所有用到该色的元素立刻变品红——用户直接看到哪些区域受影响。
+   比画框/描边直观得多，移开鼠标即恢复。
+   !important 因 applyTheme 用 inline style 设变量，需覆盖。
+   ============================================================ */
+html[data-hl="background"] { --background: #F0C040 !important; }
+html[data-hl="background-elevated"] { --background-elevated: #F0C040 !important; }
+html[data-hl="background-input"] { --background-input: #F0C040 !important; }
+html[data-hl="background-data"] { --background-data: #F0C040 !important; }
+html[data-hl="background-deep"] { --background-deep: #F0C040 !important; }
+html[data-hl="foreground"] { --foreground: #F0C040 !important; }
+html[data-hl="foreground-secondary"] { --foreground-secondary: #F0C040 !important; }
+html[data-hl="muted-foreground"] { --muted-foreground: #F0C040 !important; }
+html[data-hl="primary"] { --primary: #F0C040 !important; }
+html[data-hl="rx"] { --rx: #F0C040 !important; }
+html[data-hl="tx"] { --tx: #F0C040 !important; }
+html[data-hl="error"] { --error: #F0C040 !important; }
+html[data-hl="warning"] { --warning: #F0C040 !important; }
+html[data-hl="border"] { --border: #F0C040 !important; }

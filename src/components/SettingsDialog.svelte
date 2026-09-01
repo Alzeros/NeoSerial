@@ -462,24 +462,19 @@
                   <span class="text-[11px] text-[var(--muted-foreground)]">自己调配色板</span>
                 </div>
               </button>
+              <!-- 选中自定义时：右列空位放编辑器入口，与左侧卡片同尺寸 -->
+              {#if editTheme === 'custom'}
+                <div class="flex items-center gap-3 rounded-lg border-2 border-dashed p-3" style="border-color: var(--border);">
+                  <div class="flex-1 min-w-0">
+                    <div class="text-[13px] font-medium text-[var(--foreground)]">编辑配色</div>
+                    <div class="text-[11px] text-[var(--muted-foreground)]">实时预览</div>
+                  </div>
+                  <button class="btn btn-primary flex-shrink-0" style="padding: 4px 10px; font-size: 12px; white-space: nowrap;" onclick={openThemeEditorWindow}>
+                    打开 →
+                  </button>
+                </div>
+              {/if}
             </div>
-
-            {#if editTheme === 'custom'}
-              <!-- 自定义主题：打开独立编辑器窗口（大画布 + 实时预览 + 导入导出） -->
-              <div class="my-4 border-t border-[var(--border)]"></div>
-              <div class="flex items-center gap-3 p-3 rounded-md" style="background: var(--background-data); border: 1px solid var(--border);">
-                <div class="relative w-10 h-10 rounded-md flex-shrink-0 border border-[var(--border)]" style="background: {editCustom['background']};">
-                  <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {editCustom['primary']};"></div>
-                </div>
-                <div class="flex-1 min-w-0">
-                  <div class="text-[13px] font-medium text-[var(--foreground)]">自定义主题</div>
-                  <div class="text-[12px] text-[var(--muted-foreground)]">在独立窗口中编辑配色，整个窗口即实时预览。从预设载入再微调，或导入/导出主题文件。</div>
-                </div>
-                <button class="btn btn-primary" style="padding: 6px 14px; white-space: nowrap;" onclick={openThemeEditorWindow}>
-                  打开编辑器 →
-                </button>
-              </div>
-            {/if}
           {:else if activeSection === 'mcp'}
             <!-- MCP 服务：自动启动 + 端口 + 连接指令 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>

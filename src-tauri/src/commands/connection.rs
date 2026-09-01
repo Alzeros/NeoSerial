@@ -12,8 +12,8 @@ static WINDOW_SEQ: AtomicU32 = AtomicU32::new(1);
 
 /// 主题编辑器窗口最小尺寸(逻辑像素)。后端 builder / set_min_size 两处共用同一常量,
 /// 前端 ThemeEditor 不再设 CSS min-width/min-height,保证全局只有一个下限。
-const THEME_EDITOR_MIN_W: f64 = 720.0;
-const THEME_EDITOR_MIN_H: f64 = 480.0;
+const THEME_EDITOR_MIN_W: f64 = 380.0;
+const THEME_EDITOR_MIN_H: f64 = 360.0;
 
 /// 解析目标端口:供 Tauri command / MCP 工具从 `connections` 取出唯一连接或校验指定端口。
 ///
@@ -428,13 +428,9 @@ pub async fn open_theme_editor(app_handle: tauri::AppHandle) -> Result<(), Strin
     }
     let window = WebviewWindowBuilder::new(&app_handle, "theme-editor", WebviewUrl::App("index.html".into()))
         .title("主题编辑器")
-        .inner_size(920.0, 620.0)
-        // 窗口最小尺寸的唯一来源:720x480 逻辑像素。
-        // 720 = 工具条保持单行的下限(左色板 320 + 右侧预览仍有 400);
-        // 480 = 标题栏 + 工具条 + 预览卡 + 底栏都能完整显示的高度。
-        // 前端 ThemeEditor 根容器不再写 min-width/min-height —— CSS 下限若与
-        // OS 下限不是同一个数,拖到临界点时两者会互相拉扯(尺寸抖动、松手弹回、
-        // 缩宽度时高度反增)。
+        .inner_size(385.0, 680.0)
+        // 窗口最小尺寸:380x360。调色面板不再含预览（预览在主窗口），
+        // 窗口只需容纳标题栏 + 工具条 + 色板 + 圆角 + 底栏。
         .min_inner_size(THEME_EDITOR_MIN_W, THEME_EDITOR_MIN_H)
         .decorations(false)
         .resizable(true)

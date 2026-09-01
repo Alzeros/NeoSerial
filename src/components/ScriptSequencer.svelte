@@ -495,7 +495,7 @@
   }
 }} />
 
-<div class="flex h-full flex-col border-l border-[var(--border)]" style="background: var(--background-elevated);">
+<div class="flex h-full flex-col border-l border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
   <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分 -->
   <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     {#each scriptModules as m, i}
@@ -689,7 +689,7 @@
     <!-- 两层分割线 -->
     <div class="border-t border-[var(--border-subtle)]"></div>
     <!-- 第二层：主操作（运行 + 状态区 + 参数组），底座底色 -->
-    <div class="relative flex items-center gap-3 px-3 py-2.5" style="background: var(--background-deep);">
+    <div class="relative flex items-center gap-3 px-3 py-2.5" data-theme-target="background-deep" style="background: var(--background-deep);">
       {#if scriptRunning.value}
         <button
           class="btn btn-danger-solid h-9 leading-none inline-flex items-center gap-1.5"

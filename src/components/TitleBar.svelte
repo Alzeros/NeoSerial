@@ -124,6 +124,7 @@
 <!-- 自定义标题栏：左侧应用名 + 右侧 脚本折叠按钮 | 窗口控制按钮 -->
 <div
   class="flex items-center h-8 border-b border-[var(--border)] select-none"
+  data-theme-target="background-elevated"
   style="background: var(--background-elevated);"
 >
   <!-- 左侧：应用名 + 拖动区域(main 显 NeoSerial;副窗口加提示/端口区分) -->

@@ -168,7 +168,7 @@
   let extraOpen = $state(false);
 </script>
 
-<div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
+<div class="border-t border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
   <!-- 工具条 + 输入行：共用同一水平 padding（px-5），保证六点边缘对齐 -->
   <div class="px-5">
     <!-- 工具条：左 3 按钮（窄高，与右侧两行开关等高） + 右两行开关 -->

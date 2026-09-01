@@ -27,21 +27,36 @@
   let importError = $state('');
   let saved = $state(false);
 
+  // 改色时实时广播到主窗口预览（applyTheme 仅作用于编辑器自身窗口，
+  // emit 让主窗口也 applyTheme 同步，用户直接看主窗口效果）
+  function previewBroadcast() {
+    emit('theme-preview', { custom: editCustom });
+  }
+
+  // 悬停颜色项时广播到主窗口，主窗口把该色临时覆盖为高对比色，
+  // 用户直接看到哪些区域受影响——比画框直观得多
+  function highlightField(field: string | null) {
+    emit('theme-highlight', { field });
+  }
+
   function changeVar(key: string, value: string) {
     editCustom[key] = value.toUpperCase();
     applyTheme('custom', editCustom);
+    previewBroadcast();
     dirty = true;
   }
 
   function startFromPreset(key: string) {
     editCustom = { ...presetPalettes[key] };
     applyTheme('custom', editCustom);
+    previewBroadcast();
     dirty = true;
   }
 
   function resetToDefault() {
     editCustom = defaultCustomTheme();
     applyTheme('custom', editCustom);
+    previewBroadcast();
     dirty = true;
   }
 
@@ -71,6 +86,7 @@
       importError = '';
       editCustom = parsed;
       applyTheme('custom', editCustom);
+      previewBroadcast();
       dirty = true;
     } catch (e) {
       importError = `导入失败: ${e}`;
@@ -110,12 +126,14 @@
     // 恢复到打开时的状态（撤销所有预览改动）
     editCustom = { ...initialCustom };
     applyTheme('custom', editCustom);
+    previewBroadcast();
     dirty = false;
   }
 
   async function handleClose() {
-    // 关闭：放弃未保存的预览改动，恢复到上次保存的主题
-    applyTheme(theme.value, customTheme.value);
+    // 关闭：清除高亮 + 广播 null 让主窗口从 settings 重载已保存的主题
+    highlightField(null);
+    emit('theme-preview', { custom: null });
     await appWindow.close();
   }
 
@@ -142,6 +160,7 @@
         initialCustom = { ...c };
         theme.value = 'custom';
         applyTheme('custom', editCustom);
+        previewBroadcast(); // 广播到主窗口，让主窗口也进入预览模式
       })
       .catch((e) => console.error('加载设置失败:', e));
   });
@@ -191,7 +210,7 @@
   <!-- 工具栏 -->
   <!-- flex-wrap 是安全阀：窗口被拖到极窄时宁可换行，也绝不让工具条把窗口撑住。
        正常宽度（>=720）下不会换行，所以不会因换行改变工具条高度。 -->
-  <div class="te-toolbar flex items-center gap-2 px-4 py-2.5 border-b flex-shrink-0 flex-wrap min-w-0" style="background: var(--background-elevated); border-color: var(--border);">
+  <div class="te-toolbar flex items-center gap-2 px-3 py-2 border-b flex-shrink-0 flex-wrap min-w-0" style="background: var(--background-elevated); border-color: var(--border);">
     <span class="te-toolbar-label text-[12px] text-[var(--muted-foreground)] whitespace-nowrap flex items-center gap-1" title="从预设载入整套配色再微调">
       <Palette size={13} /> <span class="te-label-text">从预设载入</span>
     </span>
@@ -225,107 +244,113 @@
     </div>
   {/if}
 
-  <!-- 主区域：左颜色编辑 + 右实时预览 -->
-  <div class="flex flex-1 min-h-0 min-w-0">
-    <!-- 左侧：颜色项 -->
-    <div class="te-scroll overflow-y-auto px-4 py-3" style="width: 320px; max-width: 46%; min-width: 264px; flex-shrink: 0; border-right: 1px solid var(--border);">
-      <div class="text-[13px] font-medium text-[var(--foreground)] mb-3">基础色板</div>
-      <div class="grid grid-cols-1 gap-2">
-        {#each customThemeFields as f}
-          <label class="flex items-center gap-3 cursor-pointer rounded-md px-2 py-1.5 hover:bg-[var(--overlay-hover)] transition-colors">
-            <input
-              type="color"
-              class="w-8 h-8 flex-shrink-0 rounded border border-[var(--border)] cursor-pointer bg-transparent p-0"
-              value={editCustom[f.key]}
-              oninput={(e) => changeVar(f.key, (e.target as HTMLInputElement).value)}
-            />
-            <span class="flex flex-col min-w-0">
-              <span class="text-[12px] text-[var(--foreground)] whitespace-nowrap">{f.label}</span>
-              <span class="text-[11px] text-[var(--muted-foreground)] tnum">{editCustom[f.key]}</span>
-            </span>
-          </label>
-        {/each}
-      </div>
-
-      <!-- 圆角 -->
-      <div class="mt-4 px-2">
-        <div class="text-[13px] font-medium text-[var(--foreground)] mb-2">圆角</div>
-        <div class="flex items-center gap-3">
+  <!-- 主区域：调色面板（全宽，实时预览在主窗口） -->
+  <div class="te-scroll flex-1 overflow-y-auto px-3 py-2 min-h-0">
+    <div class="text-[12px] font-medium text-[var(--muted-foreground)] mb-1.5">背景颜色</div>
+    <div class="grid grid-cols-3 gap-1 mb-3">
+      {#each customThemeFields.filter(f => f.key.startsWith('background')) as f}
+        <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1 py-0.5 hover:bg-[var(--overlay-hover)] transition-colors"
+          onmouseenter={() => highlightField(f.key)}
+          onmouseleave={() => highlightField(null)}
+        >
           <input
-            type="range" min="0" max="24" step="1"
-            class="flex-1 accent-[var(--primary)]"
-            value={customRadius(editCustom)}
-            oninput={(e) => changeVar('radius', (e.target as HTMLInputElement).value)}
+            type="color"
+            class="w-5 h-5 flex-shrink-0 rounded border border-[var(--border)] cursor-pointer bg-transparent p-0"
+            value={editCustom[f.key]}
+            oninput={(e) => changeVar(f.key, (e.target as HTMLInputElement).value)}
           />
-          <span class="w-10 text-center text-[12px] text-[var(--muted-foreground)] tnum">{customRadius(editCustom)}px</span>
-        </div>
-      </div>
+          <span class="flex flex-col min-w-0">
+            <span class="text-[11px] text-[var(--foreground)] whitespace-nowrap">{f.label}</span>
+            <span class="text-[10px] text-[var(--muted-foreground)] tnum">{editCustom[f.key]}</span>
+          </span>
+        </label>
+      {/each}
+    </div>
 
-      <div class="mt-4 px-2 text-[11px] text-[var(--muted-foreground)] leading-relaxed">
-        悬停色、阴影、滚动条等衍生色会按以上基础色自动推导。整个窗口即实时预览——改任意色，背景、按钮、文字立刻变色。
+    <div class="text-[12px] font-medium text-[var(--muted-foreground)] mb-1.5">文字颜色</div>
+    <div class="grid grid-cols-3 gap-1 mb-3">
+      {#each customThemeFields.filter(f => f.key.startsWith('foreground') || f.key === 'muted-foreground') as f}
+        <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1 py-0.5 hover:bg-[var(--overlay-hover)] transition-colors"
+          onmouseenter={() => highlightField(f.key)}
+          onmouseleave={() => highlightField(null)}
+        >
+          <input
+            type="color"
+            class="w-5 h-5 flex-shrink-0 rounded border border-[var(--border)] cursor-pointer bg-transparent p-0"
+            value={editCustom[f.key]}
+            oninput={(e) => changeVar(f.key, (e.target as HTMLInputElement).value)}
+          />
+          <span class="flex flex-col min-w-0">
+            <span class="text-[11px] text-[var(--foreground)] whitespace-nowrap">{f.label}</span>
+            <span class="text-[10px] text-[var(--muted-foreground)] tnum">{editCustom[f.key]}</span>
+          </span>
+        </label>
+      {/each}
+    </div>
+
+    <div class="text-[12px] font-medium text-[var(--muted-foreground)] mb-1.5">功能色</div>
+    <div class="grid grid-cols-3 gap-1 mb-3">
+      {#each customThemeFields.filter(f => !f.key.startsWith('background') && !f.key.startsWith('foreground') && f.key !== 'muted-foreground' && f.key !== 'border') as f}
+        <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1 py-0.5 hover:bg-[var(--overlay-hover)] transition-colors"
+          onmouseenter={() => highlightField(f.key)}
+          onmouseleave={() => highlightField(null)}
+        >
+          <input
+            type="color"
+            class="w-5 h-5 flex-shrink-0 rounded border border-[var(--border)] cursor-pointer bg-transparent p-0"
+            value={editCustom[f.key]}
+            oninput={(e) => changeVar(f.key, (e.target as HTMLInputElement).value)}
+          />
+          <span class="flex flex-col min-w-0">
+            <span class="text-[11px] text-[var(--foreground)] whitespace-nowrap">{f.label}</span>
+            <span class="text-[10px] text-[var(--muted-foreground)] tnum">{editCustom[f.key]}</span>
+          </span>
+        </label>
+      {/each}
+    </div>
+
+    <div class="text-[12px] font-medium text-[var(--muted-foreground)] mb-1.5">边框</div>
+    <div class="grid grid-cols-3 gap-1 mb-3">
+      {#each customThemeFields.filter(f => f.key === 'border') as f}
+        <label class="flex items-center gap-1.5 cursor-pointer rounded-md px-1 py-0.5 hover:bg-[var(--overlay-hover)] transition-colors"
+          onmouseenter={() => highlightField(f.key)}
+          onmouseleave={() => highlightField(null)}
+        >
+          <input
+            type="color"
+            class="w-5 h-5 flex-shrink-0 rounded border border-[var(--border)] cursor-pointer bg-transparent p-0"
+            value={editCustom[f.key]}
+            oninput={(e) => changeVar(f.key, (e.target as HTMLInputElement).value)}
+          />
+          <span class="flex flex-col min-w-0">
+            <span class="text-[11px] text-[var(--foreground)] whitespace-nowrap">{f.label}</span>
+            <span class="text-[10px] text-[var(--muted-foreground)] tnum">{editCustom[f.key]}</span>
+          </span>
+        </label>
+      {/each}
+    </div>
+
+    <!-- 圆角 -->
+    <div class="mt-3 px-1">
+      <div class="text-[13px] font-medium text-[var(--foreground)] mb-1.5">圆角</div>
+      <div class="flex items-center gap-3">
+        <input
+          type="range" min="0" max="24" step="1"
+          class="flex-1 accent-[var(--primary)]"
+          value={customRadius(editCustom)}
+          oninput={(e) => changeVar('radius', (e.target as HTMLInputElement).value)}
+        />
+        <span class="w-10 text-center text-[12px] text-[var(--muted-foreground)] tnum">{customRadius(editCustom)}px</span>
       </div>
     </div>
 
-    <!-- 右侧：实时预览面板（min-width:0 打破 flex 默认 min-width:auto，
-         否则内部 select/input 的自然宽度会撑住窗口无法缩窄） -->
-    <div class="te-scroll flex-1 overflow-y-auto p-5" style="background: var(--background-deep); min-width: 0; min-height: 0;">
-      <div class="text-[13px] font-medium text-[var(--muted-foreground)] mb-3">实时预览</div>
-
-      <!-- 模拟卡片：用 div + 简短文字演示按钮/输入框，不引真实 select/input
-           —— 真实控件带全局 min-width 约束，会撑出不可压缩的卡片宽度。 -->
-      <div class="rounded-lg p-4 mb-4 border" style="background: var(--background-elevated); border-color: var(--border); box-shadow: var(--shadow-md);">
-        <div class="text-[14px] font-semibold mb-2" style="color: var(--foreground);">连接配置</div>
-        <div class="flex flex-wrap items-center gap-2 mb-3">
-          <span class="px-2 py-1 rounded text-[12px] border" style="background: var(--background-input); border-color: var(--border); color: var(--foreground);">COM3</span>
-          <span class="px-2 py-1 rounded text-[12px] border" style="background: var(--background-input); border-color: var(--border); color: var(--foreground);">115200</span>
-          <button class="btn btn-primary" style="padding: 6px 14px;">连接</button>
-          <button class="btn btn-danger" style="padding: 6px 14px;">断开</button>
-        </div>
-        <div class="flex flex-wrap items-center gap-2">
-          <span class="flex-1 min-w-[80px] px-2 py-1 rounded text-[12px] border truncate" style="background: var(--background-input); border-color: var(--border); color: var(--muted-foreground);">输入 AT 指令</span>
-          <button class="btn btn-secondary" style="padding: 6px 14px;">发送</button>
-          <button class="btn btn-clear-hover" style="padding: 6px 14px;">清空</button>
-        </div>
-      </div>
-
-      <!-- 模拟日志区 -->
-      <div class="rounded-lg border mb-4 overflow-hidden" style="background: var(--background-data); border-color: var(--border);">
-        <div class="px-3 py-1.5 border-b text-[12px] font-medium" style="border-color: var(--border); color: var(--muted-foreground);">日志</div>
-        <div class="p-3 font-mono text-[13px]" style="line-height: 1.8; font-family: var(--log-font-family);">
-          <div><span class="dir-tx">Tx</span> <span style="color: var(--muted-foreground);">10:39:47</span> AT</div>
-          <div><span class="dir-rx">Rx</span> <span style="color: var(--muted-foreground);">10:39:47</span> OK</div>
-          <div><span class="dir-tx">Tx</span> <span style="color: var(--muted-foreground);">10:39:48</span> AT+CSQ</div>
-          <div><span class="dir-rx">Rx</span> <span style="color: var(--muted-foreground);">10:39:48</span> +CSQ: 28,0</div>
-          <div class="is-error">ERROR</div>
-          <div><span class="dir-rx">Rx</span> <span style="color: var(--muted-foreground);">10:39:49</span> 模块就绪</div>
-        </div>
-      </div>
-
-      <!-- 模拟状态栏 -->
-      <div class="flex items-center gap-4 px-3 py-2 rounded-md border text-[12px]" style="background: var(--background-elevated); border-color: var(--border);">
-        <span class="flex items-center gap-1.5" style="color: var(--foreground);">
-          <span class="w-2 h-2 rounded-full status-dot-pulse" style="background: var(--primary);"></span>
-          已连接 COM3
-        </span>
-        <span style="color: var(--muted-foreground);">Tx: <span class="tnum" style="color: var(--tx);">1,024</span></span>
-        <span style="color: var(--muted-foreground);">Rx: <span class="tnum" style="color: var(--rx);">8,192</span></span>
-        <span style="color: var(--warning);">⚠ 警告</span>
-      </div>
-
-      <!-- 色板一览：列数随宽度自适应，窗口窄时收缩为 2-3 列 -->
-      <div class="mt-4 grid gap-2" style="grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));">
-        {#each customThemeFields as f}
-          <div class="rounded-md border p-2 text-center" style="background: var(--background-elevated); border-color: var(--border);">
-            <div class="w-full h-8 rounded mb-1 border" style="background: {editCustom[f.key]}; border-color: var(--border);"></div>
-            <div class="text-[10px] text-[var(--muted-foreground)] truncate">{f.label}</div>
-          </div>
-        {/each}
-      </div>
+    <div class="mt-2 px-1 text-[11px] text-[var(--muted-foreground)] leading-relaxed">
+      悬停可在主窗口高亮对应区域，改色实时预览。
     </div>
   </div>
 
   <!-- 底部按钮栏 -->
-  <div class="flex items-center justify-between gap-2 px-4 py-3 border-t flex-shrink-0" style="background: var(--background-elevated); border-color: var(--border);">
+  <div class="flex items-center justify-between gap-2 px-3 py-2 border-t flex-shrink-0" style="background: var(--background-elevated); border-color: var(--border);">
     <div class="text-[12px] text-[var(--muted-foreground)]">
       {#if dirty}<span style="color: var(--warning);">● 有未保存改动</span>{:else if saved}<span style="color: var(--primary);">✓ 已应用</span>{:else}<span style="color: var(--muted-foreground);">已保存</span>{/if}
     </div>
@@ -354,7 +379,7 @@
 
   /* 窄窗口下收起"从预设载入"文字（只留图标 + tooltip），
      让工具条在最小宽度 720 下仍能保持单行，不因换行改变高度。 */
-  @media (max-width: 900px) {
+  @media (max-width: 420px) {
     .te-label-text {
       display: none;
     }

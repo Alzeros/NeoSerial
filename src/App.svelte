@@ -59,6 +59,8 @@
     onTxLine,
     onTxUpdate,
     onThemeChanged,
+    onThemePreview,
+    onThemeHighlight,
   } from '$lib/tauri';
   import { connect as connectPort } from '$lib/tauri';
 
@@ -291,6 +293,29 @@
         })
         .catch((e) => console.error('重载主题失败:', e));
     });
+    // 主题编辑器实时预览：改色时广播到主窗口，直接 applyTheme 预览（不改 store）
+    const unlistenPreview = onThemePreview((data) => {
+      if (data.custom) {
+        applyTheme('custom', data.custom);
+      } else {
+        // custom 为 null：编辑器关闭，从 settings 重载已保存的主题
+        getSettings()
+          .then((s) => {
+            customTheme.value = normalizeCustomTheme(s.presets?.custom_theme);
+            theme.value = s.presets?.theme || 'preset-1';
+            applyTheme(theme.value, customTheme.value);
+          })
+          .catch((e) => console.error('重载主题失败:', e));
+      }
+    });
+    // 主题编辑器悬停高亮：主窗口给用到该色的元素加虚线框
+    const unlistenHighlight = onThemeHighlight((data) => {
+      if (data.field) {
+        document.documentElement.dataset.hl = data.field;
+      } else {
+        delete document.documentElement.dataset.hl;
+      }
+    });
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
@@ -307,6 +332,8 @@
       unlistenError.then((f) => f());
       unlistenMode.then((f) => f());
       unlistenTheme.then((f) => f());
+      unlistenPreview.then((f) => f());
+      unlistenHighlight.then((f) => f());
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
@@ -455,7 +482,7 @@
   </div>
 {/if}
 
-<div class="flex h-screen w-screen flex-col overflow-hidden" oncontextmenu={handleContextMenu}>
+<div class="flex h-screen w-screen flex-col overflow-hidden" data-theme-target="background" oncontextmenu={handleContextMenu}>
   <!-- 自定义标题栏（含脚本折叠按钮 + 窗口控制） -->
   <TitleBar />
 

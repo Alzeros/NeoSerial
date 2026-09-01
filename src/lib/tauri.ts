@@ -288,6 +288,25 @@ export function onThemeChanged(cb: () => void) {
   return getCurrentWebview().listen('theme-changed', () => cb());
 }
 
+/** theme-preview 全局事件:主题编辑器改色时实时广播到主窗口预览(未保存)。
+ *  custom 为完整色板对象,主窗口收到后 applyTheme('custom', custom)。
+ *  custom 为 null 时主窗口从 settings 重载已保存的主题(编辑器关闭时恢复)。 */
+export interface ThemePreviewEvent {
+  custom: Record<string, string> | null;
+}
+export function onThemePreview(cb: (e: ThemePreviewEvent) => void) {
+  return getCurrentWebview().listen<ThemePreviewEvent>('theme-preview', (e) => cb(e.payload));
+}
+
+/** theme-highlight 全局事件:编辑器鼠标悬停颜色项时广播到主窗口,
+ *  主窗口给用到该色的元素加虚线高亮。field 为 null 时清除。 */
+export interface ThemeHighlightEvent {
+  field: string | null;
+}
+export function onThemeHighlight(cb: (e: ThemeHighlightEvent) => void) {
+  return getCurrentWebview().listen<ThemeHighlightEvent>('theme-highlight', (e) => cb(e.payload));
+}
+
 /** sequence-changed 事件:其他窗口改了快捷指令,本窗口收到后 reload 同步。
  *  payload.source 是改动来源窗口 label,前端用它跳过自己触发的更新。 */
 export interface SequenceChangedEvent {

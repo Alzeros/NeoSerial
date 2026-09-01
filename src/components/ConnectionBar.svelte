@@ -92,7 +92,7 @@
   });
 </script>
 
-<div class="layout-fixed relative flex items-end border-b px-5 py-2" style="background: var(--background-elevated); border-color: var(--border);">
+<div class="layout-fixed relative flex items-end border-b px-5 py-2" data-theme-target="background-elevated" style="background: var(--background-elevated); border-color: var(--border);">
   <!-- 左侧：所有配置项分组（紧凑间距，左对齐紧凑排列，不拉伸） -->
   <div class="config-group" style="margin-right: 24px; gap: 12px;">
     <!-- 端口号(所有窗口都可选,连不同 port) -->
