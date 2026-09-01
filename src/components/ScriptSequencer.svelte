@@ -485,7 +485,7 @@
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" style="background: var(--background-elevated);">
   <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分 -->
-  <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-2" style="background: var(--background);">
+  <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     {#each scriptModules as m, i}
       <button
         class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {i === activeScriptModule.value
@@ -500,7 +500,7 @@
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
-  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2 overflow-x-auto">
+  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-1 overflow-x-auto">
     {#each currentModulePages() as page, i}
       <button
         data-page-tab
@@ -656,16 +656,16 @@
     <!-- 第一层：次级操作（ghost 文字按钮 + 调整顺序开关） -->
     <div class="flex items-center gap-2 px-3 py-2">
       <button
-        class="h-7 -ml-2 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] transition-colors"
+        class="h-7 -ml-2 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
         onclick={handleSaveConfig}
       >另存为</button>
       <button
-        class="h-7 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] hover:bg-[var(--border-subtle)] transition-colors"
+        class="h-7 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
         onclick={handleLoadConfig}
       >加载</button>
       <div class="w-px h-4 bg-[var(--border)] mx-1"></div>
       <button
-        class="h-7 px-2 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--error)] hover:bg-[var(--border-subtle)] transition-colors"
+        class="h-7 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--error)] hover:border-[var(--error)] transition-colors"
         onclick={handleClearConfig}
       >清空</button>
       <label class="switch ml-auto {scriptRunning.value ? 'opacity-50 pointer-events-none' : ''}">
