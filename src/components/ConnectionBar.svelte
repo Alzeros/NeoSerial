@@ -1,6 +1,7 @@
 <script lang="ts">
-  import { availablePorts, connectionParams, connected, presetBaudRates, windowPort } from '$lib/stores';
+  import { availablePorts, connectionParams, connected, presetBaudRates, windowPort, settingsRequest } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
+  import CustomSelect from '$components/ui/CustomSelect.svelte';
 
   // 局部错误提示(端口已连接/被占用),4s 自动消失。不依赖全局 store 避免跨窗口响应性问题。
   let connErr = $state<string | null>(null);
@@ -18,6 +19,18 @@
 
   let baudRateStr = $state('115200');
   let stopBitsStr = $state('1');
+
+  // CustomSelect 需要 {label, value} 格式的选项
+  const portOptions = $derived(availablePorts.value.map((p) => ({ label: p, value: p })));
+  const baudOptions = $derived(baudRates.map((b) => ({ label: b, value: b })));
+  const dataBitOptions = $derived(dataBitsOpts.map((o) => ({ label: o.l, value: o.v })));
+  const parityOptions = $derived(parityOpts.map((o) => ({ label: o.l, value: o.v })));
+  const stopBitOptions = $derived(stopBitsOpts.map((s) => ({ label: s, value: s })));
+  const flowControlOptions = $derived(flowOpts.map((o) => ({ label: o.l, value: o.v })));
+
+  function openBaudSettings() {
+    settingsRequest.section = 'general';
+  }
 
   async function refreshPorts() {
     try {
@@ -85,61 +98,37 @@
     <!-- 端口号(所有窗口都可选,连不同 port) -->
     <label class="control-group">
       <span>端口号</span>
-      <select style="width: 100px;" bind:value={connectionParams.port} disabled={connected.value}>
-        {#each availablePorts.value as p}
-          <option value={p}>{p}</option>
-        {/each}
-      </select>
+      <CustomSelect bind:value={connectionParams.port} options={portOptions} width="100px" disabled={connected.value} />
     </label>
 
     <!-- 波特率 -->
     <label class="control-group">
       <span>波特率</span>
-      <select style="width: 96px;" bind:value={baudRateStr} disabled={connected.value}>
-        {#each baudRates as b}
-          <option value={b}>{b}</option>
-        {/each}
-      </select>
+      <CustomSelect bind:value={baudRateStr} options={baudOptions} width="96px" disabled={connected.value} onAddOption={openBaudSettings} />
     </label>
 
     <!-- 数据位 -->
     <label class="control-group">
       <span>数据位</span>
-      <select style="width: 64px;" bind:value={connectionParams.dataBits} disabled={connected.value}>
-        {#each dataBitsOpts as o}
-          <option value={o.v}>{o.l}</option>
-        {/each}
-      </select>
+      <CustomSelect bind:value={connectionParams.dataBits} options={dataBitOptions} width="64px" disabled={connected.value} />
     </label>
 
     <!-- 校验位 -->
     <label class="control-group">
       <span>校验位</span>
-      <select style="width: 80px;" bind:value={connectionParams.parity} disabled={connected.value}>
-        {#each parityOpts as o}
-          <option value={o.v}>{o.l}</option>
-        {/each}
-      </select>
+      <CustomSelect bind:value={connectionParams.parity} options={parityOptions} width="80px" disabled={connected.value} />
     </label>
 
     <!-- 停止位 -->
     <label class="control-group">
       <span>停止位</span>
-      <select style="width: 60px;" bind:value={stopBitsStr} disabled={connected.value}>
-        {#each stopBitsOpts as s}
-          <option value={s}>{s}</option>
-        {/each}
-      </select>
+      <CustomSelect bind:value={stopBitsStr} options={stopBitOptions} width="60px" disabled={connected.value} />
     </label>
 
     <!-- 流控制 -->
     <label class="control-group">
       <span>流控制</span>
-      <select style="width: 84px;" bind:value={connectionParams.flowControl} disabled={connected.value}>
-        {#each flowOpts as o}
-          <option value={o.v}>{o.l}</option>
-        {/each}
-      </select>
+      <CustomSelect bind:value={connectionParams.flowControl} options={flowControlOptions} width="84px" disabled={connected.value} />
     </label>
   </div>
 

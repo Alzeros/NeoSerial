@@ -4,7 +4,7 @@
   import { ask } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
-  import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections } from '$lib/stores';
+  import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest } from '$lib/stores';
   import { openPortWindow, hasActiveSessions, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
   import SettingsDialog from '$components/SettingsDialog.svelte';
 
@@ -109,6 +109,15 @@
     return () => {
       unlisten.then((f) => f());
     };
+  });
+
+  // 跨组件打开设置页：settingsRequest.section 被写入时触发
+  $effect(() => {
+    const section = settingsRequest.section;
+    if (section) {
+      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'mcp');
+      settingsRequest.section = null;
+    }
   });
 </script>
 

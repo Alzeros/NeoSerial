@@ -478,21 +478,26 @@ select {
   appearance: none;
   font-family: var(--font-sans);
   font-size: 13px;
-  height: 36px;
+  height: 32px;
   min-width: 90px;
   padding: 0 28px 0 12px;
   border-radius: var(--radius-sm);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   background-color: var(--background-input);
   color: var(--foreground);
   cursor: pointer;
   outline: none;
   transition: border-color 0.15s ease, box-shadow 0.15s ease;
-  /* 浅色下拉箭头 */
+  box-shadow: var(--shadow-sm);
+  /* 下拉箭头 */
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath fill='none' stroke='%238A8580' stroke-width='1.5' d='M1 1l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 10px center;
   flex-shrink: 0;
+}
+
+select:hover:not(:disabled) {
+  border-color: var(--primary);
 }
 
 select:focus {
@@ -504,6 +509,7 @@ select:disabled {
   background-color: var(--background);
   opacity: 0.6;
   cursor: not-allowed;
+  box-shadow: none;
 }
 
 select option {

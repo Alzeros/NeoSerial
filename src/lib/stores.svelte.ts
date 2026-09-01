@@ -188,6 +188,11 @@ export const fileSendProgress = $state<{ value: number }>({ value: 0 });
 
 // ============ 工具栏 ============
 
+/** 跨组件打开设置页的触发器：写入 section 名称(如 'general')，
+ *  TitleBar 的 $effect 监听到后调 settingsDialog.show(section) 并清空。
+ *  供 ConnectionBar 波特率下拉的"添加…"等场景使用。 */
+export const settingsRequest = $state<{ section: string | null }>({ section: null });
+
 // ============ 脚本序列面板 ============
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });
 export const scriptPanelWidth = $state<{ value: number }>({ value: 500 });
