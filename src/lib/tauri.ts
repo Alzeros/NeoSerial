@@ -170,7 +170,8 @@ export async function saveSequenceConfig(path: string, data: ScriptModule[]): Pr
   await invoke('save_sequence_config', { path, data });
 }
 
-/** 加载序列配置。返回 ScriptModule[]；旧格式（裸 ScriptPage[]）自动迁移为默认模块。 */
+/** 加载序列配置。支持 JSON(本工具导出)与 INI(旧串口工具导出,自动转换)。
+ *  返回 ScriptModule[]；旧 JSON 格式(裸 ScriptPage[])自动迁移为默认模块。 */
 export async function loadSequenceConfig(path: string): Promise<ScriptModule[]> {
   const raw = await invoke<unknown[]>('load_sequence_config', { path });
   // 迁移：元素无 pages 字段 → 视为旧裸 ScriptPage[]，包进默认"快捷指令"模块

@@ -176,7 +176,7 @@
 
   async function handleLoadConfig() {
     const path = await openFileDialog('加载序列配置', [
-      { name: 'JSON', extensions: ['json'] }
+      { name: '配置文件', extensions: ['json', 'ini'] },
     ]);
     if (!path) return;
     try {
