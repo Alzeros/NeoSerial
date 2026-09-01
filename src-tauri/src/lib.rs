@@ -152,7 +152,7 @@ pub fn run() {
                         // 目标内容区 1200，但无边框窗口下 Windows resize grip 会扣约 16px，
                         // 故阈值取 1216：被扣后落地 1200，右栏不再被截断。
                         let min_w = 1216.0;
-                        let min_h = 500.0;
+                        let min_h = 600.0;
                         if let Ok(size) = window.outer_size() {
                             let scale = window.scale_factor().unwrap_or(1.0);
                             let w = size.width as f64 / scale;

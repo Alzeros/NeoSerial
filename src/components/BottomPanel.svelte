@@ -171,57 +171,58 @@
 <div class="border-t border-[var(--border)]" style="background: var(--background-elevated);">
   <!-- 工具条 + 输入行：共用同一水平 padding（px-5），保证六点边缘对齐 -->
   <div class="px-5">
-    <!-- 第一行：接收组（左按钮 + 右开关）。右侧开关整体 32px 高容器，让开关与 32px 高的按钮垂直居中对齐 -->
-    <div class="flex items-center gap-2 pt-3 pb-2">
-      <button data-m-clear class="btn btn-secondary flex-shrink-0 flex items-center justify-center btn-clear-hover" style="height: 32px; width: 96px; padding: 0;" onclick={clearLogLines}>清空</button>
+    <!-- 工具条：左 3 按钮（窄高，与右侧两行开关等高） + 右两行开关 -->
+    <div class="flex items-center gap-2 pt-2 pb-2">
+      <button data-m-clear class="btn btn-secondary flex-shrink-0 flex items-center justify-center btn-clear-hover" style="width: 72px; height: 56px; padding: 0;" onclick={clearLogLines}>清空</button>
       {#if paused.value}
-        <button data-m-pause class="btn btn-primary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={() => (paused.value = false)}>继续</button>
+        <button data-m-pause class="btn btn-primary flex-shrink-0 flex items-center justify-center" style="width: 72px; height: 56px; padding: 0;" onclick={() => (paused.value = false)}>继续</button>
       {:else}
-        <button data-m-pause class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
+        <button data-m-pause class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="width: 72px; height: 56px; padding: 0;" onclick={() => (paused.value = true)} disabled={!connected.value}>暂停</button>
       {/if}
-      <div class="ml-auto flex items-center gap-4 flex-shrink-0 h-8">
-        <label data-m-lineidx class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" bind:checked={showLineIndex.value} />
-          <span class="switch-track"></span>
-          <span class="switch-label">行号</span>
-        </label>
-        <label data-m-hexdisp class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" checked={displayMode.value === 'hex'} onchange={(e) => (displayMode.value = (e.target as HTMLInputElement).checked ? 'hex' : 'ascii')} />
-          <span class="switch-track"></span>
-          <span class="switch-label">HEX显示</span>
-        </label>
-        <label data-m-hexsend class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" bind:checked={hexSend.value} />
-          <span class="switch-track"></span>
-          <span class="switch-label">HEX发送</span>
-        </label>
-      </div>
-    </div>
-
-    <!-- 第二行：发送组（左按钮 + 右开关），行距 8px -->
-    <div class="flex items-center gap-2 pb-3">
-      <button class="btn btn-secondary flex-shrink-0 flex items-center justify-center" style="height: 32px; width: 96px; padding: 0;" onclick={handleSendCtrlZ} disabled={!connected.value}>发送 Ctrl-Z</button>
-      <div class="ml-auto flex items-center gap-4 flex-shrink-0 h-8">
-        <label data-m-ts class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" bind:checked={showTimestamp.value} />
-          <span class="switch-track"></span>
-          <span class="switch-label">时间戳</span>
-        </label>
-        <label data-m-crlf class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" checked={lineEnding.value === 'Crlf'} onchange={(e) => lineEnding.value = (e.target as HTMLInputElement).checked ? 'Crlf' : 'None'} />
-          <span class="switch-track"></span>
-          <span class="switch-label">回车换行</span>
-        </label>
-        <label data-m-logsend class="switch flex-shrink-0 min-w-[96px]">
-          <input type="checkbox" bind:checked={logSendContent.value} />
-          <span class="switch-track"></span>
-          <span class="switch-label">记录发送</span>
-        </label>
+      <button class="btn btn-secondary flex-shrink-0 flex flex-col items-center justify-center gap-0.5" style="width: 72px; height: 56px; padding: 0; line-height: 1.1;" onclick={handleSendCtrlZ} disabled={!connected.value}>
+        <span>发送</span>
+        <span>Ctrl-Z</span>
+      </button>
+      <div class="ml-auto flex flex-col gap-0 flex-shrink-0">
+        <div class="flex items-center gap-4 h-8">
+          <label data-m-lineidx class="switch flex-shrink-0 min-w-[96px]">
+            <input type="checkbox" bind:checked={showLineIndex.value} />
+            <span class="switch-track"></span>
+            <span class="switch-label">行号</span>
+          </label>
+          <label data-m-hexdisp class="switch flex-shrink-0 min-w-[96px]">
+            <input type="checkbox" checked={displayMode.value === 'hex'} onchange={(e) => (displayMode.value = (e.target as HTMLInputElement).checked ? 'hex' : 'ascii')} />
+            <span class="switch-track"></span>
+            <span class="switch-label">HEX显示</span>
+          </label>
+          <label data-m-hexsend class="switch flex-shrink-0 min-w-[96px]">
+            <input type="checkbox" bind:checked={hexSend.value} />
+            <span class="switch-track"></span>
+            <span class="switch-label">HEX发送</span>
+          </label>
+        </div>
+        <div class="flex items-center gap-4 h-8">
+          <label data-m-ts class="switch flex-shrink-0 min-w-[96px]">
+            <input type="checkbox" bind:checked={showTimestamp.value} />
+            <span class="switch-track"></span>
+            <span class="switch-label">时间戳</span>
+          </label>
+          <label data-m-crlf class="switch flex-shrink-0 min-w-[96px]">
+            <input type="checkbox" checked={lineEnding.value === 'Crlf'} onchange={(e) => lineEnding.value = (e.target as HTMLInputElement).checked ? 'Crlf' : 'None'} />
+            <span class="switch-track"></span>
+            <span class="switch-label">回车换行</span>
+          </label>
+          <label data-m-logsend class="switch flex-shrink-0 min-w-[96px]">
+            <input type="checkbox" bind:checked={logSendContent.value} />
+            <span class="switch-track"></span>
+            <span class="switch-label">记录发送</span>
+          </label>
+        </div>
       </div>
     </div>
 
     <!-- 发送输入（输入框始终可输入，仅发送按钮在未连接时禁用）；与上方工具条同容器同 padding -->
-    <div class="flex items-center gap-3 pb-3">
+    <div class="flex items-center gap-3 pb-2">
       <input
         type="text"
         style="flex:1 1 0%;min-width:0;height:40px;"

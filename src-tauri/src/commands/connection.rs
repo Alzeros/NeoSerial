@@ -391,7 +391,7 @@ pub fn has_active_sessions(state: State<'_, AppState>, app_handle: tauri::AppHan
 /// **必须 async fn**:Windows 下创建窗口的同步 command 会死锁(spec 警告)。
 /// async 让建窗在 Tauri 主线程异步执行,command 立即返回不阻塞。
 ///
-/// 窗口配置与 main 一致(tauri.conf.json):尺寸 1216x750、minWidth 1216、
+/// 窗口配置与 main 一致(tauri.conf.json):尺寸 1216x800、minWidth 1216、
 /// decorations:false(用自定义 TitleBar,否则会有两排窗口按钮)。
 #[tauri::command]
 pub async fn open_port_window(app_handle: tauri::AppHandle, port: Option<String>, baud: Option<u32>) -> Result<(), String> {
@@ -407,8 +407,8 @@ pub async fn open_port_window(app_handle: tauri::AppHandle, port: Option<String>
     }
     WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
         .title("NeoSerial")
-        .inner_size(1216.0, 750.0)
-        .min_inner_size(1216.0, 500.0)
+        .inner_size(1216.0, 800.0)
+        .min_inner_size(1216.0, 600.0)
         .decorations(false)
         .resizable(true)
         .build()

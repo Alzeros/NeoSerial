@@ -45,7 +45,7 @@
   }
 </script>
 
-<div class="flex items-center gap-6 border-t border-[var(--border)] px-5 py-2" style="background: var(--background-elevated);">
+<div class="flex items-center gap-6 border-t border-[var(--border)] px-5 py-1.5" style="background: var(--background-elevated);">
   <!-- 连接状态：已连接 + 正在收发时圆点呼吸 -->
   <span class="flex items-center gap-2 text-[13px]">
     <span
