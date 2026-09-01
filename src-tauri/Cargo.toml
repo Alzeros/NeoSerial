@@ -1,6 +1,6 @@
 [package]
 name = "neoserial"
-version = "0.2.7"
+version = "0.2.8"
 description = "NeoSerial - Serial Port Tool"
 authors = ["Alzeros"]
 license = "MIT"
