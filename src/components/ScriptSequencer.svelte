@@ -500,7 +500,7 @@
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
-  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-1 overflow-x-auto">
+  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2 overflow-x-auto">
     {#each currentModulePages() as page, i}
       <button
         data-page-tab
@@ -528,7 +528,7 @@
     <table class="w-full text-[13px] table-fixed">
       <thead class="sticky top-0" style="background: var(--background-elevated);">
         <tr class="text-[var(--muted-foreground)]">
-          <th class="w-8 px-1 py-2 text-center font-medium">
+          <th class="w-8 px-1 py-1 text-center font-medium">
             <button
               class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
@@ -542,8 +542,8 @@
               }}
             >#</button>
           </th>
-          <th class="px-2 py-2 text-center font-medium">命令</th>
-          <th class="w-10 px-1 py-2 text-center font-medium">
+          <th class="px-2 py-1 text-center font-medium">命令</th>
+          <th class="w-10 px-1 py-1 text-center font-medium">
             <button
               class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.hex) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
@@ -557,7 +557,7 @@
               }}
             >Hex</button>
           </th>
-          <th class="w-8 px-1 py-2 text-center font-medium">
+          <th class="w-8 px-1 py-1 text-center font-medium">
             <button
               class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enter) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
@@ -571,8 +571,8 @@
               }}
             >↩</button>
           </th>
-          <th class="w-[48px] px-1 py-2 text-center font-medium">Delay</th>
-          <th class="w-[95px] px-2 py-2 text-center font-medium">注释</th>
+          <th class="w-[48px] px-1 py-1 text-center font-medium">Delay</th>
+          <th class="w-[95px] px-2 py-1 text-center font-medium">注释</th>
         </tr>
       </thead>
       <tbody>
