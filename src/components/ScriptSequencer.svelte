@@ -617,6 +617,13 @@
                 class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.command}
                 disabled={orderMode.value}
+                onkeydown={(e) => {
+                  // Enter 发送（与 BottomPanel 一致：用 e.code 兼容中文输入法组合中的物理回车）
+                  if (e.code === 'Enter' && !e.shiftKey) {
+                    e.preventDefault();
+                    sendOne(i);
+                  }
+                }}
               />
             </td>
             <td class="px-1 py-1 text-center">
