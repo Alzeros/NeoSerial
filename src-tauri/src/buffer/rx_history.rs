@@ -28,18 +28,21 @@ impl RxHistory {
         }
     }
 
-    /// push 一行(带方向),返回分配的单调序号(从 1 开始)。push 后 notify_all 唤醒等待者。
+    /// push 一行(带方向),返回分配的单调序号(从 1 开始)。push 后 notify_one 唤醒等待者。
+    /// 用 notify_one 而非 notify_waiters:notify_one 在无等待者时存一个 permit,
+    /// 下次 notified() 立即返回,避免"push 发生在 since() 检查与 notified().await 之间
+    /// 导致通知丢失"的竞态(send_and_read 超时返回空)。
     pub fn push(&self, dir: Dir, line: LogLine) -> u64 {
         let seq = self.seq.fetch_add(1, Ordering::SeqCst) + 1;
         if let Ok(mut buf) = self.inner.lock() {
             buf.push((seq, dir, line));
         }
-        self.notify.notify_waiters();
+        self.notify.notify_one();
         seq
     }
 
     /// 批量插入多行(reader 每 flush 一批,整批送入)。语义与逐行 push 一致:
-    /// 顺序分配连续 seq、按插入序进缓冲。一次加锁 + 一次 notify_waiters——
+    /// 顺序分配连续 seq、按插入序进缓冲。一次加锁 + 一次 notify_one——
     /// 逐行 push 每行唤醒一次 send_and_read 等待者(每次唤醒都触发一轮
     /// since() 扫描),批量后每批只唤醒一次。
     pub fn push_many(&self, dir: Dir, lines: Vec<LogLine>) {
@@ -55,7 +58,7 @@ impl RxHistory {
         if let Ok(mut buf) = self.inner.lock() {
             buf.push_many(entries);
         }
-        self.notify.notify_waiters();
+        self.notify.notify_one();
     }
 
     /// 返回 seq > after_seq 的所有行(从旧到新,按插入序)+ 当前最大序号。

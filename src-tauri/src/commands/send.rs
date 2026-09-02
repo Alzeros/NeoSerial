@@ -20,9 +20,14 @@ pub fn send(
     is_hex: bool,
     port: Option<String>,
 ) -> Result<usize, String> {
-    let conns = state.connections.lock().map_err(|e| e.to_string())?;
-    let resolved = resolve_port(&conns, port)?;
-    let handle = conns.get(&resolved).ok_or("未连接串口")?;
+    // 块内取 handle 字段(clone Arc),出块即释放 connections 锁。
+    // 避免 emit_tx_line / write_tx.send 持锁期间阻塞其他操作(disconnect/get_status 等)。
+    let (write_tx, rx_history, window_label, line_index) = {
+        let conns = state.connections.lock().map_err(|e| e.to_string())?;
+        let resolved = resolve_port(&conns, port)?;
+        let handle = conns.get(&resolved).ok_or("未连接串口")?;
+        (handle.write_tx.clone(), handle.rx_history.clone(), handle.window_label.clone(), handle.line_index.clone())
+    };
 
     // 解析数据
     let mut data = if is_hex {
@@ -45,10 +50,10 @@ pub fn send(
     // 乐观回显：入队前先 emit tx-line + 写文件日志。
     // 串口写入受驱动延迟影响（USB 延迟定时器，实测每条 20-60ms 甚至更久），
     // 若等写入完成再回显，界面会显得卡顿。这里发起即回显，写线程静默写。
-    emit_tx_line(&app_handle, &handle.rx_history, &handle.window_label, &handle.line_index, data.clone());
+    emit_tx_line(&app_handle, &rx_history, &window_label, &line_index, data.clone());
 
     // 通过 channel 发送给写线程（SendSilent：写线程只写不 emit，避免重复回显）
-    handle.write_tx.send(WriteCommand::SendSilent(data))
+    write_tx.send(WriteCommand::SendSilent(data))
         .map_err(|e| format!("发送队列写入失败: {}", e))?;
 
     Ok(len)

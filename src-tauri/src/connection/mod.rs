@@ -2,6 +2,8 @@ pub mod line_assembler;
 pub mod reader;
 pub mod writer;
 pub mod port_wrapper;
+#[cfg(target_os = "windows")]
+pub mod win_port;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -220,41 +222,81 @@ pub fn spawn_connection(
     registry: Option<crate::mcp::registry::RegistryHandle>,
     mcp_origin: bool,
 ) -> Result<(ConnectionHandle, String), String> {
+    #[cfg(not(target_os = "windows"))]
     let data_bits = match params.data_bits {
         DataBits::Five => serialport::DataBits::Five,
         DataBits::Six => serialport::DataBits::Six,
         DataBits::Seven => serialport::DataBits::Seven,
         DataBits::Eight => serialport::DataBits::Eight,
     };
+    #[cfg(not(target_os = "windows"))]
     let parity = match params.parity {
         Parity::None => serialport::Parity::None,
         Parity::Odd => serialport::Parity::Odd,
         Parity::Even => serialport::Parity::Even,
     };
+    #[cfg(not(target_os = "windows"))]
     let stop_bits = match params.stop_bits {
         StopBits::One => serialport::StopBits::One,
         StopBits::Two => serialport::StopBits::Two,
     };
+    #[cfg(not(target_os = "windows"))]
     let flow_control = match params.flow_control {
         FlowControl::None => serialport::FlowControl::None,
         FlowControl::Software => serialport::FlowControl::Software,
         FlowControl::Hardware => serialport::FlowControl::Hardware,
     };
 
-    let mut port = serialport::new(&params.port, params.baud_rate)
-        .data_bits(data_bits)
-        .parity(parity)
-        .stop_bits(stop_bits)
-        .flow_control(flow_control)
-        .timeout(std::time::Duration::from_millis(50))
-        .open()
-        .map_err(|e| format!("打开串口失败: {}", e))?;
+    // Windows: 用原生 overlapped I/O 打开端口（serialport 的同步 WriteFile 会阻塞数秒）。
+    // 其他平台: 用 serialport crate。
+    #[cfg(target_os = "windows")]
+    let (reader_port, writer_port, mode_str) = {
+        let win_port = win_port::WinPort::open(
+            &params.port,
+            params.baud_rate,
+            match params.data_bits { DataBits::Five => 5, DataBits::Six => 6, DataBits::Seven => 7, DataBits::Eight => 8 },
+            match params.parity { Parity::None => "none", Parity::Odd => "odd", Parity::Even => "even" },
+            match params.stop_bits { StopBits::One => 1, StopBits::Two => 2 },
+            match params.flow_control { FlowControl::None => "none", FlowControl::Software => "software", FlowControl::Hardware => "hardware" },
+        ).map_err(|e| format!("打开串口失败: {}", e))?;
 
-    // 通信模组的 USB 虚拟串口常以 DTR/RTS 作为"DTE 已连接"信号。
-    // 若未拉高，部分模组会认为主机未就绪而拒绝处理收到的数据，导致
-    // 串口写入被驱动阻塞数秒（实测 write_all 卡 4-14s）。连接建立后显式拉高。
-    let _ = port.write_data_terminal_ready(true);
-    let _ = port.write_request_to_send(true);
+        let writer = win_port.try_clone()
+            .map_err(|e| format!("克隆端口失败: {}", e))?;
+
+        log::info!("[Connection] 使用 Windows 原生 overlapped I/O");
+        (win_port, writer, "overlapped".to_string())
+    };
+
+    #[cfg(not(target_os = "windows"))]
+    let (reader_port, writer_port, mode_str) = {
+        let port = serialport::new(&params.port, params.baud_rate)
+            .data_bits(data_bits)
+            .parity(parity)
+            .stop_bits(stop_bits)
+            .flow_control(flow_control)
+            .timeout(std::time::Duration::from_millis(20))
+            .open()
+            .map_err(|e| format!("打开串口失败: {}", e))?;
+
+        let _ = port.write_data_terminal_ready(true);
+        let _ = port.write_request_to_send(true);
+
+        match port.try_clone() {
+            Ok(cloned) => {
+                log::info!("[Connection] 使用独立句柄模式");
+                (port_wrapper::PortReader::Owned(cloned),
+                 port_wrapper::PortWriter::Owned(port),
+                 "independent".to_string())
+            }
+            Err(e) => {
+                log::warn!("[Connection] try_clone 失败 ({}), 降级为共享端口模式", e);
+                let shared = Arc::new(Mutex::new(port));
+                (port_wrapper::PortReader::Shared(shared.clone()),
+                 port_wrapper::PortWriter::Shared(shared),
+                 "shared".to_string())
+            }
+        }
+    };
 
     let running = Arc::new(AtomicBool::new(true));
     let tx_bytes = Arc::new(AtomicU64::new(0));
@@ -285,73 +327,60 @@ pub fn spawn_connection(
         mcp_origin: mcp_origin.clone(),
     };
 
-    // 尝试克隆端口，失败则降级为共享模式
-    let clone_result = port.try_clone();
-    
-    let (reader_handle, writer_handle, mode_str) = match clone_result {
-        Ok(reader_port) => {
-            // 模式1：独立句柄（无锁，性能最优）
-            log::info!("[Connection] 使用独立句柄模式（try_clone 成功）");
-            
-            let r_handle = reader::spawn_reader(
-                port_wrapper::PortReader::Owned(reader_port),
-                running.clone(),
-                rx_bytes.clone(),
-                app_handle.clone(),
-                rx_history.clone(),
-                params.port.clone(),
-                window_label.clone(),
-                line_index.clone(),
-            );
-
-            let w_handle = writer::spawn_writer(
-                port_wrapper::PortWriter::Owned(port),
-                write_rx,
-                running.clone(),
-                tx_bytes.clone(),
-                app_handle.clone(),
-                rx_history.clone(),
-                params.port.clone(),
-                window_label.clone(),
-                line_index.clone(),
-            );
-            
-            (r_handle, w_handle, "independent".to_string())
-        }
-        Err(e) => {
-            // 模式2：共享端口（Arc<Mutex<>> 降级模式）
-            log::warn!("[Connection] try_clone 失败 ({}), 降级为共享端口模式", e);
-            
-            let shared = Arc::new(std::sync::Mutex::new(port));
-            
-            let r_handle = reader::spawn_reader(
-                port_wrapper::PortReader::Shared(shared.clone()),
-                running.clone(),
-                rx_bytes.clone(),
-                app_handle.clone(),
-                rx_history.clone(),
-                params.port.clone(),
-                window_label.clone(),
-                line_index.clone(),
-            );
-
-            let w_handle = writer::spawn_writer(
-                port_wrapper::PortWriter::Shared(shared),
-                write_rx,
-                running.clone(),
-                tx_bytes.clone(),
-                app_handle.clone(),
-                rx_history.clone(),
-                params.port.clone(),
-                window_label.clone(),
-                line_index.clone(),
-            );
-            
-            (r_handle, w_handle, "shared".to_string())
-        }
+    // 启动 reader 和 writer 线程
+    #[cfg(target_os = "windows")]
+    let (reader_handle, writer_handle) = {
+        let r_handle = reader::spawn_reader(
+            port_wrapper::PortReader::Win(reader_port),
+            running.clone(),
+            rx_bytes.clone(),
+            app_handle.clone(),
+            rx_history.clone(),
+            params.port.clone(),
+            window_label.clone(),
+            line_index.clone(),
+        );
+        let w_handle = writer::spawn_writer(
+            port_wrapper::PortWriter::Win(writer_port),
+            write_rx,
+            running.clone(),
+            tx_bytes.clone(),
+            app_handle.clone(),
+            rx_history.clone(),
+            params.port.clone(),
+            window_label.clone(),
+            line_index.clone(),
+        );
+        (r_handle, w_handle)
     };
 
-    // 发送连接模式事件(定向到该连接归属的窗口)
+    #[cfg(not(target_os = "windows"))]
+    let (reader_handle, writer_handle) = {
+        let r_handle = reader::spawn_reader(
+            reader_port,
+            running.clone(),
+            rx_bytes.clone(),
+            app_handle.clone(),
+            rx_history.clone(),
+            params.port.clone(),
+            window_label.clone(),
+            line_index.clone(),
+        );
+        let w_handle = writer::spawn_writer(
+            writer_port,
+            write_rx,
+            running.clone(),
+            tx_bytes.clone(),
+            app_handle.clone(),
+            rx_history.clone(),
+            params.port.clone(),
+            window_label.clone(),
+            line_index.clone(),
+        );
+        (r_handle, w_handle)
+    };
+
+    // 发送连接模式事件
     {
         let wl = window_label.read().map_err(|e| e.to_string())?;
         let _ = app_handle.emit_to(&*wl, "connection-mode", ConnectionMode { mode: mode_str.clone() });
