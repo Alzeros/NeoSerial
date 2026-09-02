@@ -157,9 +157,16 @@
     }
   }
 
+  // 主题编辑器窗口(label=theme-editor)只渲染 ThemeEditor,不跑串口逻辑
+  const isThemeEditorWindow = getCurrentWebview().label === 'theme-editor';
+
   // "记录发送"开关变化时即时同步后端 state，让 writer 线程立刻按新值决定是否 emit tx-line。
   // 否则只有断开连接时 persistSettings 才同步，拨开关后日志区仍会显示 Tx。
+  // 主题编辑器窗口不跑:它不经 applySettings 回填 store(logSendContent/showLineIndex 停在
+  // 默认值),却会在 ThemeEditor.onMount 写 cachedSettings——effect 一比对就把用户保存的
+  // 值当成"开关变了"回写后端,主窗口开关显示关、Tx 却开始回显。
   $effect(() => {
+    if (isThemeEditorWindow) return;
     const v = logSendContent.value;
     const base = cachedSettings.value;
     if (!base) return;
@@ -171,6 +178,7 @@
 
   // 行号开关:即时同步后端内存 state + 落盘(开关切换立即持久化,不丢设置)
   $effect(() => {
+    if (isThemeEditorWindow) return;
     const v = showLineIndex.value;
     const base = cachedSettings.value;
     if (!base) return;
@@ -185,9 +193,6 @@
   // 关闭确认弹窗:用户点 × 首次关闭时,后端 emit close-requested,前端弹窗选择
   let closeDialogOpen = $state(false);
   let closeDontRemind = $state(false);
-
-  // 主题编辑器窗口(label=theme-editor)只渲染 ThemeEditor,不跑串口逻辑
-  const isThemeEditorWindow = getCurrentWebview().label === 'theme-editor';
 
   onMount(() => {
     // 主题编辑器窗口:不加载串口连接等设置,ThemeEditor 组件自行加载主题
