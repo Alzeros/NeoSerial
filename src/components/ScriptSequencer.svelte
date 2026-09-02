@@ -75,17 +75,21 @@
     if (dragState.ghost) {
       dragState.ghost.style.top = (e.clientY - 18) + 'px';
     }
+    // targetIndex 是"插入槽位"(0..=rows.length):指针在第 i 行上半 → 插到第 i 行之前;
+    // 扫完都不满足(指针在最后一行下半或更下)→ rows.length,即插到末尾。
     const rows = getRowEls();
-    let target = dragState.from;
+    let slot = rows.length;
     const y = e.clientY;
     for (let i = 0; i < rows.length; i++) {
       const rr = rows[i].getBoundingClientRect();
-      if (y < rr.top + rr.height / 2) { target = i; break; }
-      if (i === rows.length - 1) target = i;
+      if (y < rr.top + rr.height / 2) { slot = i; break; }
     }
-    dragState.targetIndex = target;
+    dragState.targetIndex = slot;
+    // 槽位紧贴被拖行的上沿/下沿都是原位,不画指示线
+    const noop = slot === dragState.from || slot === dragState.from + 1;
     rows.forEach((r, i) => {
-      r.style.borderTop = (i === target && target !== dragState!.from)
+      r.style.borderTop = (!noop && i === slot) ? '2px solid var(--primary)' : '';
+      r.style.borderBottom = (!noop && slot === rows.length && i === rows.length - 1)
         ? '2px solid var(--primary)' : '';
     });
     e.preventDefault();
@@ -97,10 +101,15 @@
     activeMove = null;
     activeUp = null;
     if (dragState) {
-      getRowEls().forEach((r) => { r.style.opacity = ''; r.style.borderTop = ''; });
+      getRowEls().forEach((r) => { r.style.opacity = ''; r.style.borderTop = ''; r.style.borderBottom = ''; });
       if (dragState.ghost) dragState.ghost.remove();
-      if (dragState.moved && dragState.targetIndex !== dragState.from) {
-        reorderScriptRow(dragState.from, dragState.targetIndex);
+      if (dragState.moved) {
+        // 槽位 → reorderScriptRow 的目标下标:它先 splice 掉 from 再插到 to,
+        // 向下拖时被拖行移出后后面的行整体前移一格,槽位要减 1;向上拖不变。
+        // 原先直接把槽位当 to 用,向下拖总落到指示线的下一格,在自己行内轻微下移会和下一行交换。
+        const { from, targetIndex: slot } = dragState;
+        const to = slot > from ? slot - 1 : slot;
+        if (to !== from) reorderScriptRow(from, to);
       }
       dragState = null;
     }
