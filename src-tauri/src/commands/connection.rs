@@ -286,6 +286,11 @@ pub fn release_takeover(state: &AppState, app_handle: &tauri::AppHandle, window_
 /// (CloseRequested)复用。取 handle 放锁后再等线程退出(持 connections 锁等 1s
 /// 会阻塞所有其他操作,死锁风险——exit 用 handle.exit 内部锁,与 connections 锁无关)。
 pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &str) -> Result<(), String> {
+    // 先停该 port 的运行序列,避免 disconnect 后序列线程空转(写 dead channel)
+    // 且 SEQUENCE_RUNNING 残留导致 reconnect 后新序列被拒"已在运行"。
+    let seq_stopped = crate::commands::sequence::sequence_stop_inner(&state.connections, port)
+        .unwrap_or(false);
+
     let handle = {
         let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
         conns.remove(port)
@@ -303,10 +308,17 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
             let _ = handle.exit.1.wait_timeout(e, std::time::Duration::from_secs(1));
         }
     }
+    let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+    // 如果序列因断开被停,立即通知窗口(不等线程退出,给用户即时反馈)。
+    // 序列线程退出时也会 emit sequence-done,但可能延迟(delay sleep)且
+    // MCP 起的序列 window_label=mcp-{port},GUI 窗口收不到。
+    if seq_stopped {
+        let _ = app_handle.emit_to(&wl, "sequence-done",
+            crate::commands::sequence::SequenceDone { aborted: true });
+    }
     // 定向通知该连接归属的窗口:主动断开完成。spawn_connection 的监控线程也会发一条
     // connected:false,但那是线程退净后发的;这里已同步等过线程退出,
     // 先发一条让窗口即时响应(幂等,前端取 connected:false 即可)。
-    let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
     let _ = app_handle.emit_to(&wl, "connection-state", crate::connection::ConnectionState {
         connected: false,
         port: Some(port.to_string()),

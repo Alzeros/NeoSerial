@@ -28,7 +28,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 - **事件定向**：所有事件（rx-line/tx-line/sequence-progress 等）用 `emit_to(window_label)` 定向到归属窗口，前端用 `getCurrentWebview().listen` 接收，多窗口不串流。
 - **能力（capability）**：`capabilities/default.json` 的 `windows: ["main", "win-*"]` 用通配符授权所有窗口的监听/窗口控制/文件读写等权限。
 
-### MCP 工具（15 个）
+### MCP 工具（16 个）
 
 | 工具 | 能力 |
 |------|------|
@@ -42,6 +42,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 | `send_file` | 发送文件（二进制安全，固件/烧录） |
 | `start_logging` / `stop_logging` | 开始/停止存盘（全局） |
 | `sequence_run` / `sequence_stop` | 脚本序列（批量命令+循环+延时，自动化测试） |
+| `get_sequence_status` | 查序列运行状态（端口断开导致中止后 running=false） |
 | `get_settings` / `save_settings` | 读/写配置（持久化） |
 
 agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`，优先找连接目标 COM 且心跳新鲜（30s 内）的实例；无则找空闲实例，再退化为从默认端口 34594 起逐端口 `get_status` 探测。Claude Code 配置：

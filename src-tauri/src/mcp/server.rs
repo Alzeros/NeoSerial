@@ -51,6 +51,7 @@ const START_LOGGING: &str = "start_logging";
 const STOP_LOGGING: &str = "stop_logging";
 const SEQUENCE_RUN: &str = "sequence_run";
 const SEQUENCE_STOP: &str = "sequence_stop";
+const GET_SEQUENCE_STATUS: &str = "get_sequence_status";
 const GET_SETTINGS: &str = "get_settings";
 const SAVE_SETTINGS: &str = "save_settings";
 
@@ -264,6 +265,21 @@ impl ServerHandler for NeoserialHandler {
                 })),
             ),
             Tool::new(
+                GET_SEQUENCE_STATUS,
+                "查询指定 port 的序列运行状态(含进度)。agent 发完 sequence_run 后可轮询:\
+                 running=true 序列仍在跑;running=false+completed=true 正常跑完;\
+                 running=false+completed=false 被中止(断开/stop),current_index 指示停在哪条(0-based)。\
+                 参数: port。返回 { ok, running, completed, current_index, total }。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "port": { "type": "string", "description": "串口名,如 COM3" }
+                    },
+                    "required": ["port"],
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
                 GET_SETTINGS,
                 "读取当前配置(波特率预设/显示模式/编码/MCP 设置等)。无参数。返回 { ok, settings }。",
                 schema(serde_json::json!({
@@ -446,6 +462,15 @@ impl ServerHandler for NeoserialHandler {
                         Ok(r) => serde_json::to_value(r).unwrap_or_default(),
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
+                }
+                GET_SEQUENCE_STATUS => {
+                    let req: tools::SequenceStatusReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    serde_json::to_value(tools::sequence_status(req)).unwrap_or_default()
                 }
                 GET_SETTINGS => {
                     serde_json::to_value(tools::get_settings(&shared)).unwrap_or_default()

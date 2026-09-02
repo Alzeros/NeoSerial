@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, LazyLock, Mutex};
 use std::thread;
 use std::time::Duration;
@@ -23,24 +23,34 @@ pub struct SequenceDone {
     pub aborted: bool,
 }
 
-/// 正在运行的序列端口集合。per-port 隔离:同一 port 不可重复 run,
-/// 不同 port 可并行。sequence_run 成功时 insert,线程退出(Drop guard)
-/// 或 sequence_stop 时 remove。HashSet + Mutex 仅纳秒级 contains 检查,
-/// 不跨 await,可接受。
-static SEQUENCE_RUNNING: LazyLock<Mutex<HashSet<String>>> =
-    LazyLock::new(|| Mutex::new(HashSet::new()));
+/// 序列运行状态。per-port 隔离,记录当前执行位置,供 get_sequence_status 查询。
+/// 断开/stop 导致中止时 current_index 停在最后执行的位置,agent 可据此定位问题指令。
+#[derive(Clone)]
+pub struct SequenceState {
+    /// true = 序列正在运行
+    pub running: bool,
+    /// 当前/最后执行的命令索引 (0-based)
+    pub current_index: usize,
+    /// 命令总数
+    pub total: usize,
+    /// true = 全部命令执行完毕(正常结束)
+    pub completed: bool,
+}
+
+static SEQUENCE_STATE: LazyLock<Mutex<HashMap<String, SequenceState>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// 序列运行期清理 guard:无论线程正常结束、aborted 退出、还是 panic,
-/// Drop 都从 SEQUENCE_RUNNING 移除该 port,保证下次同 port run 不会被
-/// 残留条目假报"已在运行"。sequence_stop 也会 remove(stop 在外层移除,
-/// Drop 再 remove 是幂等 no-op)。
+/// Drop 都把该 port 的 running 置 false(不清除 state,供 get_sequence_status 查询)。
 struct RunningGuard {
     port: String,
 }
 impl Drop for RunningGuard {
     fn drop(&mut self) {
-        if let Ok(mut g) = SEQUENCE_RUNNING.lock() {
-            g.remove(&self.port);
+        if let Ok(mut g) = SEQUENCE_STATE.lock() {
+            if let Some(state) = g.get_mut(&self.port) {
+                state.running = false;
+            }
         }
     }
 }
@@ -79,36 +89,41 @@ pub fn sequence_run_inner(
     };
     let port = port.to_string();
 
-    // 2. SEQUENCE_RUNNING: insert-then-check 契约。已含该 port → 拒绝;
-    //    否则 insert,释放锁。线程内靠 contains 判断是否被 stop。
+    // 2. SEQUENCE_STATE: insert-then-check 契约。已含该 port 且 running → 拒绝;
+    //    否则 insert(覆盖旧 state),释放锁。线程内靠 running 字段判断是否被 stop。
     {
-        let mut running = SEQUENCE_RUNNING.lock().map_err(|e| e.to_string())?;
-        if running.contains(&port) {
+        let mut states = SEQUENCE_STATE.lock().map_err(|e| e.to_string())?;
+        if states.get(&port).map(|s| s.running).unwrap_or(false) {
             return Err("该端口序列已在运行".to_string());
         }
-        running.insert(port.clone());
+        states.insert(port.clone(), SequenceState {
+            running: true,
+            current_index: 0,
+            total: commands.len(),
+            completed: false,
+        });
     }
 
     thread::spawn(move || {
-        // 3. 清理 guard:线程任意退出路径(正常/aborted/panic)都 remove(&port)。
-        //    放在闭包首行,保证后续代码 panic 也能清理。
+        // 3. 清理 guard:线程任意退出路径(正常/aborted/panic)都 running=false。
+        //    不清除 state 条目(供 get_sequence_status 查询中止位置)。
         let _guard = RunningGuard { port: port.clone() };
 
         let mut aborted = false;
         for _ in 0..run_count {
-            // 被 stop:集合已不含该 port → 退出。锁内只做 contains 检查(纳秒级)。
-            let still_running = SEQUENCE_RUNNING
+            // 被 stop:running=false → 退出。
+            let still_running = SEQUENCE_STATE
                 .lock()
-                .map(|g| g.contains(&port))
+                .map(|g| g.get(&port).map(|s| s.running).unwrap_or(false))
                 .unwrap_or(false);
             if !still_running {
                 aborted = true;
                 break;
             }
             for (i, cmd) in commands.iter().enumerate() {
-                let still_running = SEQUENCE_RUNNING
+                let still_running = SEQUENCE_STATE
                     .lock()
-                    .map(|g| g.contains(&port))
+                    .map(|g| g.get(&port).map(|s| s.running).unwrap_or(false))
                     .unwrap_or(false);
                 if !still_running {
                     aborted = true;
@@ -145,6 +160,12 @@ pub fn sequence_run_inner(
                     emit_tx_line(&app_handle, &rx_history, &window_label, &line_index, data.clone());
                     // 塞 channel,writer 异步写(SendSilent:不 emit,emit_tx_line 已 emit)
                     let _ = write_tx.send(WriteCommand::SendSilent(data));
+                    // 发送后更新 current_index:始终反映"最后发出去的是第几条"(0-based)
+                    if let Ok(mut g) = SEQUENCE_STATE.lock() {
+                        if let Some(state) = g.get_mut(&port) {
+                            state.current_index = i;
+                        }
+                    }
                 }
 
                 // 行间延时:sequence 线程按 delay 间隔发起下一条,不受 writer 写阻塞影响
@@ -162,7 +183,16 @@ pub fn sequence_run_inner(
 
         let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
         let _ = app_handle.emit_to(&wl, "sequence-done", SequenceDone { aborted });
-        // _guard drop 在此:remove(&port)
+        // 正常完成:标记 completed=true(running 已被 guard 置 false)。
+        // 中止时 completed 保持 false,current_index 停在最后执行位置。
+        if !aborted {
+            if let Ok(mut g) = SEQUENCE_STATE.lock() {
+                if let Some(state) = g.get_mut(&port) {
+                    state.completed = true;
+                }
+            }
+        }
+        // _guard drop 在此:running=false
     });
 
     Ok(())
@@ -186,14 +216,26 @@ pub fn sequence_stop(
         let conns = state.connections.lock().map_err(|e| e.to_string())?;
         resolve_port(&conns, port)?
     };
-    sequence_stop_inner(&state.connections, &resolved)
+    sequence_stop_inner(&state.connections, &resolved).map(|_| ())
+}
+
+/// 查询指定 port 的序列状态(含进度)。供 MCP get_sequence_status 工具调用。
+/// 返回 (running, completed, current_index, total)。port 从未跑过序列时全为 false/0。
+pub fn sequence_get_state(port: &str) -> (bool, bool, usize, usize) {
+    SEQUENCE_STATE.lock()
+        .map(|g| {
+            g.get(port).map(|s| (s.running, s.completed, s.current_index, s.total))
+                .unwrap_or((false, false, 0, 0))
+        })
+        .unwrap_or((false, false, 0, 0))
 }
 
 /// 内部:停指定 port 的运行序列(已解析 port)。供 command 与 MCP 工具复用。
+/// 返回 true 表示确实停了一个正在运行的序列,false 表示该 port 没有在运行序列。
 pub fn sequence_stop_inner(
     connections: &Arc<Mutex<HashMap<String, crate::connection::ConnectionHandle>>>,
     port: &str,
-) -> Result<(), String> {
+) -> Result<bool, String> {
     // 校验 port 已连接
     {
         let conns = connections.lock().map_err(|e| e.to_string())?;
@@ -201,10 +243,18 @@ pub fn sequence_stop_inner(
             return Err(format!("端口 {} 未连接", port));
         }
     }
-    if let Ok(mut g) = SEQUENCE_RUNNING.lock() {
-        g.remove(port);
-    }
-    Ok(())
+    let was_running = SEQUENCE_STATE.lock()
+        .map(|mut g| {
+            if let Some(state) = g.get_mut(port) {
+                let was = state.running;
+                state.running = false;
+                was
+            } else {
+                false
+            }
+        })
+        .unwrap_or(false);
+    Ok(was_running)
 }
 
 /// 保存序列配置。data 为前端序列化后的 JSON（当前是 ScriptModule[]）。
@@ -506,124 +556,151 @@ pub struct SequenceCommand {
 mod tests {
     use super::*;
 
-    /// sequence 测试串行化:SEQUENCE_RUNNING 是全局 static,并行测试会互相污染集合。
-    /// 用一把测试专用 Mutex 串行所有 sequence 测试,每个测试开头清空集合保证隔离。
+    /// sequence 测试串行化:SEQUENCE_STATE 是全局 static,并行测试会互相污染。
+    /// 用一把测试专用 Mutex 串行所有 sequence 测试,每个测试开头清空保证隔离。
     static TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
     fn reset() {
-        if let Ok(mut g) = SEQUENCE_RUNNING.lock() {
+        if let Ok(mut g) = SEQUENCE_STATE.lock() {
             g.clear();
         }
     }
 
-    /// 同一 port 重复 run 应被拒绝(已在集合 → 报"该端口序列已在运行")。
-    /// 验证 sequence_run 的 insert-then-check 契约:首次 insert 成功,二次检测到 contains。
+    /// 辅助:往 SEQUENCE_STATE 插入一个 running=true 的状态
+    fn insert_running(port: &str, total: usize) {
+        SEQUENCE_STATE.lock().unwrap().insert(port.to_string(), SequenceState {
+            running: true, current_index: 0, total, completed: false,
+        });
+    }
+
+    /// 同一 port 重复 run 应被拒绝(running=true → 报"该端口序列已在运行")。
     #[test]
     fn test_same_port_duplicate_run_rejected() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset();
 
-        let port = "COM3".to_string();
-        // 首次标记运行中(模拟 sequence_run 成功路径)
-        let inserted = SEQUENCE_RUNNING.lock().unwrap().insert(port.clone());
-        assert!(inserted, "首次 insert 应成功");
-
-        // 二次 run:检测到该 port 已在集合 → 应报错,不再 insert
-        let already_running = SEQUENCE_RUNNING.lock().unwrap().contains(&port);
+        let port = "COM3";
+        insert_running(port, 10);
+        let already_running = SEQUENCE_STATE.lock().unwrap().get(port).map(|s| s.running).unwrap_or(false);
         assert!(already_running, "同 port 重复 run 应检测到已在运行");
     }
 
-    /// 不同 port 可并行:两个端口都能 insert 进集合,互不排斥。
-    /// 验证 per-port 语义(对比原 AtomicBool 全局互斥)。
+    /// 不同 port 可并行:两个端口都能 insert,互不排斥。
     #[test]
     fn test_different_ports_can_run_parallel() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset();
 
-        let p1 = "COM3".to_string();
-        let p2 = "COM5".to_string();
-        let ok1 = SEQUENCE_RUNNING.lock().unwrap().insert(p1);
-        let ok2 = SEQUENCE_RUNNING.lock().unwrap().insert(p2);
-        assert!(ok1 && ok2, "不同 port 应可同时进入运行集合(并行序列)");
-        assert_eq!(SEQUENCE_RUNNING.lock().unwrap().len(), 2);
+        insert_running("COM3", 10);
+        insert_running("COM5", 5);
+        assert_eq!(SEQUENCE_STATE.lock().unwrap().len(), 2);
     }
 
-    /// sequence_stop 经 resolve_port 解析后从集合 remove,线程下次循环检测到
-    /// contains==false 即退出。验证 stop 的移除语义。
+    /// sequence_stop 把 running 置 false,线程下次循环检测到即退出。
     #[test]
-    fn test_stop_removes_port_from_set() {
+    fn test_stop_sets_running_false() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset();
 
-        let port = "COM3".to_string();
-        SEQUENCE_RUNNING.lock().unwrap().insert(port.clone());
-        let removed = SEQUENCE_RUNNING.lock().unwrap().remove(&port);
-        assert!(removed, "stop 应从集合移除该 port");
-        assert!(
-            !SEQUENCE_RUNNING.lock().unwrap().contains(&port),
-            "stop 后该 port 不应在集合"
-        );
+        let port = "COM3";
+        insert_running(port, 10);
+        // 模拟 stop_inner
+        if let Some(state) = SEQUENCE_STATE.lock().unwrap().get_mut(port) {
+            state.running = false;
+        }
+        let running = SEQUENCE_STATE.lock().unwrap().get(port).map(|s| s.running).unwrap_or(false);
+        assert!(!running, "stop 后 running 应为 false");
     }
 
-    /// 序列结束(线程退出)必须 remove(&port) 清理,否则下次同 port run 假报已在运行。
-    /// 验证清理后同 port 可再次 insert(模拟线程 Drop guard 清理路径)。
+    /// 序列结束后(running=false, completed=true)同 port 可再次 run(覆盖旧 state)。
     #[test]
     fn test_cleanup_allows_rerun_same_port() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset();
 
-        let port = "COM3".to_string();
-        SEQUENCE_RUNNING.lock().unwrap().insert(port.clone());
-        // 模拟序列结束清理(Drop guard / 正常退出路径)
-        SEQUENCE_RUNNING.lock().unwrap().remove(&port);
-        // 再次 run:应能 insert 成功
-        let ok = SEQUENCE_RUNNING.lock().unwrap().insert(port);
-        assert!(ok, "清理后同 port 应可再次 run");
+        let port = "COM3";
+        insert_running(port, 10);
+        // 模拟序列正常结束
+        {
+            let mut g = SEQUENCE_STATE.lock().unwrap();
+            if let Some(state) = g.get_mut(port) {
+                state.running = false;
+                state.completed = true;
+            }
+        }
+        // 再次 run:覆盖旧 state
+        insert_running(port, 5);
+        let state = SEQUENCE_STATE.lock().unwrap().get(port).unwrap().clone();
+        assert!(state.running, "覆盖后应 running=true");
+        assert!(!state.completed, "覆盖后应 completed=false(新序列)");
+        assert_eq!(state.total, 5);
     }
 
-    /// stop 不影响其他 port 的运行序列:移除 A 不应误删 B。
-    /// 验证 per-port 隔离(避免广播式全停)。
+    /// stop 不影响其他 port 的运行序列。
     #[test]
     fn test_stop_one_port_keeps_others() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset();
 
-        let a = "COM3".to_string();
-        let b = "COM5".to_string();
-        SEQUENCE_RUNNING.lock().unwrap().insert(a.clone());
-        SEQUENCE_RUNNING.lock().unwrap().insert(b.clone());
-        // 停 A
-        SEQUENCE_RUNNING.lock().unwrap().remove(&a);
-        // B 仍在运行
-        assert!(
-            SEQUENCE_RUNNING.lock().unwrap().contains(&b),
-            "停 A 不应影响 B 的运行序列"
-        );
+        insert_running("COM3", 10);
+        insert_running("COM5", 10);
+        // 停 COM3
+        if let Some(state) = SEQUENCE_STATE.lock().unwrap().get_mut("COM3") {
+            state.running = false;
+        }
+        let b_running = SEQUENCE_STATE.lock().unwrap().get("COM5").map(|s| s.running).unwrap_or(false);
+        assert!(b_running, "停 COM3 不应影响 COM5");
     }
 
-    /// RunningGuard 的 Drop 清理路径本身。原 5 个测试直接操作 HashSet,
-    /// 未覆盖 guard 的 Drop trait——这是 sequence_run 线程实际用的清理机制
-    /// (panic/正常退出/aborted 都靠它 remove)。构造 guard → insert port →
-    /// drop guard → 断言 port 已从集合移除。
+    /// RunningGuard 的 Drop 清理路径:构造 guard → drop → running 应被置 false。
     #[test]
-    fn test_running_guard_drop_removes_port() {
+    fn test_running_guard_drop_sets_running_false() {
         let _guard = TEST_LOCK.lock().unwrap();
         reset();
 
         let port = "COM-TEST".to_string();
-        SEQUENCE_RUNNING.lock().unwrap().insert(port.clone());
-        assert!(
-            SEQUENCE_RUNNING.lock().unwrap().contains(&port),
-            "guard drop 前该 port 应在运行集合"
-        );
-        // 构造 guard 并立即 drop:模拟线程退出(_guard 离开作用域)
+        insert_running(&port, 10);
+        assert!(SEQUENCE_STATE.lock().unwrap().get(&port).unwrap().running, "guard drop 前 running=true");
         {
             let _guard = RunningGuard { port: port.clone() };
         }
-        assert!(
-            !SEQUENCE_RUNNING.lock().unwrap().contains(&port),
-            "guard drop 后应从运行集合移除该 port"
-        );
+        assert!(!SEQUENCE_STATE.lock().unwrap().get(&port).unwrap().running, "guard drop 后 running=false");
+    }
+
+    /// get_sequence_state 返回正确进度信息。
+    #[test]
+    fn test_get_state_returns_progress() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset();
+
+        // 从未跑过 → 全 false/0
+        let (running, completed, idx, total) = sequence_get_state("COM3");
+        assert!(!running && !completed && idx == 0 && total == 0);
+
+        // 运行中
+        SEQUENCE_STATE.lock().unwrap().insert("COM3".into(), SequenceState {
+            running: true, current_index: 3, total: 10, completed: false,
+        });
+        let (running, completed, idx, total) = sequence_get_state("COM3");
+        assert!(running && !completed && idx == 3 && total == 10);
+
+        // 中止(running=false, completed=false, current_index 停在 3)
+        {
+            let mut g = SEQUENCE_STATE.lock().unwrap();
+            g.get_mut("COM3").unwrap().running = false;
+        }
+        let (running, completed, idx, total) = sequence_get_state("COM3");
+        assert!(!running && !completed && idx == 3 && total == 10);
+
+        // 正常完成
+        {
+            let mut g = SEQUENCE_STATE.lock().unwrap();
+            let s = g.get_mut("COM3").unwrap();
+            s.running = false;
+            s.completed = true;
+        }
+        let (running, completed, idx, total) = sequence_get_state("COM3");
+        assert!(!running && completed && idx == 3 && total == 10);
     }
 
     // ============ ini 导入测试 ============

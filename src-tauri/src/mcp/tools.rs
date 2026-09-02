@@ -68,6 +68,11 @@ pub struct DisconnectReq {
 }
 
 pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: DisconnectReq) -> Result<(), String> {
+    // 先停该 port 的运行序列,避免 disconnect 后序列线程空转(写 dead channel)
+    // 且 SEQUENCE_RUNNING 残留导致 reconnect 后新序列被拒。
+    let seq_stopped = crate::commands::sequence::sequence_stop_inner(&shared.connections, &req.port)
+        .unwrap_or(false);
+
     // 先从 map 取出 handle 并放锁,再等 exit(持 connections 锁等 1s 会阻塞所有其他操作,死锁风险)。
     // 在同一锁作用域内构造剩余连接快照(handle 移除后剩余 entries),避免二次取锁且快照与移除原子一致。
     let (handle, snapshot): (Option<crate::connection::ConnectionHandle>, Vec<ConnInfo>) = {
@@ -82,6 +87,14 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
     let window_label = handle.as_ref()
         .and_then(|h| h.window_label.read().ok().map(|g| g.clone()))
         .unwrap_or_else(|| crate::connection::port_to_label(&req.port));
+    // 如果序列因断开被停,立即通知窗口(不等线程退出,给用户即时反馈)。
+    if seq_stopped {
+        let _ = app_handle.emit_to(
+            &window_label,
+            "sequence-done",
+            crate::commands::sequence::SequenceDone { aborted: true },
+        );
+    }
     if let Some(handle) = handle {
         let _ = handle.write_tx.send(WriteCommand::Close);
         handle.running.store(false, std::sync::atomic::Ordering::SeqCst);
@@ -716,9 +729,7 @@ pub struct SequenceRunReq {
 #[derive(Serialize)]
 pub struct SequenceRunResp {
     pub ok: bool,
-}
-
-/// 跑脚本序列:多条命令批量下发,支持循环(run_count)和行间延时。与 GUI sequence_run 同逻辑。
+}/// 跑脚本序列:多条命令批量下发,支持循环(run_count)和行间延时。与 GUI sequence_run 同逻辑。
 pub fn sequence_run(shared: &McpShared, req: SequenceRunReq) -> Result<SequenceRunResp, ErrorResp> {
     use crate::commands::sequence::{sequence_run_inner, SequenceCommand};
     // 转 GUI 的 SequenceCommand
@@ -750,6 +761,36 @@ pub fn sequence_stop(shared: &McpShared, req: SequenceStopReq) -> Result<Sequenc
     sequence_stop_inner(&shared.connections, &req.port)
         .map(|_| SequenceStopResp { ok: true })
         .map_err(ErrorResp::new)
+}
+
+// ============ get_sequence_status ============
+
+#[derive(Deserialize)]
+pub struct SequenceStatusReq {
+    pub port: String,
+}
+
+#[derive(Serialize)]
+pub struct SequenceStatusResp {
+    pub ok: bool,
+    /// true = 序列正在运行
+    pub running: bool,
+    /// true = 全部命令执行完毕(正常结束)
+    pub completed: bool,
+    /// 当前/最后执行的命令索引 (0-based)。running=true 时是当前正在执行的;
+    /// running=false 且 completed=false 时是中止位置(哪条指令导致的问题)。
+    pub current_index: usize,
+    /// 命令总数
+    pub total: usize,
+}
+
+/// 查询指定 port 的序列运行状态(含进度)。agent 发完 sequence_run 后可轮询:
+/// running=true 序列仍在跑;running=false+completed=true 正常跑完;
+/// running=false+completed=false 被中止(断开/stop),current_index 指示停在哪条。
+pub fn sequence_status(req: SequenceStatusReq) -> SequenceStatusResp {
+    let (running, completed, current_index, total) =
+        crate::commands::sequence::sequence_get_state(&req.port);
+    SequenceStatusResp { ok: true, running, completed, current_index, total }
 }
 
 // ============ get_settings / save_settings ============
