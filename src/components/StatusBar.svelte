@@ -47,7 +47,7 @@
 
 <div class="flex items-center gap-6 border-t border-[var(--border)] px-5 py-1.5" data-theme-target="background-elevated" style="background: var(--background-elevated);">
   <!-- 连接状态：已连接 + 正在收发时圆点呼吸 -->
-  <span class="flex items-center gap-2 text-[13px]">
+  <span class="flex items-center gap-2 text-[13px] leading-none">
     <span
       class="h-2 w-2 rounded-full {connected.value ? 'bg-[var(--rx)]' : 'bg-[var(--muted-foreground)]'} {ioActive ? 'status-dot-pulse' : ''}"
     ></span>
@@ -57,10 +57,11 @@
   <div class="w-px h-4 bg-[var(--border)]"></div>
 
   <!-- 统计：本次会话累计收发字节数（不随日志清空重置）。tnum 等宽数字防宽度抖动，mono 字体显仪表感 -->
-  <span class="text-[13px] font-medium text-[var(--tx)] tnum" style="font-family: var(--font-mono);" title="本次会话累计发送字节数">{txLabel}: {formatBytes(txBytes.value)}</span>
-  <span class="text-[13px] font-medium text-[var(--rx)] tnum" style="font-family: var(--font-mono);" title="本次会话累计接收字节数">{rxLabel}: {formatBytes(rxBytes.value)}</span>
+  <span class="text-[13px] leading-none font-medium text-[var(--muted-foreground)] tnum" style="font-family: var(--font-mono);" title="本次会话累计发送字节数">{txLabel}: {formatBytes(txBytes.value)}</span>
+  <span class="text-[13px] leading-none font-medium text-[var(--rx)] tnum" style="font-family: var(--font-mono);" title="本次会话累计接收字节数">{rxLabel}: {formatBytes(rxBytes.value)}</span>
   <button
-    class="text-[12px] text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer transition-colors"
+    class="text-[13px] leading-none font-medium text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer transition-colors"
+    style="font-family: var(--font-mono);"
     title="清零收发统计"
     onclick={handleResetStats}
   >清空</button>
