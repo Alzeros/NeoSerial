@@ -7,7 +7,8 @@ use windows_sys::Win32::Devices::Communication::{
     COMMTIMEOUTS, DCB, SETDTR, SETRTS,
 };
 use windows_sys::Win32::Foundation::{
-    CloseHandle, DuplicateHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE, DUPLICATE_SAME_ACCESS,
+    CloseHandle, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE, DUPLICATE_SAME_ACCESS, TRUE,
+    WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile,
@@ -34,6 +35,16 @@ const RTS_CONTROL_HANDSHAKE: u32 = 2;
 
 pub struct WinPort {
     handle: HANDLE,
+}
+
+/// 一次 overlapped I/O 的收尾结果,见 [`WinPort::finish_overlapped`]。
+struct OverlappedOutcome {
+    /// 已传输字节数。超时被取消时是取消前已完成的部分。
+    transferred: usize,
+    /// WaitForSingleObject 超时(已发 CancelIo 并等到取消完成)。
+    timed_out: bool,
+    /// GetOverlappedResult 报告的失败;取消后通常是 ERROR_OPERATION_ABORTED。
+    error: Option<io::Error>,
 }
 
 // SAFETY: WinPort holds a raw Windows HANDLE to a COM port.
@@ -218,33 +229,45 @@ impl WinPort {
             return Err(err);
         }
 
-        // 等 overlapped I/O 完成
-        let wait = unsafe { WaitForSingleObject(event, timeout_ms) };
-        match wait {
-            0 /* WAIT_OBJECT_0 */ => {
-                let mut transferred: u32 = 0;
-                let ok = unsafe { GetOverlappedResult(self.handle, &overlapped, &mut transferred, FALSE) };
-                unsafe { CloseHandle(event) };
-                if ok != 0 {
-                    Ok(transferred as usize)
-                } else {
-                    Err(io::Error::last_os_error())
-                }
-            }
-            0x102 /* WAIT_TIMEOUT */ => {
-                unsafe { CancelIo(self.handle) };
-                unsafe { WaitForSingleObject(event, 100) };
-                unsafe { CloseHandle(event) };
+        let outcome = self.finish_overlapped(&overlapped, event, timeout_ms);
+        match outcome {
+            // 完成(含取消发出后恰好完成的)
+            OverlappedOutcome { error: None, transferred, .. } => Ok(transferred),
+            // 取消前已写出一部分:按部分写入返回,调用方补写余下;一字节没出去才算超时
+            OverlappedOutcome { transferred, .. } if transferred > 0 => Ok(transferred),
+            OverlappedOutcome { timed_out: true, .. } => {
                 Err(io::Error::new(io::ErrorKind::TimedOut, "write 超时"))
             }
-            _ => {
-                unsafe { CloseHandle(event) };
-                Err(io::Error::last_os_error())
-            }
+            OverlappedOutcome { error: Some(e), .. } => Err(e),
         }
     }
 
-    /// Overlapped read：立即返回已读数据，超时返回 0。
+    /// overlapped I/O 收尾:等事件,超时(或等待出错)先 CancelIo,最后**必须**以
+    /// GetOverlappedResult(bWait=TRUE) 等到 I/O 真正完成才返回、才关事件。
+    ///
+    /// CancelIo 只是发起取消——驱动(尤其是已经卡住的 USB 转串口,正是走到超时分支的场景)
+    /// 完成取消可能远超几十 ms。I/O 完成前 `overlapped` 和数据缓冲区都还归内核所有,
+    /// 提前返回让它们出作用域,驱动稍后完成时会往已被复用的栈帧里写 Internal/InternalHigh,
+    /// 表现为随机崩溃或静默的内存损坏。这里宁可阻塞等取消完成。
+    fn finish_overlapped(&self, overlapped: &OVERLAPPED, event: HANDLE, timeout_ms: u32) -> OverlappedOutcome {
+        let wait = unsafe { WaitForSingleObject(event, timeout_ms) };
+        if wait != WAIT_OBJECT_0 {
+            // 只取消本线程在该句柄上的在途 I/O;reader/writer 各持独立句柄,互不影响
+            unsafe { CancelIo(self.handle) };
+        }
+        let mut transferred: u32 = 0;
+        let ok = unsafe { GetOverlappedResult(self.handle, overlapped, &mut transferred, TRUE) };
+        // 取消后的失败通常是 ERROR_OPERATION_ABORTED(995),此时 transferred 是取消前已完成的字节数
+        let error = if ok == 0 { Some(io::Error::last_os_error()) } else { None };
+        unsafe { CloseHandle(event) };
+        OverlappedOutcome {
+            transferred: transferred as usize,
+            timed_out: wait == WAIT_TIMEOUT,
+            error,
+        }
+    }
+
+    /// Overlapped read：立即返回已读数据，超时返回取消前读到的字节数（通常 0）。
     pub fn read_overlapped(&self, buf: &mut [u8], timeout_ms: u32) -> io::Result<usize> {
         let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
         if event.is_null() {
@@ -276,34 +299,13 @@ impl WinPort {
             return Err(err);
         }
 
-        let wait = unsafe { WaitForSingleObject(event, timeout_ms) };
-        match wait {
-            0 => {
-                let mut transferred: u32 = 0;
-                let ok = unsafe { GetOverlappedResult(self.handle, &overlapped, &mut transferred, FALSE) };
-                unsafe { CloseHandle(event) };
-                if ok != 0 {
-                    Ok(transferred as usize)
-                } else {
-                    Err(io::Error::last_os_error())
-                }
-            }
-            0x102 => {
-                unsafe { CancelIo(self.handle) };
-                unsafe { WaitForSingleObject(event, 50) };
-                let mut transferred: u32 = 0;
-                let ok = unsafe { GetOverlappedResult(self.handle, &overlapped, &mut transferred, FALSE) };
-                unsafe { CloseHandle(event) };
-                if ok != 0 && transferred > 0 {
-                    Ok(transferred as usize)
-                } else {
-                    Ok(0)
-                }
-            }
-            _ => {
-                unsafe { CloseHandle(event) };
-                Err(io::Error::last_os_error())
-            }
+        let outcome = self.finish_overlapped(&overlapped, event, timeout_ms);
+        match outcome {
+            OverlappedOutcome { error: None, transferred, .. } => Ok(transferred),
+            // 读超时是常态(设备静默),不报错:取消前读到多少算多少(通常 0)
+            OverlappedOutcome { timed_out: true, transferred, .. } => Ok(transferred),
+            // 非超时的完成失败(拔线等):上抛,reader 据此退出
+            OverlappedOutcome { error: Some(e), .. } => Err(e),
         }
     }
 
