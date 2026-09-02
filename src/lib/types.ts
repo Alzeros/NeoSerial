@@ -59,7 +59,11 @@ export interface WindowConnState {
 
 export type Parity = 'None' | 'Odd' | 'Even';
 export type DataBits = 'Five' | 'Six' | 'Seven' | 'Eight';
+/** connect 命令的 stopBits 参数：后端 u8（1|2）。 */
 export type StopBits = 1 | 2;
+/** settings.json 里 serial_defaults.stop_bits 的形态：后端 StopBits 枚举 serde PascalCase。
+ *  与 connect 命令的数字形态不同，两边转换见 App.svelte 的 applySettings / buildSettingsFromUi。 */
+export type SettingsStopBits = 'One' | 'Two';
 export type FlowControl = 'None' | 'Software' | 'Hardware';
 export type LineEnding = 'None' | 'Cr' | 'Lf' | 'Crlf';
 
@@ -91,7 +95,7 @@ export interface Settings {
     baud_rate: number;
     data_bits: DataBits;
     parity: Parity;
-    stop_bits: StopBits;
+    stop_bits: SettingsStopBits;
     flow_control: FlowControl;
   };
   last_port: string;

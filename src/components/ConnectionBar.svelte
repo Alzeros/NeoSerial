@@ -17,8 +17,17 @@
   const stopBitsOpts = ['1', '2'];
   const flowOpts = [{ l: 'None', v: 'None' }, { l: 'Soft', v: 'Software' }, { l: 'Hard', v: 'Hardware' }];
 
-  let baudRateStr = $state('115200');
-  let stopBitsStr = $state('1');
+  // 波特率/停止位下拉直接绑 connectionParams(CustomSelect 只认 string,用函数绑定 get/set 转型),
+  // 而不是本地 string state:设置里的 serial_defaults、MCP 接管/connection-state 回填写的
+  // 都是 connectionParams.baudRate/stopBits,本地副本永远停在 115200/1——上次用的波特率
+  // 既显示不出来也连不上,接管 9600 的连接后下拉还显 115200。
+  function getBaudStr() { return String(connectionParams.baudRate); }
+  function setBaudStr(v: string) {
+    const n = Number(v);
+    if (Number.isFinite(n) && n > 0) connectionParams.baudRate = n;
+  }
+  function getStopBitsStr() { return String(connectionParams.stopBits); }
+  function setStopBitsStr(v: string) { connectionParams.stopBits = v === '2' ? 2 : 1; }
 
   // CustomSelect 需要 {label, value} 格式的选项
   const portOptions = $derived(availablePorts.value.map((p) => ({ label: p, value: p })));
@@ -48,9 +57,9 @@
   }
 
   async function handleConnect() {
-    const baud = Number(baudRateStr);
+    const baud = connectionParams.baudRate;
     // 波特率为空/非法时拒绝连接，避免 0 波特率下发到后端
-    if (!baud || baud <= 0) return;
+    if (!Number.isFinite(baud) || baud <= 0) return;
     // 始终用用户在下拉框选的 port(窗口不绑 port,每次连接前重新选)。
     // windowPort 只用于"已连接后"定位 send/disconnect,连接前用 connectionParams.port。
     const targetPort = connectionParams.port;
@@ -62,7 +71,7 @@
         baud_rate: baud,
         data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
-        stop_bits: Number(stopBitsStr) as 1 | 2,
+        stop_bits: connectionParams.stopBits,
         flow_control: connectionParams.flowControl,
       });
     } catch (e) {
@@ -104,7 +113,7 @@
     <!-- 波特率 -->
     <label class="control-group">
       <span>波特率</span>
-      <CustomSelect bind:value={baudRateStr} options={baudOptions} width="96px" disabled={connected.value} onAddOption={openBaudSettings} />
+      <CustomSelect bind:value={getBaudStr, setBaudStr} options={baudOptions} width="96px" disabled={connected.value} onAddOption={openBaudSettings} />
     </label>
 
     <!-- 数据位 -->
@@ -122,7 +131,7 @@
     <!-- 停止位 -->
     <label class="control-group">
       <span>停止位</span>
-      <CustomSelect bind:value={stopBitsStr} options={stopBitOptions} width="60px" disabled={connected.value} />
+      <CustomSelect bind:value={getStopBitsStr, setStopBitsStr} options={stopBitOptions} width="60px" disabled={connected.value} />
     </label>
 
     <!-- 流控制 -->

@@ -79,7 +79,8 @@
     connectionParams.baudRate = s.serial_defaults.baud_rate;
     connectionParams.dataBits = s.serial_defaults.data_bits;
     connectionParams.parity = s.serial_defaults.parity;
-    connectionParams.stopBits = s.serial_defaults.stop_bits;
+    // settings 里是后端枚举的 PascalCase 字串("One"/"Two"),connect 命令要数字(1/2)
+    connectionParams.stopBits = s.serial_defaults.stop_bits === 'Two' ? 2 : 1;
     connectionParams.flowControl = s.serial_defaults.flow_control;
     lineEnding.value = s.ui.line_ending;
     showTimestamp.value = s.ui.show_timestamp;
@@ -121,7 +122,7 @@
         baud_rate: connectionParams.baudRate,
         data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
-        stop_bits: connectionParams.stopBits,
+        stop_bits: connectionParams.stopBits === 2 ? 'Two' : 'One',
         flow_control: connectionParams.flowControl,
       },
       ui: {
