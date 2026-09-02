@@ -1,4 +1,4 @@
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::{Arc, Mutex};
 
 /// 读端口包装器
@@ -49,17 +49,17 @@ pub enum PortWriter {
 }
 
 impl PortWriter {
-    /// 写数据。Windows 上用 overlapped I/O（不阻塞），其他平台用同步 write。
-    pub fn write_data(&self, data: &[u8]) -> std::io::Result<usize> {
+    /// 写数据。Windows 上用 overlapped I/O（不阻塞），其他平台用 serialport 同步 write。
+    /// 两条路径都可能短写（只写出一部分），由 writer::write_all 循环补写。
+    pub fn write_data(&mut self, data: &[u8]) -> std::io::Result<usize> {
         match self {
-            PortWriter::Owned(_) => {
-                // Fallback（非 Windows 或 serialport 路径）：不应走到这里
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "write_data 不支持 serialport 句柄"))
-            }
+            PortWriter::Owned(port) => port.write(data),
             #[cfg(target_os = "windows")]
             PortWriter::Win(port) => port.write_overlapped(data, port.write_timeout_ms(data.len())),
-            PortWriter::Shared(_) => {
-                Err(std::io::Error::new(std::io::ErrorKind::Other, "write_data 不支持共享句柄"))
+            PortWriter::Shared(arc) => {
+                let mut guard = arc.lock()
+                    .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("端口锁错误: {}", e)))?;
+                guard.write(data)
             }
         }
     }

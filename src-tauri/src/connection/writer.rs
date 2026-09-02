@@ -15,7 +15,7 @@ use crate::util::time_fmt::now_local_ts;
 
 /// 启动串口写入线程。从 channel 接收命令并写入端口。
 pub fn spawn_writer(
-    port: PortWriter,
+    mut port: PortWriter,
     write_rx: Receiver<WriteCommand>,
     running: Arc<AtomicBool>,
     tx_bytes: Arc<AtomicU64>,
@@ -40,7 +40,7 @@ pub fn spawn_writer(
                     // Send/SendSilent 混在一起却只按第一条决定是否回显(手动命令重复回显、
                     // 文件块不进日志)。单次 write 的短写由 write_all 补写。
                     let data_len = data.len();
-                    let (written, write_err) = write_all(&port, &data);
+                    let (written, write_err) = write_all(&mut port, &data);
                     if written > 0 {
                         let _ = tx_bytes.fetch_add(written as u64, std::sync::atomic::Ordering::SeqCst);
                         if tx_update.on_activity() {
@@ -118,7 +118,7 @@ pub fn spawn_writer(
 /// 把 data 全部写进端口。单次 write 可能短写——overlapped 超时取消前只出去了一部分,
 /// 或 serialport 的 write 只接受了一部分——循环补写余下,直到写完或出错。
 /// 返回 (已写出字节数, 首个错误)。一次进展为 0 视为失败,避免设备卡死时空转。
-fn write_all(port: &PortWriter, data: &[u8]) -> (usize, Option<std::io::Error>) {
+fn write_all(port: &mut PortWriter, data: &[u8]) -> (usize, Option<std::io::Error>) {
     let mut written = 0usize;
     while written < data.len() {
         match port.write_data(&data[written..]) {
