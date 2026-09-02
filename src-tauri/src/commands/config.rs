@@ -24,12 +24,20 @@ pub async fn save_settings(
 }
 
 /// save_settings 的同步实现(在阻塞线程池执行)。
+///
+/// 前端回传的是**整份**Settings,基于它启动时(或上次保存时)缓存的快照。后端自己改过的
+/// 字段(目前是 resolve_close 写的 ui.close_prompted)前端拿不到,若照单全收,下一次任何
+/// 前端保存(断开触发的 persistSettings、拨开关、设置页保存)都会把它冲回旧值——
+/// 用户勾了"不再提醒"下次点 × 又弹。这类"只归后端写"的字段以内存态为准,见
+/// [`Settings::merge_backend_owned`]。锁内落盘与 save_commands_impl 一致:先改内存再写盘
+/// 会在写失败时内存/磁盘不一致,先写盘再改内存又要两次取锁给 resolve_close 留竞态窗口。
 fn save_settings_impl(
     state: &AppState,
-    settings: crate::config::settings::Settings,
+    mut settings: crate::config::settings::Settings,
 ) -> Result<(), String> {
-    settings.save().map_err(|e| e.to_string())?;
     let mut s = state.settings.lock().map_err(|e| e.to_string())?;
+    settings.merge_backend_owned(&s);
+    settings.save().map_err(|e| e.to_string())?;
     *s = settings;
     Ok(())
 }

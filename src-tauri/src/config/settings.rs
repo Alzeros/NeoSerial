@@ -303,6 +303,16 @@ impl Settings {
         Self::default_settings()
     }
 
+    /// 用内存态 `current` 覆盖本份配置里"只归后端写"的字段。
+    ///
+    /// 前端/MCP 的 save_settings 回传的是整份 Settings,基于调用方手里(可能已过期)的快照;
+    /// 后端自行改过、调用方拿不到的字段若照单全收就会被冲回旧值。目前只有
+    /// `ui.close_prompted`(用户在关闭确认框勾"不再提醒"时由 resolve_close 写),
+    /// 后续再有这类字段加到这里。
+    pub fn merge_backend_owned(&mut self, current: &Settings) {
+        self.ui.close_prompted = current.ui.close_prompted;
+    }
+
     /// 保存配置。目录不存在会创建。
     pub fn save(&self) -> io::Result<()> {
         self.save_to(&Self::config_path())

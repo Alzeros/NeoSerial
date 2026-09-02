@@ -825,13 +825,14 @@ pub struct SaveSettingsResp {
 pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSettingsResp, ErrorResp> {
     let state = shared.app_handle.try_state::<crate::state::AppState>()
         .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
-    {
-        let mut s = state.settings.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-        *s = req.settings;
-    }
+    let mut settings = req.settings;
+    let mut s = state.settings.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
+    // agent 回传的是它 get_settings 时的整份快照,后端自己写的字段(ui.close_prompted)以内存态为准,
+    // 与 GUI 的 save_settings 同一规则
+    settings.merge_backend_owned(&s);
     // 落盘(用默认路径 %APPDATA%/neoserial/settings.json)
-    let s = state.settings.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-    s.save().map_err(|e| ErrorResp::new(format!("保存失败: {}", e)))?;
+    settings.save().map_err(|e| ErrorResp::new(format!("保存失败: {}", e)))?;
+    *s = settings;
     Ok(SaveSettingsResp { ok: true })
 }
 

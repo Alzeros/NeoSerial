@@ -194,6 +194,26 @@
   let closeDialogOpen = $state(false);
   let closeDontRemind = $state(false);
 
+  // 把选择告诉后端(minimize=false 时后端直接退出,await 可能永不返回,先关弹窗)。
+  // 勾了"不再提醒"时后端会改 settings 里的 close_prompted/minimize_to_tray;这里同步进
+  // cachedSettings,否则本窗口后续整份回传(persistSettings 等)带的还是旧值。
+  // 后端 save_settings 也会以内存态覆盖 close_prompted,这里是让前端快照自身保持一致。
+  async function handleResolveClose(minimize: boolean) {
+    const dontRemind = closeDontRemind;
+    closeDialogOpen = false;
+    closeDontRemind = false;
+    try {
+      await resolveClose(minimize, dontRemind);
+      const base = cachedSettings.value;
+      if (dontRemind && base) {
+        base.ui.close_prompted = true;
+        base.ui.minimize_to_tray = minimize;
+      }
+    } catch (e) {
+      console.error('处理关闭选择失败:', e);
+    }
+  }
+
   onMount(() => {
     // 主题编辑器窗口:不加载串口连接等设置,ThemeEditor 组件自行加载主题
     if (isThemeEditorWindow) return;
@@ -595,8 +615,8 @@
         </div>
         <div class="flex justify-end gap-2 px-4 pb-4">
           <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={() => { closeDialogOpen = false; closeDontRemind = false; }}>取消</button>
-          <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => { resolveClose(false, closeDontRemind); closeDialogOpen = false; }}>退出应用</button>
-          <button class="btn btn-primary" style="padding: 6px 14px;" onclick={() => { resolveClose(true, closeDontRemind); closeDialogOpen = false; }}>最小化到托盘</button>
+          <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => handleResolveClose(false)}>退出应用</button>
+          <button class="btn btn-primary" style="padding: 6px 14px;" onclick={() => handleResolveClose(true)}>最小化到托盘</button>
         </div>
       </div>
     </div>
