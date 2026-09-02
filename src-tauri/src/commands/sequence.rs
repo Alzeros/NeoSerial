@@ -1,7 +1,8 @@
 use std::collections::HashMap;
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 use tauri::{State, Emitter};
@@ -27,6 +28,11 @@ pub struct SequenceDone {
 /// 断开/stop 导致中止时 current_index 停在最后执行的位置,agent 可据此定位问题指令。
 #[derive(Clone)]
 pub struct SequenceState {
+    /// 本次 run 的代际号(全局单调递增)。线程与 [`RunningGuard`] 改写 state 前都先比对它:
+    /// stop 只是把 running 置 false,旧线程可能还在 delay/loop_interval 里睡,若此时同 port
+    /// 新 run 插入了 running=true 的新 state,旧线程醒来看到的就是新序列的 true——没有代际号
+    /// 它会继续跑自己的命令(幻影 Tx、覆盖 current_index),跑完再把新序列的 running 清掉。
+    pub run_id: u64,
     /// true = 序列正在运行
     pub running: bool,
     /// 当前/最后执行的命令索引 (0-based)
@@ -35,23 +41,95 @@ pub struct SequenceState {
     pub total: usize,
     /// true = 全部命令执行完毕(正常结束)
     pub completed: bool,
+    /// stop 唤醒信号:序列线程的行间延时/循环间隔睡在它上面,stop 一到立刻醒。
+    pub stop_signal: StopSignal,
+}
+
+impl SequenceState {
+    fn new(run_id: u64, total: usize) -> Self {
+        SequenceState {
+            run_id,
+            running: true,
+            current_index: 0,
+            total,
+            completed: false,
+            stop_signal: StopSignal::new(),
+        }
+    }
+}
+
+/// 可被 stop 打断的睡眠:Mutex<已停止> + Condvar。stop 置位并 notify,
+/// 线程的 wait_timeout 即刻返回,不用等 delay_ms/loop_interval 自然到点
+/// (循环间隔常设几秒,原先 stop 后界面要卡到那时才收到 sequence-done)。
+#[derive(Clone)]
+pub struct StopSignal(Arc<(Mutex<bool>, Condvar)>);
+
+impl StopSignal {
+    fn new() -> Self {
+        StopSignal(Arc::new((Mutex::new(false), Condvar::new())))
+    }
+
+    fn signal(&self) {
+        let (lock, cv) = &*self.0;
+        if let Ok(mut stopped) = lock.lock() {
+            *stopped = true;
+        }
+        cv.notify_all();
+    }
+
+    /// 睡 `dur`,期间被 signal 则提前返回。
+    fn sleep(&self, dur: Duration) {
+        let (lock, cv) = &*self.0;
+        let deadline = Instant::now() + dur;
+        let Ok(mut stopped) = lock.lock() else { return };
+        while !*stopped {
+            let now = Instant::now();
+            if now >= deadline {
+                break;
+            }
+            match cv.wait_timeout(stopped, deadline - now) {
+                Ok((g, _)) => stopped = g,
+                Err(_) => return,
+            }
+        }
+    }
 }
 
 static SEQUENCE_STATE: LazyLock<Mutex<HashMap<String, SequenceState>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// run_id 分配器。0 保留为"从未分配",首个 run 拿到 1。
+static SEQUENCE_RUN_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// 该 port 当前 state 是否仍是本次 run 且在运行。false = 被 stop、被断开、或被新 run 顶替。
+fn is_current_run(port: &str, run_id: u64) -> bool {
+    SEQUENCE_STATE
+        .lock()
+        .map(|g| g.get(port).map(|s| s.run_id == run_id && s.running).unwrap_or(false))
+        .unwrap_or(false)
+}
+
+/// 仅当该 port 的 state 仍属本次 run 时改写它;被新 run 顶替后旧线程不得再碰。
+fn with_current_run(port: &str, run_id: u64, f: impl FnOnce(&mut SequenceState)) {
+    if let Ok(mut g) = SEQUENCE_STATE.lock() {
+        if let Some(state) = g.get_mut(port) {
+            if state.run_id == run_id {
+                f(state);
+            }
+        }
+    }
+}
+
 /// 序列运行期清理 guard:无论线程正常结束、aborted 退出、还是 panic,
 /// Drop 都把该 port 的 running 置 false(不清除 state,供 get_sequence_status 查询)。
+/// 按 run_id 比对:state 已被新 run 顶替时不动它,否则旧线程退出会把新序列误停。
 struct RunningGuard {
     port: String,
+    run_id: u64,
 }
 impl Drop for RunningGuard {
     fn drop(&mut self) {
-        if let Ok(mut g) = SEQUENCE_STATE.lock() {
-            if let Some(state) = g.get_mut(&self.port) {
-                state.running = false;
-            }
-        }
+        with_current_run(&self.port, self.run_id, |state| state.running = false);
     }
 }
 
@@ -89,45 +167,37 @@ pub fn sequence_run_inner(
     };
     let port = port.to_string();
 
-    // 2. SEQUENCE_STATE: insert-then-check 契约。已含该 port 且 running → 拒绝;
-    //    否则 insert(覆盖旧 state),释放锁。线程内靠 running 字段判断是否被 stop。
-    {
+    // 2. SEQUENCE_STATE: check-then-insert 契约。已含该 port 且 running → 拒绝;
+    //    否则 insert 新代际的 state(覆盖旧 state),释放锁。
+    //    线程内靠 is_current_run(run_id 一致且 running)判断是否继续。
+    let run_id = SEQUENCE_RUN_SEQ.fetch_add(1, Ordering::SeqCst) + 1;
+    let stop_signal = {
         let mut states = SEQUENCE_STATE.lock().map_err(|e| e.to_string())?;
         if states.get(&port).map(|s| s.running).unwrap_or(false) {
             return Err("该端口序列已在运行".to_string());
         }
-        states.insert(port.clone(), SequenceState {
-            running: true,
-            current_index: 0,
-            total: commands.len(),
-            completed: false,
-        });
-    }
+        let state = SequenceState::new(run_id, commands.len());
+        let signal = state.stop_signal.clone();
+        states.insert(port.clone(), state);
+        signal
+    };
 
     thread::spawn(move || {
         // 3. 清理 guard:线程任意退出路径(正常/aborted/panic)都 running=false。
         //    不清除 state 条目(供 get_sequence_status 查询中止位置)。
-        let _guard = RunningGuard { port: port.clone() };
+        let _guard = RunningGuard { port: port.clone(), run_id };
 
         let mut aborted = false;
-        for _ in 0..run_count {
-            // 被 stop:running=false → 退出。
-            let still_running = SEQUENCE_STATE
-                .lock()
-                .map(|g| g.get(&port).map(|s| s.running).unwrap_or(false))
-                .unwrap_or(false);
-            if !still_running {
+        'rounds: for _ in 0..run_count {
+            // 被 stop / 断开 / 新 run 顶替 → 退出。
+            if !is_current_run(&port, run_id) {
                 aborted = true;
                 break;
             }
             for (i, cmd) in commands.iter().enumerate() {
-                let still_running = SEQUENCE_STATE
-                    .lock()
-                    .map(|g| g.get(&port).map(|s| s.running).unwrap_or(false))
-                    .unwrap_or(false);
-                if !still_running {
+                if !is_current_run(&port, run_id) {
                     aborted = true;
-                    break;
+                    break 'rounds;
                 }
                 if !cmd.enabled {
                     continue;
@@ -161,38 +231,36 @@ pub fn sequence_run_inner(
                     // 塞 channel,writer 异步写(SendSilent:不 emit,emit_tx_line 已 emit)
                     let _ = write_tx.send(WriteCommand::SendSilent(data));
                     // 发送后更新 current_index:始终反映"最后发出去的是第几条"(0-based)
-                    if let Ok(mut g) = SEQUENCE_STATE.lock() {
-                        if let Some(state) = g.get_mut(&port) {
-                            state.current_index = i;
-                        }
-                    }
+                    with_current_run(&port, run_id, |state| state.current_index = i);
                 }
 
-                // 行间延时:sequence 线程按 delay 间隔发起下一条,不受 writer 写阻塞影响
+                // 行间延时:sequence 线程按 delay 间隔发起下一条,不受 writer 写阻塞影响;
+                // stop 会打断睡眠,下一轮 is_current_run 检查即退出
                 if cmd.delay_ms > 0 {
-                    thread::sleep(Duration::from_millis(cmd.delay_ms as u64));
+                    stop_signal.sleep(Duration::from_millis(cmd.delay_ms as u64));
                 }
-            }
-            if aborted {
-                break;
             }
             if loop_interval > 0 {
-                thread::sleep(Duration::from_millis(loop_interval as u64));
+                stop_signal.sleep(Duration::from_millis(loop_interval as u64));
             }
         }
 
-        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
-        let _ = app_handle.emit_to(&wl, "sequence-done", SequenceDone { aborted });
-        // 正常完成:标记 completed=true(running 已被 guard 置 false)。
-        // 中止时 completed 保持 false,current_index 停在最后执行位置。
-        if !aborted {
-            if let Ok(mut g) = SEQUENCE_STATE.lock() {
-                if let Some(state) = g.get_mut(&port) {
-                    state.completed = true;
-                }
+        // 只有本次 run 仍是该 port 的当前 state 才发 sequence-done / 标 completed:
+        // 被新 run 顶替后再发 aborted,会把界面上正在跑的新序列误标成"已中止"。
+        let still_current = SEQUENCE_STATE
+            .lock()
+            .map(|g| g.get(&port).map(|s| s.run_id == run_id).unwrap_or(false))
+            .unwrap_or(false);
+        if still_current {
+            let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+            let _ = app_handle.emit_to(&wl, "sequence-done", SequenceDone { aborted });
+            // 正常完成:标记 completed=true(running 随后由 guard 置 false)。
+            // 中止时 completed 保持 false,current_index 停在最后执行位置。
+            if !aborted {
+                with_current_run(&port, run_id, |state| state.completed = true);
             }
         }
-        // _guard drop 在此:running=false
+        // _guard drop 在此:running=false(仅当 state 仍属本次 run)
     });
 
     Ok(())
@@ -248,6 +316,8 @@ pub fn sequence_stop_inner(
             if let Some(state) = g.get_mut(port) {
                 let was = state.running;
                 state.running = false;
+                // 唤醒睡在 delay/loop_interval 里的序列线程,让它立刻退出并发 sequence-done
+                state.stop_signal.signal();
                 was
             } else {
                 false
@@ -566,11 +636,14 @@ mod tests {
         }
     }
 
-    /// 辅助:往 SEQUENCE_STATE 插入一个 running=true 的状态
+    /// 辅助:往 SEQUENCE_STATE 插入一个 running=true 的状态(run_id=1)
     fn insert_running(port: &str, total: usize) {
-        SEQUENCE_STATE.lock().unwrap().insert(port.to_string(), SequenceState {
-            running: true, current_index: 0, total, completed: false,
-        });
+        insert_running_with_id(port, 1, total);
+    }
+
+    /// 辅助:插入指定 run_id 的 running=true 状态
+    fn insert_running_with_id(port: &str, run_id: u64, total: usize) {
+        SEQUENCE_STATE.lock().unwrap().insert(port.to_string(), SequenceState::new(run_id, total));
     }
 
     /// 同一 port 重复 run 应被拒绝(running=true → 报"该端口序列已在运行")。
@@ -662,9 +735,65 @@ mod tests {
         insert_running(&port, 10);
         assert!(SEQUENCE_STATE.lock().unwrap().get(&port).unwrap().running, "guard drop 前 running=true");
         {
-            let _guard = RunningGuard { port: port.clone() };
+            let _guard = RunningGuard { port: port.clone(), run_id: 1 };
         }
         assert!(!SEQUENCE_STATE.lock().unwrap().get(&port).unwrap().running, "guard drop 后 running=false");
+    }
+
+    /// 代际隔离:旧 run 的 guard/线程不得触碰已被新 run 顶替的 state。
+    /// 场景:stop 后旧线程还在睡,同 port 新 run 插入 run_id=2;旧线程(run_id=1)醒来
+    /// 必须视为"已不是当前 run"退出,其 guard drop 也不能把新序列的 running 清掉。
+    #[test]
+    fn test_stale_run_cannot_touch_newer_state() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset();
+
+        let port = "COM3";
+        insert_running_with_id(port, 1, 10);
+        // stop 旧 run
+        sequence_stop_state_only(port);
+        assert!(!is_current_run(port, 1), "stop 后旧 run 不再是当前 run");
+        // 新 run 顶替
+        insert_running_with_id(port, 2, 5);
+        assert!(!is_current_run(port, 1), "被新 run 顶替后旧 run 仍不是当前 run");
+        assert!(is_current_run(port, 2));
+        // 旧线程试图改 current_index / 退出清理:都应无效
+        with_current_run(port, 1, |s| s.current_index = 9);
+        {
+            let _stale = RunningGuard { port: port.to_string(), run_id: 1 };
+        }
+        let state = SEQUENCE_STATE.lock().unwrap().get(port).unwrap().clone();
+        assert!(state.running, "旧 run 的 guard drop 不应停掉新序列");
+        assert_eq!(state.current_index, 0, "旧 run 不应改写新序列的进度");
+        assert_eq!(state.run_id, 2);
+    }
+
+    /// stop 信号能打断睡眠:signal 后 sleep 立即返回,而不是等满时长。
+    #[test]
+    fn test_stop_signal_interrupts_sleep() {
+        let sig = StopSignal::new();
+        let sig2 = sig.clone();
+        let t = std::thread::spawn(move || {
+            let start = Instant::now();
+            sig2.sleep(Duration::from_secs(10));
+            start.elapsed()
+        });
+        std::thread::sleep(Duration::from_millis(50));
+        sig.signal();
+        let elapsed = t.join().unwrap();
+        assert!(elapsed < Duration::from_secs(5), "signal 后应立即醒来,实际睡了 {:?}", elapsed);
+        // 已 signal 的信号再 sleep 应直接返回
+        let start = Instant::now();
+        sig.sleep(Duration::from_secs(10));
+        assert!(start.elapsed() < Duration::from_secs(1));
+    }
+
+    /// 测试用:只操作 SEQUENCE_STATE 的 stop(sequence_stop_inner 还要校验 connections)。
+    fn sequence_stop_state_only(port: &str) {
+        if let Some(state) = SEQUENCE_STATE.lock().unwrap().get_mut(port) {
+            state.running = false;
+            state.stop_signal.signal();
+        }
     }
 
     /// get_sequence_state 返回正确进度信息。
@@ -678,9 +807,9 @@ mod tests {
         assert!(!running && !completed && idx == 0 && total == 0);
 
         // 运行中
-        SEQUENCE_STATE.lock().unwrap().insert("COM3".into(), SequenceState {
-            running: true, current_index: 3, total: 10, completed: false,
-        });
+        let mut running_state = SequenceState::new(1, 10);
+        running_state.current_index = 3;
+        SEQUENCE_STATE.lock().unwrap().insert("COM3".into(), running_state);
         let (running, completed, idx, total) = sequence_get_state("COM3");
         assert!(running && !completed && idx == 3 && total == 10);
 
