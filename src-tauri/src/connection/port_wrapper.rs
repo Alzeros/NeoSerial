@@ -17,7 +17,17 @@ impl Read for PortReader {
         match self {
             PortReader::Owned(port) => port.read(buf),
             #[cfg(target_os = "windows")]
-            PortReader::Win(port) => port.read_overlapped(buf, 20),
+            PortReader::Win(port) => {
+                // 等待上限故意大于 COMMTIMEOUTS 的 20ms 读超时:正常由驱动按 20ms 完成读
+                // (0 字节),不走 WaitForSingleObject 超时 + CancelIo 的取消路径。
+                match port.read_overlapped(buf, 100) {
+                    // 与 serialport 语义对齐:超时无数据报 TimedOut。reader 只在 TimedOut 分支
+                    // flush 不换行的残尾(shell 提示符、只以 CR 结尾的行);返回 Ok(0) 走的是
+                    // 另一分支,残尾会压到下一个换行到来才显示,send_and_read 也等不到提示符式响应。
+                    Ok(0) => Err(std::io::ErrorKind::TimedOut.into()),
+                    other => other,
+                }
+            }
             PortReader::Shared(arc) => {
                 let mut guard = arc.lock()
                     .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, format!("端口锁错误: {}", e)))?;
