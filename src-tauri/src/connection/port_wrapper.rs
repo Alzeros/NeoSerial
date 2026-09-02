@@ -47,7 +47,7 @@ impl PortWriter {
                 Err(std::io::Error::new(std::io::ErrorKind::Other, "write_data 不支持 serialport 句柄"))
             }
             #[cfg(target_os = "windows")]
-            PortWriter::Win(port) => port.write_overlapped(data, 500),
+            PortWriter::Win(port) => port.write_overlapped(data, port.write_timeout_ms(data.len())),
             PortWriter::Shared(_) => {
                 Err(std::io::Error::new(std::io::ErrorKind::Other, "write_data 不支持共享句柄"))
             }

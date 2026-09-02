@@ -35,33 +35,22 @@ pub fn spawn_writer(
                         WriteCommand::SendSilent(data) => (data, false),
                         WriteCommand::Close => break,
                     };
-                    // 合并积压命令
-                    let mut all_data = data.clone();
-                    let mut pending_close = false;
-                    loop {
-                        match write_rx.try_recv() {
-                            Ok(WriteCommand::Send(d)) => all_data.extend_from_slice(&d),
-                            Ok(WriteCommand::SendSilent(d)) => all_data.extend_from_slice(&d),
-                            Ok(WriteCommand::Close) => { pending_close = true; break; }
-                            Err(_) => break,
+                    // 一条命令一次完整写入,不合并积压命令。合并的问题:send_file 以内存速度
+                    // 塞满 64 格 channel,合并后单次 write 几十 KB,线速下要跑几秒,必撞超时;
+                    // Send/SendSilent 混在一起却只按第一条决定是否回显(手动命令重复回显、
+                    // 文件块不进日志)。单次 write 的短写由 write_all 补写。
+                    let data_len = data.len();
+                    let (written, write_err) = write_all(&port, &data);
+                    if written > 0 {
+                        let _ = tx_bytes.fetch_add(written as u64, std::sync::atomic::Ordering::SeqCst);
+                        if tx_update.on_activity() {
+                            let total = tx_bytes.load(std::sync::atomic::Ordering::SeqCst);
+                            let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+                            let _ = app_handle.emit_to(&wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
                         }
                     }
-
-                    let data_len = all_data.len();
-                    let data_for_emit = all_data.clone();
-
-                    // write_data: Windows 上用 overlapped I/O（不阻塞），其他平台同步 write
-                    match port.write_data(&all_data) {
-                        Ok(n) => {
-                            if n < data_len {
-                                log::warn!("[Writer] 部分写入: {}/{} 字节", n, data_len);
-                            }
-                            let _ = tx_bytes.fetch_add(n as u64, std::sync::atomic::Ordering::SeqCst);
-                            if tx_update.on_activity() {
-                                let total = tx_bytes.load(std::sync::atomic::Ordering::SeqCst);
-                                let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
-                                let _ = app_handle.emit_to(&wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
-                            }
+                    match write_err {
+                        None => {
                             if emit_line {
                                 let (cfg, sender) = match app_handle.try_state::<AppState>() {
                                     Some(state) => {
@@ -86,7 +75,7 @@ pub fn spawn_writer(
                                 let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
                                 if log_send {
                                     let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                                    let line = LogLine::new(now_local_ts(), Dir::Tx, data_for_emit.clone(), &[], idx);
+                                    let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[], idx);
                                     let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
                                     let _ = app_handle.emit_to(&wl, "tx-line", line.clone());
                                     rx_history.push(Dir::Tx, line.clone());
@@ -99,14 +88,15 @@ pub fn spawn_writer(
                                 }
                             }
                         }
-                        Err(e) => {
+                        Some(e) => {
+                            // 部分写出后失败也报出去:界面/日志上这条命令(SendSilent 已乐观回显)
+                            // 看起来是发了,实际对端只收到前 written 字节
                             let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
                             let _ = app_handle.emit_to(&wl, "error", crate::connection::ErrorEvent {
-                                message: format!("发送失败: {}", e),
+                                message: format!("发送失败: {} (已写出 {}/{} 字节)", e, written, data_len),
                             });
                         }
                     }
-                    if pending_close { break; }
                 }
                 Err(_) => {
                     if tx_update.take_pending() {
@@ -123,4 +113,25 @@ pub fn spawn_writer(
             let _ = app_handle.emit_to(&wl, "tx-update", crate::connection::TxUpdate { total, port: port_name.clone() });
         }
     })
+}
+
+/// 把 data 全部写进端口。单次 write 可能短写——overlapped 超时取消前只出去了一部分,
+/// 或 serialport 的 write 只接受了一部分——循环补写余下,直到写完或出错。
+/// 返回 (已写出字节数, 首个错误)。一次进展为 0 视为失败,避免设备卡死时空转。
+fn write_all(port: &PortWriter, data: &[u8]) -> (usize, Option<std::io::Error>) {
+    let mut written = 0usize;
+    while written < data.len() {
+        match port.write_data(&data[written..]) {
+            Ok(0) => {
+                return (written, Some(std::io::Error::new(
+                    std::io::ErrorKind::WriteZero,
+                    "端口未接受任何字节",
+                )));
+            }
+            Ok(n) => written += n,
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
+            Err(e) => return (written, Some(e)),
+        }
+    }
+    (written, None)
 }

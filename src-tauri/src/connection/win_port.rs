@@ -35,6 +35,8 @@ const RTS_CONTROL_HANDSHAKE: u32 = 2;
 
 pub struct WinPort {
     handle: HANDLE,
+    /// 波特率,供 [`WinPort::write_timeout_ms`] 按数据长度推算写超时。
+    baud_rate: u32,
 }
 
 /// 一次 overlapped I/O 的收尾结果,见 [`WinPort::finish_overlapped`]。
@@ -84,7 +86,7 @@ impl WinPort {
             return Err(io::Error::last_os_error());
         }
 
-        let port = WinPort { handle };
+        let port = WinPort { handle, baud_rate };
         port.configure(baud_rate, data_bits, parity, stop_bits, flow_control)?;
 
         // DTR/RTS 拉高。configure 里 DCB 已设 *_CONTROL_ENABLE,SetCommState 即生效,
@@ -136,21 +138,12 @@ impl WinPort {
         let mut dcb: DCB = unsafe { std::mem::zeroed() };
         dcb.DCBlength = std::mem::size_of::<DCB>() as u32;
 
-        // COMMTIMEOUTS: 读立即返回(非阻塞)，写 200ms 超时(overlapped 下仅作 fallback)
-        let timeouts = COMMTIMEOUTS {
-            ReadIntervalTimeout: u32::MAX,
-            ReadTotalTimeoutMultiplier: u32::MAX,
-            ReadTotalTimeoutConstant: 20,
-            WriteTotalTimeoutMultiplier: 0,
-            WriteTotalTimeoutConstant: 200,
-        };
-
+        // BuildCommDCBAndTimeouts 的 COMMTIMEOUTS 参数是 [out]:按字串里的 to= 填结构体
+        // (to=off 全填 0),并不下发到句柄。这里只当占位接收,真正的超时值在下面
+        // 用 SetCommTimeouts 显式下发。
+        let mut scratch_timeouts: COMMTIMEOUTS = unsafe { std::mem::zeroed() };
         let ok = unsafe {
-            BuildCommDCBAndTimeoutsW(
-                dcb_str_w.as_ptr(),
-                &mut dcb,
-                &timeouts as *const COMMTIMEOUTS as *mut COMMTIMEOUTS,
-            )
+            BuildCommDCBAndTimeoutsW(dcb_str_w.as_ptr(), &mut dcb, &mut scratch_timeouts)
         };
         if ok == 0 {
             return Err(io::Error::last_os_error());
@@ -179,13 +172,19 @@ impl WinPort {
             return Err(io::Error::last_os_error());
         }
 
-        // SetCommTimeouts（确保生效，EscapeCommFunction 可能重置）
+        // COMMTIMEOUTS:
+        // 读:Interval/Multiplier=MAXDWORD + Constant=20 是文档规定的特例——缓冲里有字节立即
+        //     返回,没有则最多等 20ms 等第一个字节。
+        // 写:驱动级超时全关(0)。驱动写超时到点是"成功返回 + 部分字节数",不是错误——
+        //     低波特率发大块(1KB@9600 ≈ 1.07s)必被截,截掉的部分静默丢失。
+        //     写超时只由 write_overlapped 的 WaitForSingleObject 兜底,超时值按长度/波特率算
+        //     (见 write_timeout_ms),真卡住时 CancelIo 取消。
         let timeouts = COMMTIMEOUTS {
             ReadIntervalTimeout: u32::MAX,
             ReadTotalTimeoutMultiplier: u32::MAX,
             ReadTotalTimeoutConstant: 20,
             WriteTotalTimeoutMultiplier: 0,
-            WriteTotalTimeoutConstant: 200,
+            WriteTotalTimeoutConstant: 0,
         };
         let ok = unsafe { SetCommTimeouts(self.handle, &timeouts) };
         if ok == 0 {
@@ -193,6 +192,15 @@ impl WinPort {
         }
 
         Ok(())
+    }
+
+    /// 写 `len` 字节的等待上限(ms):线速传完的时间 ×2 + 500ms 余量。
+    /// 驱动级写超时已关(见 configure),这是唯一的写超时——按长度/波特率算,
+    /// 低波特率发大块不会被误判超时截断;真卡住(设备不收、USB 缓冲满)时才触发取消。
+    /// 每字节按 10 bit(起始+8 数据+停止)估,校验位/2 停止位的差额由 ×2 覆盖。
+    pub fn write_timeout_ms(&self, len: usize) -> u32 {
+        let line_ms = (len as u64) * 10 * 1000 / u64::from(self.baud_rate.max(1));
+        (line_ms * 2 + 500).min(u64::from(u32::MAX)) as u32
     }
 
     /// Overlapped write：WriteFile 立即返回，等事件完成，超时 CancelIo。
@@ -318,7 +326,7 @@ impl WinPort {
         if ok == 0 {
             Err(io::Error::last_os_error())
         } else {
-            Ok(WinPort { handle: cloned })
+            Ok(WinPort { handle: cloned, baud_rate: self.baud_rate })
         }
     }
 }
