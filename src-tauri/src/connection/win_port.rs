@@ -4,7 +4,7 @@ use std::io;
 
 use windows_sys::Win32::Devices::Communication::{
     BuildCommDCBAndTimeoutsW, EscapeCommFunction, SetCommState, SetCommTimeouts,
-    COMMTIMEOUTS, DCB,
+    COMMTIMEOUTS, DCB, SETDTR, SETRTS,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, DuplicateHandle, FALSE, HANDLE, INVALID_HANDLE_VALUE, DUPLICATE_SAME_ACCESS,
@@ -18,6 +18,17 @@ use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, WaitForSingleObject,
 };
+
+// DCB 位域:windows-sys 把 winbase.h 里 fBinary..fAbortOnError 这组 1/2 bit 字段打包进
+// `_bitfield`,按声明序从 bit0 起——bit0 fBinary、bit2 fOutxCtsFlow、bit4-5 fDtrControl、
+// bit12-13 fRtsControl。DTR_CONTROL_*/RTS_CONTROL_* 取值:DISABLE=0、ENABLE=1、HANDSHAKE=2。
+const DCB_F_BINARY: u32 = 1 << 0;
+const DCB_F_DTR_CONTROL_SHIFT: u32 = 4;
+const DCB_F_RTS_CONTROL_SHIFT: u32 = 12;
+const DCB_F_DTR_CONTROL_MASK: u32 = 0b11 << DCB_F_DTR_CONTROL_SHIFT;
+const DCB_F_RTS_CONTROL_MASK: u32 = 0b11 << DCB_F_RTS_CONTROL_SHIFT;
+const DTR_CONTROL_ENABLE: u32 = 1;
+const RTS_CONTROL_ENABLE: u32 = 1;
 
 pub struct WinPort {
     handle: HANDLE,
@@ -63,10 +74,12 @@ impl WinPort {
         let port = WinPort { handle };
         port.configure(baud_rate, data_bits, parity, stop_bits, flow_control)?;
 
-        // DTR/RTS
+        // DTR/RTS 拉高。configure 里 DCB 已设 *_CONTROL_ENABLE,SetCommState 即生效,
+        // 这里再显式 escape 一次兜底。用命名常量而非裸数字:SETRTS=3、SETDTR=5、CLRDTR=6,
+        // 极易混——写成 6 就是刚拉高的 DTR 被立刻清掉,RTS 从未拉高。
         unsafe {
-            EscapeCommFunction(handle, 5 /* SETDTR */);
-            EscapeCommFunction(handle, 6 /* SETRTS */);
+            EscapeCommFunction(handle, SETDTR);
+            EscapeCommFunction(handle, SETRTS);
         }
 
         Ok(port)
@@ -123,6 +136,17 @@ impl WinPort {
         if ok == 0 {
             return Err(io::Error::last_os_error());
         }
+
+        // BuildCommDCB 只改字串里出现的字段:dtr=/rts= 没给,零初始化的 DCB 里
+        // fDtrControl/fRtsControl 就是 *_CONTROL_DISABLE,SetCommState 会把两根线拉低。
+        // 很多 USB CDC 设备(STM32 VCP / Arduino 原生 USB / RP2040 stdio / AT&D2 模组)
+        // 见 DTR 低就不吐数据或直接挂断——显式 ENABLE,与 serialport 路径
+        // (write_data_terminal_ready/write_request_to_send 均 true)一致。
+        // fBinary 同样显式置 1:Windows 不支持非二进制模式,SetCommState 要求它为 TRUE。
+        dcb._bitfield &= !(DCB_F_DTR_CONTROL_MASK | DCB_F_RTS_CONTROL_MASK);
+        dcb._bitfield |= DCB_F_BINARY
+            | (DTR_CONTROL_ENABLE << DCB_F_DTR_CONTROL_SHIFT)
+            | (RTS_CONTROL_ENABLE << DCB_F_RTS_CONTROL_SHIFT);
 
         // SetCommState
         let ok = unsafe { SetCommState(self.handle, &dcb) };
