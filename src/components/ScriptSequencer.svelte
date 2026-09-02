@@ -196,15 +196,28 @@
   // 启动时从默认路径加载；数据变化时防抖自动保存
   let autoSaveLoaded = $state(false);
   let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
+  // 最近一次落盘/载入内容的快照。自动保存只在当前内容与它不同时才写:
+  // 同步 reload 把磁盘内容灌进 scriptModules 后自动保存 effect 会再跑一遍,不比对就会
+  // "A reload → A 保存 → 广播 → B reload → B 保存 → 广播 → A reload …"每 800ms 一轮。
+  let lastPersistedJson: string | null = null;
 
-  async function autoLoad() {
+  // keepSelection:多窗口同步 reload 时尽量停在当前模块/页签(越界才回 0),
+  // 启动首次加载则回到 0。
+  async function autoLoad(opts: { keepSelection?: boolean } = {}) {
     try {
       const modules = await loadSequenceAuto();
       if (modules.length > 0) {
         scriptModules.length = 0;
         scriptModules.push(...modules);
-        activeScriptModule.value = 0;
-        activeScriptPage.value = 0;
+        lastPersistedJson = JSON.stringify(scriptModules);
+        if (opts.keepSelection) {
+          activeScriptModule.value = Math.min(activeScriptModule.value, scriptModules.length - 1);
+          const pages = scriptModules[activeScriptModule.value]?.pages ?? [];
+          activeScriptPage.value = Math.min(activeScriptPage.value, Math.max(0, pages.length - 1));
+        } else {
+          activeScriptModule.value = 0;
+          activeScriptPage.value = 0;
+        }
       }
     } catch (e) {
       console.error('自动加载序列配置失败:', e);
@@ -216,12 +229,23 @@
   // 防抖自动保存：数据变化 800ms 后写盘
   $effect(() => {
     // 深度追踪 scriptModules 的变化
-    JSON.stringify(scriptModules);
+    const json = JSON.stringify(scriptModules);
     if (!autoSaveLoaded) return;
-    if (autoSaveTimer) clearTimeout(autoSaveTimer);
+    if (autoSaveTimer) {
+      clearTimeout(autoSaveTimer);
+      autoSaveTimer = null;
+    }
+    // 与磁盘一致(刚 reload / 刚保存 / 改回去了):不写,也不广播
+    if (json === lastPersistedJson) return;
     autoSaveTimer = setTimeout(async () => {
+      // 先清 timer:保存期间(await 中)的新改动会由 effect 重新起一个,不会丢;
+      // 不清的话它永远非 null,下面 sequence-changed 的"有未保存改动"判断永远为真,
+      // 多窗口同步就成了死代码。
+      autoSaveTimer = null;
+      const snapshot = JSON.stringify(scriptModules);
       try {
         await saveSequenceAuto(scriptModules);
+        lastPersistedJson = snapshot;
       } catch (e) {
         console.error('自动保存序列配置失败:', e);
       }
@@ -241,7 +265,7 @@
     const unlisten = onSequenceChanged((e) => {
       if (e.source === myLabel) return; // 自己触发的跳过
       if (autoSaveTimer) return;        // 自己有未保存改动,跳过避免丢失
-      autoLoad();                        // reload 同步
+      autoLoad({ keepSelection: true }); // reload 同步,停在当前页签
     });
     return () => { unlisten.then((f) => f()); };
   });
