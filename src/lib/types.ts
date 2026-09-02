@@ -112,6 +112,10 @@ export interface Settings {
     /** 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值 */
     log_font_cjk: string;
     text_encoding: 'Ascii' | 'Utf8' | 'Gbk';
+    /** 关闭主窗口时最小化到系统托盘（保持 MCP 服务运行） */
+    minimize_to_tray: boolean;
+    /** 是否已弹过首次关闭提示（true=不再弹） */
+    close_prompted: boolean;
   };
   command_groups: CommandGroup[];
   error_keywords: string[];

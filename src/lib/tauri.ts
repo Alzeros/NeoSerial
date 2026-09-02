@@ -321,3 +321,18 @@ export function onSequenceChanged(cb: (e: SequenceChangedEvent) => void) {
 export function onMcpConnectionsChanged(cb: () => void) {
   return getCurrentWebview().listen('mcp-connections-changed', () => cb());
 }
+
+// ============ 系统托盘 ============
+
+/** close-requested 事件:用户点 × 关闭主窗口,后端读设置发现需要弹首次提示,
+ *  emit 给前端显示确认对话框（最小化到托盘 / 退出应用 + 不再提醒）。 */
+export function onCloseRequested(cb: () => void) {
+  return getCurrentWebview().listen('close-requested', () => cb());
+}
+
+/** 关闭确认弹窗的回调:告诉后端用户选择。
+ *  minimize=true 隐藏到托盘, false 退出应用。
+ *  dontRemind=true 时把选择写入设置（不再弹窗）。 */
+export async function resolveClose(minimize: boolean, dontRemind: boolean): Promise<void> {
+  await invoke('resolve_close', { minimize, dontRemind });
+}

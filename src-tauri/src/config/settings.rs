@@ -103,10 +103,20 @@ pub struct UiSettings {
     /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
     #[serde(default = "default_text_encoding")]
     pub text_encoding: TextEncoding,
+    /// 关闭主窗口时最小化到系统托盘（保持 MCP 服务运行），默认 true
+    #[serde(default = "default_minimize_to_tray")]
+    pub minimize_to_tray: bool,
+    /// 是否已弹过首次关闭提示（true=不再弹，直接按用户上次选择执行）
+    #[serde(default)]
+    pub close_prompted: bool,
 }
 
 fn default_text_encoding() -> TextEncoding {
     TextEncoding::Ascii
+}
+
+fn default_minimize_to_tray() -> bool {
+    true
 }
 
 fn default_log_font_size() -> u32 {
@@ -245,6 +255,8 @@ impl Settings {
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
+                minimize_to_tray: default_minimize_to_tray(),
+                close_prompted: false,
             },
             command_groups: vec![CommandGroup::default_group()],
             error_keywords: vec![
@@ -350,6 +362,8 @@ impl LegacySettings {
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
+                minimize_to_tray: default_minimize_to_tray(),
+                close_prompted: false,
             },
             command_groups: vec![CommandGroup {
                 name: "默认".into(),

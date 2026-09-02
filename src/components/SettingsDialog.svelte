@@ -54,6 +54,8 @@
   let editMcpAutoStart = $state(true);
   // MCP 端口编辑副本（默认 34594;被占自动递增。改后需重新 claude mcp add）
   let editMcpPort = $state(34594);
+  // 最小化到托盘编辑副本（从 cachedSettings 拷贝）
+  let editMinimizeToTray = $state(true);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -75,6 +77,7 @@
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
+    editMinimizeToTray = cachedSettings.value?.ui?.minimize_to_tray ?? true;
     mcpCopied = false;
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
@@ -175,7 +178,7 @@
     if (base) {
       const next: Settings = {
         ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii' },
+        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', minimize_to_tray: editMinimizeToTray },
         presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
         mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
       };
@@ -422,6 +425,21 @@
               <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.484 OK</div>
               <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.545 AT+CSQ</div>
               <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.612 模块就绪</div>
+            </div>
+
+            <!-- 分隔：窗口行为 -->
+            <div class="my-5 border-t border-[var(--border)]"></div>
+
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">窗口行为</div>
+            <div class="flex items-center gap-3">
+              <label class="switch">
+                <input type="checkbox" bind:checked={editMinimizeToTray} />
+                <span class="switch-track"></span>
+                <span class="switch-label">关闭时最小化到托盘</span>
+              </label>
+            </div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mt-1">
+              关闭主窗口时隐藏到系统托盘，MCP 服务和串口连接保持运行。
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->

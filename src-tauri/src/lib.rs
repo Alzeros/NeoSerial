@@ -7,7 +7,9 @@ mod mcp;
 mod state;
 mod util;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
+use tauri::menu::{Menu, MenuItem};
+use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
@@ -112,6 +114,51 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     registry
 }
 
+/// 断开所有连接 + 注销 registry + 退出应用。
+/// 被 CloseRequested（设置关闭=直接退出路径）、resolve_close（用户选退出）、
+/// 托盘"退出"菜单共用。
+fn cleanup_and_exit(state: &AppState, app_handle: &tauri::AppHandle) {
+    let ports: Vec<String> = {
+        let conns = state.connections.lock().map(|c| {
+            c.keys().cloned().collect::<Vec<_>>()
+        }).unwrap_or_default();
+        conns
+    };
+    for p in &ports {
+        let _ = crate::commands::connection::disconnect_port(state, app_handle, p);
+    }
+    if let Some(reg) = &state.registry {
+        let _ = reg.unregister();
+    }
+    app_handle.exit(0);
+}
+
+/// 前端关闭确认弹窗的回调：用户选了"最小化到托盘"或"退出应用"。
+/// dont_remind=true 时把选择写入设置（close_prompted=true），下次不再弹窗。
+#[tauri::command]
+fn resolve_close(
+    minimize: bool,
+    dont_remind: bool,
+    state: tauri::State<'_, AppState>,
+    app_handle: tauri::AppHandle,
+) -> std::result::Result<(), String> {
+    if dont_remind {
+        if let Ok(mut s) = state.settings.lock() {
+            s.ui.close_prompted = true;
+            s.ui.minimize_to_tray = minimize;
+            let _ = s.save();
+        }
+    }
+    if minimize {
+        if let Some(window) = app_handle.get_webview_window("main") {
+            let _ = window.hide();
+        }
+    } else {
+        cleanup_and_exit(&state, &app_handle);
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -134,6 +181,41 @@ pub fn run() {
             };
             state.registry = registry;
             app.manage(state);
+            // 系统托盘：左键点击显示主窗口，右键菜单"显示窗口"/"退出"
+            let show_item = MenuItem::with_id(app, "tray-show", "显示窗口", true, None::<&str>)?;
+            let quit_item = MenuItem::with_id(app, "tray-quit", "退出", true, None::<&str>)?;
+            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
+            TrayIconBuilder::with_id("main-tray")
+                .icon(app.default_window_icon().unwrap().clone())
+                .menu(&tray_menu)
+                .tooltip("NeoSerial")
+                .on_menu_event(|app, event| {
+                    match event.id().as_ref() {
+                        "tray-show" => {
+                            if let Some(window) = app.get_webview_window("main") {
+                                let _ = window.show();
+                                let _ = window.set_focus();
+                            }
+                        }
+                        "tray-quit" => {
+                            if let Some(state) = app.try_state::<AppState>() {
+                                cleanup_and_exit(&state, app);
+                            }
+                        }
+                        _ => {}
+                    }
+                })
+                .on_tray_icon_event(|tray, event| {
+                    // 左键点击：显示主窗口（只显示，不切换隐藏）
+                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
+                        let app = tray.app_handle();
+                        if let Some(window) = app.get_webview_window("main") {
+                            let _ = window.show();
+                            let _ = window.set_focus();
+                        }
+                    }
+                })
+                .build(app)?;
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
             Ok(())
@@ -163,29 +245,30 @@ pub fn run() {
                         }
                     }
                 }
-                // 窗口关闭生命周期:main 关→断所有连接+注销 registry+退 app;
-                // 副窗口(win-*)关→回退本窗口接管的连接(改回 mcp label,不断开)后放行。
+                // 窗口关闭生命周期:
+                // main 关 → 按 minimize_to_tray 设置决定隐藏到托盘还是退出;
+                // 副窗口(win-*)关 → 回退本窗口接管的连接(改回 mcp label,不断开)后放行。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let label = window.label().to_string();
                     let app_handle = window.app_handle();
                     if let Some(state) = app_handle.try_state::<AppState>() {
                         if label == "main" {
-                            // main 窗口:拦截关闭,遍历断所有连接 + 注销 registry,再 app.exit(0)。
-                            // 退 app 会触发各窗口关闭,这里 prevent 避免重复,由 exit 统一收尾。
                             api.prevent_close();
-                            let ports: Vec<String> = {
-                                let conns = state.connections.lock().map(|c| {
-                                    c.keys().cloned().collect::<Vec<_>>()
-                                }).unwrap_or_default();
-                                conns
-                            };
-                            for p in &ports {
-                                let _ = crate::commands::connection::disconnect_port(&state, &app_handle, p);
+                            let (minimize_to_tray, close_prompted) = state.settings.lock()
+                                .map(|s| (s.ui.minimize_to_tray, s.ui.close_prompted))
+                                .unwrap_or((true, false));
+                            if !minimize_to_tray {
+                                // 设置关闭=直接退出
+                                cleanup_and_exit(&state, &app_handle);
+                            } else if close_prompted {
+                                // 已弹过提示=直接隐藏到托盘
+                                if let Some(window) = app_handle.get_webview_window("main") {
+                                    let _ = window.hide();
+                                }
+                            } else {
+                                // 首次：emit 给前端弹确认对话框
+                                let _ = app_handle.emit_to("main", "close-requested", ());
                             }
-                            if let Some(reg) = &state.registry {
-                                let _ = reg.unregister();
-                            }
-                            app_handle.exit(0);
                         } else {
                             // 副窗口(win-{自增}):回退本窗口接管的连接(改回 mcp label,
                             // 连接不断),让 + 号红点恢复。未接管任何连接时为空操作。
@@ -210,6 +293,7 @@ pub fn run() {
             has_active_sessions,
             get_mcp_only_connections,
             take_pending_takeover,
+            resolve_close,
             send,
             send_file,
             get_settings,
