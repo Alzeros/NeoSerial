@@ -84,7 +84,7 @@
     if (section === 'about' && !version.value) {
       getVersion()
         .then((v) => (version.value = v))
-        .catch(() => (version.value = '0.2.8'));
+        .catch(() => (version.value = '0.3.0'));
     }
   }
 
