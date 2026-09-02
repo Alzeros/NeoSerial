@@ -115,7 +115,7 @@ impl WinPort {
         let software_flow = flow == "software";
         let hardware_flow = flow == "hardware";
 
-        // BuildCommDCBAndTimeoutsW 一次性设 DCB + COMMTIMEOUTS。
+        // BuildCommDCBAndTimeoutsW 按 mode 字串填 DCB(超时另由下面的 SetCommTimeouts 下发)。
         // mode 字串的 xon= 只认 on|off(XON/XOFF 软件流控);硬件流控不能写在这里
         // (xon=hard 之类非法值会让 BuildCommDCB 直接失败,选硬件流控就连不上),
         // 而是下面直接设 DCB 位。

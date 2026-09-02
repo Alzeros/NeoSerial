@@ -92,13 +92,13 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ### 线程模型
 
 - **读线程**: overlapped read（20ms 超时）→ `LineAssembler` 按 `\r\n` / `\n` / `\r` 切行 → 构造 `LogLine` → 批量 `emit_to`（攒够 16 行或超过 5ms）+ push per-conn `RxHistory`。超时时 flush 不换行的残尾。
-- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，合并积压命令后 `write_data`（overlapped write 500ms 超时，不阻塞）+ `emit_to` tx-line/tx-update。手动/文件发送用 `Send`；脚本序列用 `SendSilent`（序列线程自行 emit，避免被写阻塞拖慢节奏）。
+- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，逐条 `write_all`（overlapped write，等待上限按 长度/波特率 推算，短写循环补写，不合并积压命令）+ `emit_to` tx-line/tx-update。文件发送用 `Send`；手动发送/脚本序列/MCP 用 `SendSilent`（发起方已乐观回显，避免被写阻塞拖慢节奏）。
 - **存盘线程**: `FileLogger` 独立线程 + `BufWriter`，全局单份（多连接收发进同一文件）。
 - **监控线程**: 等待读/写线程都退出后清理状态并通知归属窗口断开。
 
 ### 连接模式
 
-`WinPort::open()`（`CreateFileW` + `FILE_FLAG_OVERLAPPED`）+ `DuplicateHandle` 克隆 → overlapped I/O 模式（读/写各持独立句柄，`WriteFile` 立即返回不阻塞，超时 `CancelIo`）。绕过 serialport 的同步 `WriteFile`，解决 USB 驱动缓冲满时阻塞数秒的问题。
+`WinPort::open()`（`CreateFileW` + `FILE_FLAG_OVERLAPPED`）+ `DuplicateHandle` 克隆 → overlapped I/O 模式（读/写各持独立句柄，`WriteFile` 立即返回不阻塞，超时 `CancelIo` 后以 `GetOverlappedResult(bWait=TRUE)` 等 I/O 真正完成再释放缓冲）。DCB 显式设 `fBinary` + DTR/RTS `*_CONTROL_ENABLE`（硬件流控为 `fOutxCtsFlow` + `RTS_CONTROL_HANDSHAKE`），驱动级写超时关闭、读超时 20ms。绕过 serialport 的同步 `WriteFile`，解决 USB 驱动缓冲满时阻塞数秒的问题。
 
 ### per-connection 收发历史隔离
 
