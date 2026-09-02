@@ -1,6 +1,6 @@
 # NeoSerial
 
-面向通信模组嵌入式开发的串口调试工具。Tauri 2 + Svelte 5 + Rust + serialport。
+面向嵌入式开发的串口调试工具。Tauri 2 + Svelte 5 + Rust + windows-sys 原生 overlapped I/O。
 
 **单 exe 多窗口** + **内嵌 MCP server**（Claude Code 等 AI agent 经由它操作串口）+ **自动更新**。
 
@@ -15,7 +15,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 ## 技术栈
 
 - **前端**: Svelte 5（$state 响应式）+ TypeScript + Tailwind CSS + Vite + lucide-svelte（图标）
-- **后端**: Rust + Tauri 2 + serialport 4.9 + crossbeam-channel + rmcp 3.1（MCP streamable HTTP）
+- **后端**: Rust + Tauri 2 + windows-sys（原生 overlapped I/O，绕过 serialport 同步 WriteFile 阻塞）+ crossbeam-channel + rmcp 3.1（MCP streamable HTTP）
 - **插件**: tauri-plugin-dialog / fs / shell / updater / process
 - **通信**: Tauri IPC（invoke + 定向 emit_to）+ MCP HTTP
 
@@ -82,7 +82,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ### 数据通路
 
 ```
-设备 → serialport read → LineAssembler(跨 read 拼行)
+设备 → WinPort overlapped read → LineAssembler(跨 read 拼行)
      → LogLine(预存 raw/ascii/hex) → emit_to(window_label, "rx-line") → 该窗口 logLines[]
                                   → 喂 per-conn RxHistory(供 MCP 阻塞读/历史查询)
                                   → FileLogger channel → 存盘线程写文件
@@ -90,15 +90,14 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 
 ### 线程模型
 
-- **读线程**: 阻塞 read（50ms 超时）→ `LineAssembler` 按 `\r\n` / `\n` / `\r` 切行 → 构造 `LogLine` → 批量 `emit_to`（攒够 16 行或超过 5ms）+ push per-conn `RxHistory`。超时时 flush 不换行的残尾。
-- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，`write_all` + `emit_to` tx-line/tx-update。手动/文件发送用 `Send`；脚本序列用 `SendSilent`（序列线程自行 emit，避免被写阻塞拖慢节奏）。
+- **读线程**: overlapped read（20ms 超时）→ `LineAssembler` 按 `\r\n` / `\n` / `\r` 切行 → 构造 `LogLine` → 批量 `emit_to`（攒够 16 行或超过 5ms）+ push per-conn `RxHistory`。超时时 flush 不换行的残尾。
+- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，合并积压命令后 `write_data`（overlapped write 500ms 超时，不阻塞）+ `emit_to` tx-line/tx-update。手动/文件发送用 `Send`；脚本序列用 `SendSilent`（序列线程自行 emit，避免被写阻塞拖慢节奏）。
 - **存盘线程**: `FileLogger` 独立线程 + `BufWriter`，全局单份（多连接收发进同一文件）。
 - **监控线程**: 等待读/写线程都退出后清理状态并通知归属窗口断开。
 
-### 连接模式自动降级
+### 连接模式
 
-1. 首选 `port.try_clone()` → 独立句柄模式（读/写各持有一个端口，无锁，性能最优）
-2. 克隆失败 → `Arc<Mutex<>>` 共享端口模式（降级，前端弹提示）
+`WinPort::open()`（`CreateFileW` + `FILE_FLAG_OVERLAPPED`）+ `DuplicateHandle` 克隆 → overlapped I/O 模式（读/写各持独立句柄，`WriteFile` 立即返回不阻塞，超时 `CancelIo`）。绕过 serialport 的同步 `WriteFile`，解决 USB 驱动缓冲满时阻塞数秒的问题。
 
 ### per-connection 收发历史隔离
 
@@ -108,7 +107,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 
 ### 连接建立不阻塞其它端口
 
-`serialport::open()` + DTR/RTS 拉高是阻塞驱动调用（Windows 实测可卡数秒）。connect 只在持 `connections` 锁期间做检查并往 `connecting` 集合插入占位（`ConnectingGuard`，RAII 保证任何失败路径都清位），阻塞的打开放到锁外，完成后重取锁 insert。占位守住 TOCTOU（并发第二个 connect 被挡回而非二次 spawn），同时打开某端口期间其它已连端口的 send/disconnect/get_status 不受影响。MCP 侧的 `connect` 另经 `spawn_blocking` 执行，避免占死 tokio worker 拖住整个 MCP server。
+`WinPort::open()` + DTR/RTS 拉高是阻塞驱动调用（实测可卡数秒）。connect 只在持 `connections` 锁期间做检查并往 `connecting` 集合插入占位（`ConnectingGuard`，RAII 保证任何失败路径都清位），阻塞的打开放到锁外，完成后重取锁 insert。占位守住 TOCTOU（并发第二个 connect 被挡回而非二次 spawn），同时打开某端口期间其它已连端口的 send/disconnect/get_status 不受影响。MCP 侧的 `connect` 另经 `spawn_blocking` 执行，避免占死 tokio worker 拖住整个 MCP server。
 
 ### 前端
 
@@ -165,8 +164,10 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 
 ### 主题与外观
 
-- 4 套预设主题，点击即时预览
+- 4 套预设主题 + 自定义主题编辑器（主窗口实时预览、颜色分类编辑、悬停高亮定位）
 - 自定义标题栏（新窗口、置顶、脚本折叠、设置、关于）
+- 自定义右键菜单（输入框/日志区/脚本行分层处理，全局禁用浏览器原生菜单）
+- 自定义下拉框（圆角列表、键盘导航、边界检测，波特率下拉内置"添加…"入口）
 - 窗口最小尺寸硬约束
 
 ### 自动更新
@@ -183,7 +184,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（111 passed）
+cargo test           # Rust 单元测试（135 passed）
 npm run check        # Svelte/TypeScript 类型检查
 ```
 
