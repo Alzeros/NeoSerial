@@ -8,7 +8,7 @@ mod state;
 mod tray;
 mod util;
 
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
@@ -139,6 +139,37 @@ fn exit_app(state: tauri::State<'_, AppState>, app_handle: tauri::AppHandle) {
     cleanup_and_exit(&state, &app_handle);
 }
 
+/// 轻量模式下关最后一个窗口撞上 agent 连接时,前端确认框的回调(取消不调这里)。
+/// - exit:仍然退出,断开全部、停 MCP。
+/// - background:开启后台运行(落盘、托盘出现、广播 settings-changed),再关一次窗口——
+///   这回 CloseRequested 按后台规则放行,连接留给 agent,应用留在托盘。
+///
+/// async:window.close() 会触发 CloseRequested 回调,在主线程的同步 command 里直接调
+/// 等于在 IPC 处理中重入窗口事件处理器;放到 async 线程经事件循环派发最稳。
+#[tauri::command]
+async fn resolve_last_close(
+    action: String,
+    webview_window: tauri::WebviewWindow,
+    app_handle: tauri::AppHandle,
+) -> std::result::Result<(), String> {
+    let state = app_handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+    match action.as_str() {
+        "exit" => cleanup_and_exit(&state, &app_handle),
+        "background" => {
+            {
+                let mut s = state.settings.lock().map_err(|e| e.to_string())?;
+                s.ui.background_mode = true;
+                s.save().map_err(|e| e.to_string())?;
+            }
+            tray::sync_visibility(&app_handle);
+            let _ = app_handle.emit("settings-changed", ());
+            webview_window.close().map_err(|e| e.to_string())?;
+        }
+        other => return Err(format!("未知的关闭选择: {}", other)),
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -201,8 +232,10 @@ pub fn run() {
                 // 窗口关闭生命周期:所有串口窗口(main / win-*)一个规则,由 tray::close_plan 决定——
                 // 后台模式:连接一律留在后台,窗口放行销毁;关的是最后一个窗口则应用留在托盘
                 //   (Tauri 随后发 ExitRequested(code=None),run 回调里拦下),并首次提示一次。
-                // 轻量模式:该窗口自己连的断开、agent 的交还;关的是最后一个窗口则退出应用。
-                // 关非最后一个窗口不会伤到别的窗口或 agent,所以不需要任何确认框。
+                // 轻量模式:该窗口自己连的断开、agent 的交还;关的是最后一个窗口则退出应用——
+                //   但若 agent 建的连接还活着,退出会掐断它,先拦下让前端弹确认(见 close-guard),
+                //   用户经 resolve_last_close 选退出 / 开后台运行 / 取消。
+                // 关非最后一个窗口不会伤到别的窗口或 agent,不弹任何确认。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let label = window.label().to_string();
                     if !tray::is_serial_window_label(&label) {
@@ -215,7 +248,17 @@ pub fn run() {
                         .keys()
                         .filter(|l| l.as_str() != label && tray::is_serial_window_label(l))
                         .count();
-                    let plan = tray::close_plan(tray::background_mode(&app_handle), others == 0);
+                    let agent_ports = crate::commands::connection::agent_connected_ports(&state);
+                    let plan = tray::close_plan(
+                        tray::background_mode(&app_handle),
+                        others == 0,
+                        !agent_ports.is_empty(),
+                    );
+                    if plan.confirm_exit {
+                        api.prevent_close();
+                        let _ = app_handle.emit_to(&label, "close-guard", tray::CloseGuard { ports: agent_ports });
+                        return;
+                    }
                     crate::commands::connection::release_window_connections(
                         &state, &app_handle, &label, plan.connections,
                     );
@@ -246,6 +289,7 @@ pub fn run() {
             get_mcp_only_connections,
             take_pending_takeover,
             exit_app,
+            resolve_last_close,
             send,
             send_file,
             get_settings,

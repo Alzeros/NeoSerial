@@ -327,8 +327,22 @@ export function onSettingsChanged(cb: () => void) {
 
 // ============ 系统托盘 ============
 
-/** 真正退出应用(断开所有连接、停 MCP、注销 registry)。主窗口 × 只是收进托盘,
- *  这是应用内唯一的退出入口(设置页按钮),与托盘菜单"退出"同一后端路径。 */
+/** 真正退出应用(断开所有连接、停 MCP、注销 registry)。设置页"退出 NeoSerial"按钮用,
+ *  与托盘菜单"退出"同一后端路径。 */
 export async function exitApp(): Promise<void> {
   await invoke('exit_app');
+}
+
+/** close-guard:轻量模式下关最后一个窗口时 agent 建的连接还活着——退出会掐断它,
+ *  后端拦下关窗、把这些端口发给本窗口弹确认。选择经 resolveLastClose 回传(取消则什么都不调)。 */
+export interface CloseGuard {
+  ports: string[];
+}
+export function onCloseGuard(cb: (guard: CloseGuard) => void) {
+  return getCurrentWebview().listen<CloseGuard>('close-guard', (e) => cb(e.payload));
+}
+
+/** close-guard 确认框的选择:exit=仍然退出;background=开启后台运行并收起(连接留给 agent)。 */
+export async function resolveLastClose(action: 'exit' | 'background'): Promise<void> {
+  await invoke('resolve_last_close', { action });
 }

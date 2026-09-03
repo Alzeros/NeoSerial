@@ -364,6 +364,22 @@ pub fn get_mcp_only_connections(state: State<'_, AppState>) -> Result<Vec<McpOnl
     Ok(list)
 }
 
+/// 退出应用会掐断的 agent 连接:agent 经 MCP 建立(mcp_origin)且仍存活,不论有没有窗口挂着。
+/// 轻量模式关最后一个窗口前用它判断要不要先确认;返回按 COM 号自然排序,直接进提示文案。
+pub fn agent_connected_ports(state: &AppState) -> Vec<String> {
+    state.connections.lock().map(|c| agent_connected_ports_in(&c)).unwrap_or_default()
+}
+
+fn agent_connected_ports_in(conns: &HashMap<String, ConnectionHandle>) -> Vec<String> {
+    let mut ports: Vec<String> = conns
+        .values()
+        .filter(|h| h.mcp_origin.load(AtomicOrdering::SeqCst) && !is_zombie(h))
+        .map(|h| h.port.clone())
+        .collect();
+    crate::tray::sort_ports_natural(&mut ports);
+    ports
+}
+
 /// 本窗口挂上一个已有连接(agent 建的 / 后台留下的)后拉历史回填日志区:
 /// 该连接 rx_history 里的全部行(tx+rx,按序)。新建的连接历史为空,调用无害。
 /// 前端按 line_index 与已到达的实时行去重,见 App.svelte。
@@ -562,6 +578,26 @@ mod tests {
         let mut h = mock_handle(port);
         h.running.store(false, std::sync::atomic::Ordering::SeqCst);
         h
+    }
+
+    /// 退出会掐断的 agent 连接 = agent 建的(mcp_origin)且仍存活;GUI 自建的和僵尸不算;
+    /// 有没有窗口挂着都算(退出时一律断开);按 COM 号自然排序供提示文案用。
+    #[test]
+    fn test_agent_connected_ports_in_filters_origin_and_liveness() {
+        let mut conns = HashMap::new();
+        conns.insert("COM3".to_string(), mock_handle("COM3"));
+        let mut a13 = mock_handle("COM13");
+        a13.mcp_origin.store(true, std::sync::atomic::Ordering::SeqCst);
+        conns.insert("COM13".to_string(), a13);
+        let mut a5 = mock_handle("COM5");
+        a5.mcp_origin.store(true, std::sync::atomic::Ordering::SeqCst);
+        *a5.window_label.write().unwrap() = crate::connection::detached_label("COM5");
+        conns.insert("COM5".to_string(), a5);
+        let mut dead = mock_zombie_handle("COM9");
+        dead.mcp_origin.store(true, std::sync::atomic::Ordering::SeqCst);
+        conns.insert("COM9".to_string(), dead);
+
+        assert_eq!(agent_connected_ports_in(&conns), vec!["COM5".to_string(), "COM13".to_string()]);
     }
 
     #[test]

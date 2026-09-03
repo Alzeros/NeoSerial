@@ -36,9 +36,20 @@ pub fn sync_visibility(app: &AppHandle) {
             let _ = tray.set_visible(true);
             refresh(app);
         }
-    } else if let Some(tray) = app.tray_by_id(TRAY_ID) {
-        let _ = tray.set_visible(false);
+    } else {
+        if let Some(tray) = app.tray_by_id(TRAY_ID) {
+            let _ = tray.set_visible(false);
+        }
+        // 应用正收在托盘里(零窗口)时被 agent 经 save_settings 关掉后台运行:托盘一撤,
+        // 进程就成了既没窗口也没图标的隐身状态,用户只能去任务管理器找。补开一个窗口。
+        if !has_serial_window(app) {
+            open_blank_window(app);
+        }
     }
+}
+
+fn has_serial_window(app: &AppHandle) -> bool {
+    app.webview_windows().keys().any(|l| is_serial_window_label(l))
 }
 
 pub fn background_mode(app: &AppHandle) -> bool {
@@ -293,29 +304,46 @@ pub struct ClosePlan {
     pub exit_app: bool,
     /// 后台模式下关掉最后一个窗口 → 该发"仍在后台运行"提示(是否真发还看 tray_hint_shown)。
     pub tray_hint: bool,
+    /// 轻量模式关最后一个窗口、但 agent 建的连接还活着:退出会掐断 agent,先拦下关窗
+    /// 让前端弹确认(取消 / 开启后台运行并收起 / 仍然退出),本次不退出也不动连接。
+    pub confirm_exit: bool,
 }
 
-pub fn close_plan(background_mode: bool, is_last_window: bool) -> ClosePlan {
+pub fn close_plan(background_mode: bool, is_last_window: bool, has_agent_connections: bool) -> ClosePlan {
     if background_mode {
         ClosePlan {
             connections: ConnPolicy::DetachAll,
             exit_app: false,
             tray_hint: is_last_window,
+            confirm_exit: false,
         }
     } else {
+        let would_exit = is_last_window;
+        let confirm_exit = would_exit && has_agent_connections;
         ClosePlan {
             connections: ConnPolicy::ReleaseGuiKeepAgent,
-            exit_app: is_last_window,
+            exit_app: would_exit && !confirm_exit,
             tray_hint: false,
+            confirm_exit,
         }
     }
 }
 
 /// 端口名按"字母前缀 + 末尾数字"排序:COM5 < COM7 < COM13,而非字典序的 COM13 < COM5。
+pub fn sort_ports_natural(ports: &mut Vec<String>) {
+    ports.sort_by_key(|p| port_sort_key(p));
+}
+
+/// 轻量模式关最后一个窗口撞上 agent 连接时发给该窗口的确认事件 payload。
+#[derive(Clone, serde::Serialize)]
+pub struct CloseGuard {
+    pub ports: Vec<String>,
+}
+
 fn join_ports(ports: &[String], sep: &str) -> String {
-    let mut sorted: Vec<&String> = ports.iter().collect();
-    sorted.sort_by_key(|p| port_sort_key(p));
-    sorted.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(sep)
+    let mut sorted = ports.to_vec();
+    sort_ports_natural(&mut sorted);
+    sorted.join(sep)
 }
 
 fn port_sort_key(port: &str) -> (String, u32) {
@@ -397,28 +425,57 @@ mod tests {
 
     // ============ 关窗口策略 ============
 
-    /// 后台模式:任何窗口关闭连接都留在后台;关最后一个窗口应用不退,且该提示一次。
+    /// 后台模式:任何窗口关闭连接都留在后台;关最后一个窗口应用不退,且该提示一次;
+    /// 有没有 agent 连接都不问——退出不在这条路上。
     #[test]
     fn close_plan_background_mode_detaches_and_never_exits() {
-        let not_last = close_plan(true, false);
+        let not_last = close_plan(true, false, true);
         assert_eq!(not_last.connections, ConnPolicy::DetachAll);
         assert!(!not_last.exit_app);
         assert!(!not_last.tray_hint);
-        let last = close_plan(true, true);
+        assert!(!not_last.confirm_exit);
+        let last = close_plan(true, true, true);
         assert_eq!(last.connections, ConnPolicy::DetachAll);
         assert!(!last.exit_app);
         assert!(last.tray_hint);
+        assert!(!last.confirm_exit);
     }
 
     /// 轻量模式:窗口自己连的断开、agent 的交还;关最后一个窗口退出应用,没有托盘提示。
     #[test]
     fn close_plan_classic_mode_releases_and_exits_on_last_window() {
-        let not_last = close_plan(false, false);
+        let not_last = close_plan(false, false, false);
         assert_eq!(not_last.connections, ConnPolicy::ReleaseGuiKeepAgent);
         assert!(!not_last.exit_app);
         assert!(!not_last.tray_hint);
-        let last = close_plan(false, true);
+        assert!(!not_last.confirm_exit);
+        let last = close_plan(false, true, false);
         assert!(last.exit_app);
         assert!(!last.tray_hint);
+        assert!(!last.confirm_exit);
+    }
+
+    /// 轻量模式关最后一个窗口时 agent 还连着:退出会掐断它,先问用户——不退出、不动连接。
+    #[test]
+    fn close_plan_classic_last_window_with_agent_asks_first() {
+        let plan = close_plan(false, true, true);
+        assert!(plan.confirm_exit);
+        assert!(!plan.exit_app);
+    }
+
+    /// 关的不是最后一个窗口,agent 连接只是交还给 agent,无需确认。
+    #[test]
+    fn close_plan_classic_non_last_window_with_agent_does_not_ask() {
+        let plan = close_plan(false, false, true);
+        assert!(!plan.confirm_exit);
+        assert_eq!(plan.connections, ConnPolicy::ReleaseGuiKeepAgent);
+        assert!(!plan.exit_app);
+    }
+
+    #[test]
+    fn sort_ports_natural_orders_by_number() {
+        let mut p = ports(&["COM13", "COM5", "COM7"]);
+        sort_ports_natural(&mut p);
+        assert_eq!(p, ports(&["COM5", "COM7", "COM13"]));
     }
 }

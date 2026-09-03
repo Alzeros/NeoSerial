@@ -59,6 +59,8 @@
     onSequenceDone,
     onSequenceProgress,
     onSettingsChanged,
+    onCloseGuard,
+    resolveLastClose,
     onTxLine,
     onTxUpdate,
     onThemeChanged,
@@ -226,6 +228,18 @@
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
 
+  // 轻量模式下关最后一个窗口、agent 建的连接还活着:退出会掐断 agent,后端拦下关窗
+  // 发 close-guard 过来,这里弹确认。三选一:取消 / 开启后台运行并收起 / 仍然退出。
+  let closeGuard = $state<{ open: boolean; ports: string[] }>({ open: false, ports: [] });
+  async function handleCloseGuard(action: 'exit' | 'background') {
+    closeGuard.open = false;
+    try {
+      await resolveLastClose(action);
+    } catch (e) {
+      console.error('处理关闭确认失败:', e);
+    }
+  }
+
   onMount(() => {
     // 主题编辑器窗口:不加载串口连接等设置,ThemeEditor 组件自行加载主题
     if (isThemeEditorWindow) return;
@@ -372,6 +386,10 @@
     // 任一窗口/agent 保存了设置 → 刷新本窗口的快照。只换 cachedSettings 和两个带"即时回写
     // effect"的开关(log_send / show_line_index,不同步它们 effect 会把本窗口旧值写回去,
     // 两个窗口来回覆盖);其余镜像到 store 的显示项仍由本窗口自己的状态决定。
+    const unlistenGuard = onCloseGuard((g) => {
+      closeGuard = { open: true, ports: g.ports };
+    });
+
     const unlistenSettings = onSettingsChanged(() => {
       getSettings()
         .then((s) => {
@@ -383,6 +401,7 @@
     });
 
     return () => {
+      unlistenGuard.then((f) => f());
       unlistenSettings.then((f) => f());
       unlistenRxLine.then((f) => f());
       unlistenTxLine.then((f) => f());
@@ -611,6 +630,43 @@
         class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] text-[var(--foreground)] transition-colors cursor-pointer"
         onclick={inputSelectAll}
       >全选</button>
+    </div>
+  {/if}
+
+  <!-- 关闭确认:仅轻量模式关最后一个窗口且 agent 还连着时出现(后端 close-guard 触发) -->
+  {#if closeGuard.open}
+    <div
+      class="fixed inset-0 z-[100] flex items-center justify-center"
+      style="background: rgba(0,0,0,0.35);"
+      onclick={() => (closeGuard.open = false)}
+      onkeydown={(e) => { if (e.key === 'Escape') closeGuard.open = false; }}
+      role="presentation"
+    >
+      <div
+        class="rounded-lg shadow-xl w-[400px] border"
+        style="background: var(--background-elevated); border-color: var(--border);"
+        onclick={(e) => e.stopPropagation()}
+        onkeydown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="close-guard-title"
+        tabindex="-1"
+      >
+        <div class="px-6 py-5">
+          <div id="close-guard-title" class="text-[14px] font-medium text-[var(--foreground)] mb-2">
+            agent 正在使用 {closeGuard.ports.join('、')}
+          </div>
+          <div class="text-[13px] text-[var(--muted-foreground)] leading-relaxed">
+            这是最后一个窗口。退出会断开 agent 的连接并停止 MCP 服务；<br />
+            开启"后台运行"则关窗后连接和 MCP 继续运行，应用留在系统托盘。
+          </div>
+        </div>
+        <div class="flex justify-end gap-2 px-4 pb-4">
+          <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={() => (closeGuard.open = false)}>取消</button>
+          <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => handleCloseGuard('exit')}>仍然退出</button>
+          <button class="btn btn-primary" style="padding: 6px 14px;" onclick={() => handleCloseGuard('background')}>开启后台运行并收起</button>
+        </div>
+      </div>
     </div>
   {/if}
 </div>
