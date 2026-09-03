@@ -44,15 +44,25 @@ pub fn list_ports(_shared: &McpShared) -> ListPortsResp {
 
 // ============ connect ============
 
+/// 除 port/baud_rate 外均可省略,默认值与 server.rs 里 connect 工具 schema 声明的一致
+/// (Eight / None / 1 / None)——agent 按 schema 只传必填字段时不能被拒。
 #[derive(Deserialize)]
 pub struct ConnectReq {
     pub port: String,
     pub baud_rate: u32,
+    #[serde(default = "default_data_bits")]
     pub data_bits: String,   // "Five".."Eight"
+    #[serde(default = "default_none_str")]
     pub parity: String,     // "None"|"Odd"|"Even"
+    #[serde(default = "default_stop_bits")]
     pub stop_bits: u8,       // 1|2
+    #[serde(default = "default_none_str")]
     pub flow_control: String, // "None"|"Software"|"Hardware"
 }
+
+fn default_data_bits() -> String { "Eight".into() }
+fn default_none_str() -> String { "None".into() }
+fn default_stop_bits() -> u8 { 1 }
 
 #[derive(Serialize)]
 pub struct ConnectResp {
@@ -867,6 +877,39 @@ mod tests {
     fn test_parse_send_empty_text_still_adds_ending() {
         let d = parse_send_data("", &Some("Crlf".into()), &None).unwrap();
         assert_eq!(d, b"\r\n");
+    }
+
+    /// connect 的 schema 把 data_bits/parity/stop_bits/flow_control 标为可选带默认值,
+    /// 反序列化必须接受只传 port+baud_rate 的请求,且默认值与 schema 声明一致
+    /// (Eight / None / 1 / None)。
+    #[test]
+    fn test_connect_req_optional_fields_take_schema_defaults() {
+        let req: ConnectReq = serde_json::from_value(serde_json::json!({
+            "port": "COM3",
+            "baud_rate": 115200
+        })).expect("只传必填字段应能反序列化");
+        assert_eq!(req.port, "COM3");
+        assert_eq!(req.baud_rate, 115200);
+        assert_eq!(req.data_bits, "Eight");
+        assert_eq!(req.parity, "None");
+        assert_eq!(req.stop_bits, 1);
+        assert_eq!(req.flow_control, "None");
+    }
+
+    #[test]
+    fn test_connect_req_explicit_fields_override_defaults() {
+        let req: ConnectReq = serde_json::from_value(serde_json::json!({
+            "port": "COM3",
+            "baud_rate": 9600,
+            "data_bits": "Seven",
+            "parity": "Even",
+            "stop_bits": 2,
+            "flow_control": "Hardware"
+        })).unwrap();
+        assert_eq!(req.data_bits, "Seven");
+        assert_eq!(req.parity, "Even");
+        assert_eq!(req.stop_bits, 2);
+        assert_eq!(req.flow_control, "Hardware");
     }
 
     // ============ get_history_since 游标语义(截断不丢数据) ============
