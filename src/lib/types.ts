@@ -116,9 +116,10 @@ export interface Settings {
     /** 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值 */
     log_font_cjk: string;
     text_encoding: 'Ascii' | 'Utf8' | 'Gbk';
-    /** 点主窗口 × 直接退出应用;默认 false = 收进系统托盘(连接与 MCP 服务常驻) */
-    close_exits_app: boolean;
-    /** 首次收进托盘的系统通知是否已发过。后端写,前端只透传 */
+    /** 后台运行(托盘常驻):关窗口连接不断、关最后一个窗口应用仍在;
+     *  关 = 无托盘,关窗口断开自己连的,关最后一个窗口即退出 */
+    background_mode: boolean;
+    /** 首次收进后台的系统通知是否已发过。后端写,前端只透传 */
     tray_hint_shown: boolean;
   };
   command_groups: CommandGroup[];

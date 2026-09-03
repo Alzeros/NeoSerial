@@ -10,6 +10,7 @@
   import ThemeEditor from '$components/ThemeEditor.svelte';
   import {
     appendLogLines,
+    insertLogLines,
     autoScroll,
     cachedSettings,
     connected,
@@ -47,6 +48,7 @@
   import {
     getSettings,
     getWindowConnState,
+    getWindowHistory,
     saveSettings,
     takePendingTakeover,
     onConnectionMode,
@@ -56,6 +58,7 @@
     onRxUpdate,
     onSequenceDone,
     onSequenceProgress,
+    onSettingsChanged,
     onTxLine,
     onTxUpdate,
     onThemeChanged,
@@ -67,7 +70,41 @@
   async function handleRxLines(lines: LogLine[]) {
     // 自动滚动由 LogView 内部 $effect + requestAnimationFrame 处理
     // 这里只负责把数据塞进 logLines，无需再 tick + 读 scrollHeight
-    appendLogLines(lines);
+    // 回填历史后 reader 再发来的批次里若含历史已覆盖的行(line_index <= backfillMaxIndex),丢弃
+    const fresh = backfillMaxIndex > 0
+      ? lines.filter((l) => !(l.line_index > 0 && l.line_index <= backfillMaxIndex))
+      : lines;
+    appendLogLines(fresh);
+  }
+
+  // ============ 挂上已有连接时回填历史 ============
+  // 后台连接(agent 建的 / 窗口关掉留下的)被本窗口挂上时,把后端 rx_history 灌进日志区,
+  // 让"重新打开"名副其实。新建的连接历史为空,调用无害。
+  // 去重靠 line_index(每个连接内单调唯一,tx+rx 共用):
+  //  - insertAt:收到 connected 时记下的位置,历史插在这里,之后到的实时行接在后面;
+  //  - 接管瞬间 reader 可能已往新 label 发了一批 → 插入前过滤掉 insertAt 之后已有的 index;
+  //  - 历史拉回后 reader 再发的批次里含 <= backfillMaxIndex 的行 → 历史里已有,handleRxLines 丢弃。
+  let backfillMaxIndex = 0;
+  async function backfillHistory(port: string, insertAt: number) {
+    try {
+      const hist = await getWindowHistory(port);
+      if (hist.length > 0) {
+        const at = Math.min(insertAt, logLines.length);
+        const seen = new Set(logLines.slice(at).map((l) => l.line_index));
+        insertLogLines(at, hist.filter((l) => !seen.has(l.line_index)));
+        for (const l of hist) {
+          if (l.line_index > backfillMaxIndex) backfillMaxIndex = l.line_index;
+        }
+      }
+      // 收发字节数也从后端同步,不然要等下一次收发事件才从 0 跳到真实值
+      const st = await getWindowConnState();
+      if (st.connected && st.port === port) {
+        if (st.tx_bytes != null) txBytes.value = st.tx_bytes;
+        if (st.rx_bytes != null) rxBytes.value = st.rx_bytes;
+      }
+    } catch (e) {
+      console.error('回填连接历史失败:', e);
+    }
   }
 
   // 把加载到的 Settings 回填到各响应式 store
@@ -241,6 +278,11 @@
     const unlistenState = onConnectionState((s) => {
       connected.value = s.connected;
       currentPort.value = s.port;
+      // 每次连接成功都尝试回填(挂上已有连接才有内容);断开时清掉去重水位
+      backfillMaxIndex = 0;
+      if (s.connected && s.port) {
+        backfillHistory(s.port, logLines.length);
+      }
       // windowPort 跟随当前连接的 port:连接成功时锁定,供所有 invoke(send/disconnect/sequence)定位连接。
       // 断开时清空,避免下次连接用残留 windowPort 连错端口(用户会重新选 port)。
       if (s.connected && s.port) {
@@ -327,7 +369,21 @@
     document.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('resize', handleResize);
 
+    // 任一窗口/agent 保存了设置 → 刷新本窗口的快照。只换 cachedSettings 和两个带"即时回写
+    // effect"的开关(log_send / show_line_index,不同步它们 effect 会把本窗口旧值写回去,
+    // 两个窗口来回覆盖);其余镜像到 store 的显示项仍由本窗口自己的状态决定。
+    const unlistenSettings = onSettingsChanged(() => {
+      getSettings()
+        .then((s) => {
+          cachedSettings.value = s;
+          logSendContent.value = s.ui.log_send;
+          showLineIndex.value = s.ui.show_line_index ?? false;
+        })
+        .catch((e) => console.error('刷新设置快照失败:', e));
+    });
+
     return () => {
+      unlistenSettings.then((f) => f());
       unlistenRxLine.then((f) => f());
       unlistenTxLine.then((f) => f());
       unlistenTx.then((f) => f());

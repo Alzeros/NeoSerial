@@ -9,7 +9,7 @@ mod tray;
 mod util;
 
 use tauri::Manager;
-use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
+use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
 use commands::logging::{start_logging, stop_logging, is_logging};
@@ -142,11 +142,11 @@ fn exit_app(state: tauri::State<'_, AppState>, app_handle: tauri::AppHandle) {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        // 单实例必须最先注册。主窗口收进托盘后用户再双击图标"打开软件",若起了第二个
-        // 进程:MCP 落到 34595、第一个进程还占着 COM 口,第二个里连同一口报"被占用"。
-        // 二次启动只把已有实例的主窗口拉出来,然后自行退出。
+        // 单实例必须最先注册。应用在托盘里跑着(或窗口都关了)时用户再双击图标"打开软件",
+        // 若起了第二个进程:MCP 落到 34595、第一个进程还占着 COM 口,第二个里连同一口报
+        // "被占用"。二次启动只把已有实例的窗口拉出来(没有窗口就新建一个),然后自行退出。
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            tray::show_main_window(app);
+            tray::focus_any_or_create(app);
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
@@ -168,7 +168,7 @@ pub fn run() {
             };
             state.registry = registry;
             app.manage(state);
-            tray::build_tray(app)?;
+            tray::setup(app);
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
             Ok(())
@@ -198,30 +198,34 @@ pub fn run() {
                         }
                     }
                 }
-                // 窗口关闭生命周期:
-                // main 关 → 默认收进托盘(应用常驻,连接与 MCP 不受影响),不弹任何确认;
-                //   仅当用户在设置里选了"点 × 直接退出应用"才走退出。关窗口不再是退出的入口,
-                //   原先"关主窗口会误杀其他窗口和 agent 会话"的问题随之消失。
-                // 副窗口(win-*)关 → 回退本窗口接管的连接(改回 mcp label,不断开)后放行。
+                // 窗口关闭生命周期:所有串口窗口(main / win-*)一个规则,由 tray::close_plan 决定——
+                // 后台模式:连接一律留在后台,窗口放行销毁;关的是最后一个窗口则应用留在托盘
+                //   (Tauri 随后发 ExitRequested(code=None),run 回调里拦下),并首次提示一次。
+                // 轻量模式:该窗口自己连的断开、agent 的交还;关的是最后一个窗口则退出应用。
+                // 关非最后一个窗口不会伤到别的窗口或 agent,所以不需要任何确认框。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let label = window.label().to_string();
+                    if !tray::is_serial_window_label(&label) {
+                        return;
+                    }
                     let app_handle = window.app_handle();
-                    if let Some(state) = app_handle.try_state::<AppState>() {
-                        if label == "main" {
-                            api.prevent_close();
-                            let close_exits_app = state.settings.lock()
-                                .map(|s| s.ui.close_exits_app)
-                                .unwrap_or(false);
-                            if close_exits_app {
-                                cleanup_and_exit(&state, &app_handle);
-                            } else {
-                                tray::hide_main_to_tray(&app_handle, &state);
-                            }
-                        } else {
-                            // 副窗口(win-{自增}):回退本窗口接管的连接(改回 mcp label,
-                            // 连接不断),让 + 号红点恢复。未接管任何连接时为空操作。
-                            let _ = crate::commands::connection::release_takeover(&state, &app_handle, &label);
-                        }
+                    let Some(state) = app_handle.try_state::<AppState>() else { return };
+                    let others = app_handle
+                        .webview_windows()
+                        .keys()
+                        .filter(|l| l.as_str() != label && tray::is_serial_window_label(l))
+                        .count();
+                    let plan = tray::close_plan(tray::background_mode(&app_handle), others == 0);
+                    crate::commands::connection::release_window_connections(
+                        &state, &app_handle, &label, plan.connections,
+                    );
+                    if plan.exit_app {
+                        api.prevent_close();
+                        cleanup_and_exit(&state, &app_handle);
+                        return;
+                    }
+                    if plan.tray_hint {
+                        tray::maybe_send_tray_hint(&app_handle, &state);
                     }
                 }
                 _ => {}
@@ -238,6 +242,7 @@ pub fn run() {
             open_port_window,
             open_theme_editor,
             get_window_conn_state,
+            get_window_history,
             get_mcp_only_connections,
             take_pending_takeover,
             exit_app,
@@ -261,14 +266,22 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app, event| {
+        .run(|app, event| match event {
+            // 最后一个窗口关掉时 Tauri 请求退出(code=None);后台模式下拦下,应用留在托盘。
+            // 显式 app.exit(code)(托盘"退出"/设置页/轻量模式关最后一个窗口)带 code,照常退出。
+            tauri::RunEvent::ExitRequested { code, api, .. } => {
+                if code.is_none() && tray::background_mode(app) {
+                    api.prevent_exit();
+                }
+            }
             // 进程退出时注销 registry,避免残留条目让 agent 发现后连接失败
-            if let tauri::RunEvent::Exit = event {
+            tauri::RunEvent::Exit => {
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Some(reg) = &state.registry {
                         let _ = reg.unregister();
                     }
                 }
             }
+            _ => {}
         });
 }

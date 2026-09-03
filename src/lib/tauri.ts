@@ -57,12 +57,18 @@ export async function openThemeEditor(): Promise<void> {
   await invoke('open_theme_editor');
 }
 
-/** 副窗口 onMount 调:按本窗口 label 反推 port,查连接状态。 */
+/** 窗口 onMount 调:查归属本窗口的连接状态(dev 重载后恢复 UI 用)。 */
 export async function getWindowConnState(): Promise<WindowConnState> {
   return await invoke<WindowConnState>('get_window_conn_state');
 }
 
-/** agent 连了但还没 GUI 接管的端口列表(window_label 仍是 mcp- 前缀)。 */
+/** 本窗口挂上一个已有连接(agent 建的 / 后台留下的)后,拉该连接的收发历史回填日志区。
+ *  新建的连接历史为空。去重见 App.svelte 的 backfillHistory。 */
+export async function getWindowHistory(port: string): Promise<LogLine[]> {
+  return await invoke<LogLine[]>('get_window_history', { port });
+}
+
+/** 没有窗口显示的连接列表:agent 建的、或后台模式下窗口关掉留在后台的(window_label 为 mcp-*)。 */
 export interface McpOnlyConn {
   port: string;
   baud: number;
@@ -311,6 +317,12 @@ export function onSequenceChanged(cb: (e: SequenceChangedEvent) => void) {
  *  让所有窗口刷新"待接管"chip 列表。payload 为空。 */
 export function onMcpConnectionsChanged(cb: () => void) {
   return getCurrentWebview().listen('mcp-connections-changed', () => cb());
+}
+
+/** settings-changed:任一窗口/agent 保存了设置。各窗口据此刷新 cachedSettings 快照,
+ *  否则下次整份回写会把别处改过的字段(如 background_mode)冲回旧值。payload 为空。 */
+export function onSettingsChanged(cb: () => void) {
+  return getCurrentWebview().listen('settings-changed', () => cb());
 }
 
 // ============ 系统托盘 ============

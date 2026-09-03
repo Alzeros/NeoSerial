@@ -96,7 +96,7 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
     // window_label 从 handle 读(可能被 GUI 接管改过);无 handle 兜底 win-{port}
     let window_label = handle.as_ref()
         .and_then(|h| h.window_label.read().ok().map(|g| g.clone()))
-        .unwrap_or_else(|| crate::connection::port_to_label(&req.port));
+        .unwrap_or_else(|| crate::connection::detached_label(&req.port));
     // 如果序列因断开被停,立即通知窗口(不等线程退出,给用户即时反馈)。
     if seq_stopped {
         let _ = app_handle.emit_to(
@@ -175,7 +175,7 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     // MCP 先连(GUI 没连)的连接:window_label = mcp-{port}。
     // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
     // (见 Tauri connect 的复用逻辑)。这里只处理 MCP 首次建连。
-    let window_label = format!("mcp-{}", req.port);
+    let window_label = crate::connection::detached_label(&req.port);
     // 锁外执行阻塞的打开操作。任何 return 路径上 guard 都会析构并清掉占位。
     let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label, shared.connections.clone(), shared.registry.clone(), true) {
         Ok(h) => h,
@@ -843,6 +843,11 @@ pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSet
     // 落盘(用默认路径 %APPDATA%/neoserial/settings.json)
     settings.save().map_err(|e| ErrorResp::new(format!("保存失败: {}", e)))?;
     *s = settings;
+    drop(s);
+    // 后台运行开关即时生效(sync_visibility 自己会取 settings 锁,先放锁);
+    // 并让所有窗口刷新 settings 快照,免得窗口下次整份回写时把 agent 改的字段冲掉
+    crate::tray::sync_visibility(&shared.app_handle);
+    let _ = shared.app_handle.emit("settings-changed", ());
     Ok(SaveSettingsResp { ok: true })
 }
 

@@ -61,6 +61,17 @@ export function appendLogLines(batch: LogLine[]) {
   logVersion.value++;
 }
 
+/** 在指定位置插入一批历史行(挂上已有连接时回填,见 App.svelte backfillHistory)。
+ *  不受 paused 影响——回填的是用户主动打开的连接的既有内容,不是新到的实时数据。 */
+export function insertLogLines(at: number, batch: LogLine[]) {
+  if (batch.length === 0) return;
+  logLines.splice(Math.min(at, logLines.length), 0, ...batch);
+  if (logLines.length > MAX_LOG_LINES) {
+    logLines.splice(0, logLines.length - MAX_LOG_LINES);
+  }
+  logVersion.value++;
+}
+
 export function clearLogLines() {
   logLines.length = 0;
 }

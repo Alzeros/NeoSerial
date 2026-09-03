@@ -103,17 +103,24 @@ pub struct UiSettings {
     /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
     #[serde(default = "default_text_encoding")]
     pub text_encoding: TextEncoding,
-    /// 点主窗口 × 直接退出应用(经典行为)。默认 false = 收进系统托盘,
-    /// 串口连接与 MCP 服务常驻,只有托盘菜单/设置页"退出"才真正退出。
-    #[serde(default)]
-    pub close_exits_app: bool,
-    /// 首次收进托盘的系统通知是否已发过(只提示一次)。后端写,见 merge_backend_owned。
+    /// 后台运行(托盘常驻)。开:有托盘图标,关窗口连接不断、进入后台,关最后一个窗口
+    /// 应用仍在;关(默认,经典串口工具体验):无托盘,关窗口断开该窗口自己连的
+    /// (agent 的交还 agent),关最后一个窗口即退出。改后即时生效。
+    #[serde(default = "default_background_mode")]
+    pub background_mode: bool,
+    /// 首次收进后台的系统通知是否已发过(只提示一次)。后端写,见 merge_backend_owned。
     #[serde(default)]
     pub tray_hint_shown: bool,
 }
 
 fn default_text_encoding() -> TextEncoding {
     TextEncoding::Ascii
+}
+
+/// 后台运行的默认值,单独收在这里便于一处改。默认关:新用户拿到的是和其他串口工具
+/// 一致的体验(关窗即退、不占口),需要给 agent 当常驻服务的人在设置里打开。
+pub fn default_background_mode() -> bool {
+    false
 }
 
 fn default_log_font_size() -> u32 {
@@ -252,7 +259,7 @@ impl Settings {
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
-                close_exits_app: false,
+                background_mode: default_background_mode(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup::default_group()],
@@ -378,7 +385,7 @@ impl LegacySettings {
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
-                close_exits_app: false,
+                background_mode: default_background_mode(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup {
@@ -531,12 +538,21 @@ mod tests {
         assert!(s.ui.log_send);
     }
 
-    /// 关闭行为默认:点 × 收进托盘(close_exits_app=false),首次收托盘提示尚未显示。
+    /// 后台运行默认值收在 default_background_mode() 一处;首次收后台提示尚未显示。
     #[test]
-    fn test_default_close_behavior_is_tray() {
+    fn test_default_background_mode_follows_constant() {
         let s = Settings::default_settings();
-        assert!(!s.ui.close_exits_app);
+        assert_eq!(s.ui.background_mode, default_background_mode());
         assert!(!s.ui.tray_hint_shown);
+    }
+
+    /// 旧配置没有 background_mode 键 → 取默认常量,而不是 bool 的 false。
+    #[test]
+    fn test_missing_background_mode_takes_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        v["ui"].as_object_mut().unwrap().remove("background_mode");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert_eq!(s.ui.background_mode, default_background_mode());
     }
 
     /// mark_tray_hint_shown:首次返回 true(该提示),之后一直 false,且标记落在字段上。
@@ -555,21 +571,23 @@ mod tests {
         current.ui.tray_hint_shown = true;
         let mut incoming = Settings::default_settings();
         incoming.ui.tray_hint_shown = false;
-        incoming.ui.close_exits_app = true;
+        incoming.ui.background_mode = !default_background_mode();
         incoming.merge_backend_owned(&current);
         assert!(incoming.ui.tray_hint_shown, "后端持有字段以内存态为准");
-        assert!(incoming.ui.close_exits_app, "用户可改字段照回写值");
+        assert_ne!(incoming.ui.background_mode, default_background_mode(), "用户可改字段照回写值");
     }
 
-    /// 旧开发版写过 ui.minimize_to_tray / ui.close_prompted,读到这两个多余键应忽略而非解析失败。
+    /// 旧开发版写过 ui.minimize_to_tray / close_prompted / close_exits_app,
+    /// 读到这些多余键应忽略而非解析失败。
     #[test]
     fn test_load_ignores_removed_tray_fields() {
         let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
         let ui = v["ui"].as_object_mut().unwrap();
         ui.insert("minimize_to_tray".into(), serde_json::Value::Bool(false));
         ui.insert("close_prompted".into(), serde_json::Value::Bool(true));
+        ui.insert("close_exits_app".into(), serde_json::Value::Bool(true));
         let s: Settings = serde_json::from_value(v).expect("多余的旧键应被忽略");
-        assert!(!s.ui.close_exits_app);
+        assert_eq!(s.ui.background_mode, default_background_mode());
         assert!(!s.ui.tray_hint_shown);
     }
 

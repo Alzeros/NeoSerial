@@ -1,6 +1,5 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
-  import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { onMount } from 'svelte';
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
   import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
@@ -8,12 +7,9 @@
   import SettingsDialog from '$components/SettingsDialog.svelte';
 
   const appWindow = getCurrentWindow();
-  // 副窗口(label=win-*)顶部加提示区分 main;连了端口后显示 port
-  const isMain = getCurrentWebview().label === 'main';
+  // 窗口一律平等(没有"主窗口"):标题只按本窗口的连接显示
   const titleText = $derived(
-    isMain ? 'NeoSerial'
-    : currentPort.value ? `NeoSerial · ${currentPort.value}`
-    : 'NeoSerial · 新窗口'
+    currentPort.value ? `NeoSerial · ${currentPort.value}` : 'NeoSerial'
   );
 
   let alwaysOnTop = $state<{ value: boolean }>({ value: false });
@@ -27,14 +23,14 @@
     await appWindow.toggleMaximize();
   }
 
-  // main 的 × 由后端 CloseRequested 处理:默认收进托盘(连接与 MCP 常驻),
-  // 设置了"点 × 直接退出"才退出;副窗口 × 关本窗口(接管的连接回退给 mcp)。
-  // 都不再需要前端二次确认——关窗口不会再误杀其他窗口或 agent 会话。
+  // × 的实际行为由后端 CloseRequested 按"后台运行"设置决定(见 tray::close_plan):
+  // 后台模式连接留在后台、应用常驻;轻量模式断开本窗口自己连的、关最后一个窗口退出。
+  // 关非最后一个窗口不会伤到别的窗口或 agent,所以不需要前端二次确认。
   async function handleClose() {
     await appWindow.close();
   }
   const closeTitle = $derived(
-    isMain && !cachedSettings.value?.ui?.close_exits_app ? '关闭到托盘' : '关闭'
+    cachedSettings.value?.ui?.background_mode ? '关闭窗口（连接留在后台）' : '关闭'
   );
 
   async function handleToggleAlwaysOnTop() {
@@ -56,9 +52,9 @@
     }
   }
 
-  // 快捷打开 MCP 已连端口:开一个窗口并自动接管该 MCP 连接。
-  // 后端 open_port_window(port,baud) 开窗后发 auto-connect-port 事件,
-  // 新窗口 onMount 匹配自己的 label 后自动 connect 接管。
+  // 快捷打开一个后台连接(agent 建的 / 窗口关掉留下的):开新窗口并自动挂上。
+  // 后端 open_port_window(port,baud) 先记 pending 再开窗,
+  // 新窗口 onMount 取走 pending 后自动 connect 挂上(不重开串口)。
   async function handleTakeover(port: string, baud: number) {
     try {
       await openPortWindow(port, baud);
@@ -67,7 +63,7 @@
     }
   }
 
-  // hover + 号时弹出"可接管端口"菜单。用容器 hover(非按钮 hover)避免
+  // hover + 号时弹出"后台连接"菜单。用容器 hover(非按钮 hover)避免
   // 从按钮移到浮层时 leave 关闭。mouseleave 容器才收起。
   let showTakeoverMenu = $state(false);
   function openTakeoverMenu() {
@@ -77,13 +73,13 @@
     showTakeoverMenu = false;
   }
 
-  // 拉取"agent 连了但没 GUI 接管"的端口列表 + 监听变化刷新。
-  // chip 是全局连接视图,任何窗口都看同一份;主窗口 onMount 启动刷新。
+  // 拉取"没有窗口显示"的连接列表 + 监听变化刷新。
+  // chip 是全局连接视图,任何窗口都看同一份;每个窗口 onMount 自行拉取。
   async function refreshMcpOnly() {
     try {
       mcpOnlyConnections.value = await getMcpOnlyConnections();
     } catch (e) {
-      console.error('查询 MCP 连接失败:', e);
+      console.error('查询后台连接失败:', e);
     }
   }
 
@@ -117,7 +113,7 @@
   data-theme-target="background-elevated"
   style="background: var(--background-elevated);"
 >
-  <!-- 左侧：应用名 + 拖动区域(main 显 NeoSerial;副窗口加提示/端口区分) -->
+  <!-- 左侧：应用名 + 拖动区域(连了端口显示端口名) -->
   <div
     data-tauri-drag-region
     class="flex-1 h-full flex items-center px-3 text-[13px] font-medium text-[var(--muted-foreground)]"
@@ -126,10 +122,10 @@
     {titleText}
   </div>
 
-  <!-- 新窗口按钮 + MCP 可接管提示:
-       - 无 MCP 连接:普通 + 号,点击开空白窗口。
-       - 有 MCP 连接(agent 连了没 GUI 接管的):+ 号右上角显红点;
-         hover 弹出浮层列出可接管端口(点击开窗接管)+ "新开空白窗口"项。 -->
+  <!-- 新窗口按钮 + 后台连接提示:
+       - 无后台连接:普通 + 号,点击开空白窗口。
+       - 有后台连接(agent 建的 / 窗口关掉留下的,没窗口显示):+ 号右上角显红点;
+         hover 弹出浮层列出这些端口(点击开窗挂上)+ "新开空白窗口"项。托盘菜单是同一份列表。 -->
   <div
     class="relative h-full flex items-center"
     onmouseenter={openTakeoverMenu}
@@ -138,11 +134,11 @@
     <button
       class="relative flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
       onclick={handleNewWindow}
-      title={mcpOnlyConnections.value.length > 0 ? '打开新窗口 / 接管 MCP 连接' : '打开新窗口'}
+      title={mcpOnlyConnections.value.length > 0 ? '打开新窗口 / 打开后台连接' : '打开新窗口'}
     >
       <Plus size={15} />
       {#if mcpOnlyConnections.value.length > 0}
-        <!-- 红点:右上角,提示有可接管的 MCP 连接。pointer-events-none 避免挡点击 -->
+        <!-- 红点:右上角,提示有后台连接没窗口显示。pointer-events-none 避免挡点击 -->
         <span
           class="absolute top-1 right-1.5 w-1.5 h-1.5 rounded-full pointer-events-none"
           style="background: #dc2626; box-shadow: 0 0 0 1px var(--background-elevated);"
@@ -151,7 +147,7 @@
     </button>
 
     {#if showTakeoverMenu}
-      <!-- hover 浮层:列出 agent 连了但没接管的端口 + 新开空白窗口。
+      <!-- hover 浮层:列出后台连接 + 新开空白窗口。
            absolute 定位在 + 号下方右对齐,top-0 紧贴按钮下沿(无间隙),
            避免鼠标从按钮移到浮层时穿过间隙触发 mouseleave 关闭。
            z-index 高于状态栏。 -->
@@ -165,7 +161,7 @@
             onclick={() => { handleTakeover(c.port, c.baud); closeTakeoverMenu(); }}
           >
             <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background: #dc2626;"></span>
-            <span class="font-medium">接管 {c.port}</span>
+            <span class="font-medium">打开 {c.port}</span>
             <span class="text-[var(--muted-foreground)] text-[11px] ml-auto">@{c.baud}</span>
           </button>
         {/each}

@@ -27,7 +27,9 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 - **MCP 共享连接**：agent `connect` 一个已被 GUI 连的端口 → 复用，不报冲突。`ConnectionHandle.window_label`（`Arc<RwLock>`）记录连接归属窗口，GUI 接管 MCP 连接时改此值，reader/writer 线程下次 emit 自动用新 label，无需重启线程。
 - **事件定向**：所有事件（rx-line/tx-line/sequence-progress 等）用 `emit_to(window_label)` 定向到归属窗口，前端用 `getCurrentWebview().listen` 接收，多窗口不串流。
 - **能力（capability）**：`capabilities/default.json` 的 `windows: ["main", "win-*"]` 用通配符授权所有窗口的监听/窗口控制/文件读写等权限。
-- **托盘常驻 + 单实例**：关主窗口只是收进系统托盘，串口连接与 MCP 服务照常运行（首次收托盘发一条系统通知说明）；托盘 tooltip 列出仍被占用的端口。真正退出只有托盘菜单"退出"或设置页"退出 NeoSerial"两个入口（设置里可选"点 × 直接退出"恢复经典行为）。单实例：主窗口收起后再次启动 exe 只会把已有窗口拉出来，不会起第二个进程去抢 COM 口和 MCP 端口。
+- **窗口平等**：启动时的窗口和 `+` 开出的窗口行为完全一致，没有"主窗口"；连接不属于窗口，窗口只是它的视图。
+- **后台运行（设置项，默认关，托盘常驻）**：开启时关窗口不断开连接——连接留在后台继续收发、存日志、跑序列，关掉最后一个窗口应用留在托盘，MCP 照常；首次收后台发一条系统通知说明。托盘 tooltip 列出占用的端口，右键菜单：新建窗口 / 每个连接一项（无窗口的"打开"=开新窗口挂上并回填历史日志，有窗口的"切到"）/ 退出。关闭时（轻量模式）不显示托盘，关窗口断开该窗口自己建的连接（agent 建的交还 agent），关掉最后一个窗口即退出。改开关即时生效。
+- **单实例**：再次启动 exe 只把已有窗口拉到前台（没有窗口就新建一个），不会起第二个进程去抢 COM 口和 MCP 端口。
 
 ### MCP 工具（16 个）
 
@@ -186,7 +188,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（135 passed）
+cargo test           # Rust 单元测试（152 passed）
 npm run check        # Svelte/TypeScript 类型检查
 ```
 

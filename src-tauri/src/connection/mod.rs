@@ -16,18 +16,19 @@ use tauri::Emitter;
 use crate::buffer::rx_history::RxHistory;
 use crate::config::settings::{DataBits, FlowControl, Parity, StopBits};
 
-/// 窗口 label 前缀。多窗口场景下每个连接对应一个 webview 窗口,label 固定规则
-/// `win-{port}`(如 `win-COM3`),port 与 label 双向推导,不维护映射表。
-const WIN_LABEL_PREFIX: &str = "win-";
+/// "无窗口显示"连接的 window_label 前缀。连接归属不在任何窗口时 label 为 `mcp-{port}`:
+/// agent 经 MCP 建连时初始如此;后台模式下窗口关闭、连接留在后台时也回到这个状态。
+/// 事件 emit_to 到这个 label 没有接收者(等于丢弃),GUI 窗口挂上去时改成该窗口 label。
+const DETACHED_LABEL_PREFIX: &str = "mcp-";
 
-/// port → 窗口 label:`COM3` → `win-COM3`。
-pub fn port_to_label(port: &str) -> String {
-    format!("{}{}", WIN_LABEL_PREFIX, port)
+/// 无窗口连接的 label:`COM3` → `mcp-COM3`。
+pub fn detached_label(port: &str) -> String {
+    format!("{}{}", DETACHED_LABEL_PREFIX, port)
 }
 
-/// 窗口 label → port:`win-COM3` → `Some(COM3)`;非 `win-` 前缀(main 窗口)返回 None。
-pub fn label_to_port(label: &str) -> Option<String> {
-    label.strip_prefix(WIN_LABEL_PREFIX).map(|s| s.to_string())
+/// label 是否表示"无窗口显示"(见 [`detached_label`])。
+pub fn is_detached_label(label: &str) -> bool {
+    label.starts_with(DETACHED_LABEL_PREFIX)
 }
 
 /// 发送到写线程的命令。
@@ -458,25 +459,13 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_port_to_label() {
-        assert_eq!(port_to_label("COM3"), "win-COM3");
-        assert_eq!(port_to_label("COM12"), "win-COM12");
-    }
-
-    #[test]
-    fn test_label_to_port() {
-        assert_eq!(label_to_port("win-COM3"), Some("COM3".to_string()));
-        assert_eq!(label_to_port("win-COM12"), Some("COM12".to_string()));
-        // main 窗口 label 无 win- 前缀,返回 None
-        assert_eq!(label_to_port("main"), None);
-        assert_eq!(label_to_port(""), None);
-    }
-
-    #[test]
-    fn test_roundtrip() {
-        for port in ["COM1", "COM3", "COM12", "COM255"] {
-            assert_eq!(label_to_port(&port_to_label(port)), Some(port.to_string()));
-        }
+    fn test_detached_label_roundtrip() {
+        assert_eq!(detached_label("COM3"), "mcp-COM3");
+        assert!(is_detached_label(&detached_label("COM12")));
+        // 窗口 label 都不是"无窗口"
+        assert!(!is_detached_label("main"));
+        assert!(!is_detached_label("win-3"));
+        assert!(!is_detached_label(""));
     }
 
     #[test]

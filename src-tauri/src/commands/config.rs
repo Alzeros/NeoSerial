@@ -1,4 +1,4 @@
-use tauri::{Manager, State};
+use tauri::{Emitter, Manager, State};
 
 use crate::state::AppState;
 
@@ -20,7 +20,13 @@ pub async fn save_settings(
         save_settings_impl(&state, settings)
     })
     .await
-    .map_err(|e| format!("保存设置任务执行异常: {}", e))?
+    .map_err(|e| format!("保存设置任务执行异常: {}", e))??;
+    // 后台运行开关即时生效:托盘图标随之出现/消失
+    crate::tray::sync_visibility(&app_handle);
+    // 通知所有窗口刷新各自的 settings 快照:窗口整份回写时以它为底,不刷新的话
+    // 别的窗口/agent 改过的字段(如 background_mode)会被这里的旧快照冲回去。
+    let _ = app_handle.emit("settings-changed", ());
+    Ok(())
 }
 
 /// save_settings 的同步实现(在阻塞线程池执行)。

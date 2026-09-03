@@ -3,7 +3,7 @@ use std::sync::atomic::{AtomicU32, Ordering as AtomicOrdering};
 
 use tauri::{State, Emitter, Manager, WebviewUrl, WebviewWindowBuilder};
 
-use crate::connection::{ConnectingGuard, ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
+use crate::connection::{detached_label, is_detached_label, ConnectingGuard, ConnectionHandle, SerialParams, spawn_connection, WriteCommand};
 use crate::state::AppState;
 
 /// 副窗口自增序号:每开一个新窗口 +1,label = win-{n}。不绑 port——
@@ -200,10 +200,10 @@ fn connect_impl(
     Ok(())
 }
 
-/// 判断已有连接的 window_label 是否为 MCP 前缀(mcp-xxx)。
-/// MCP 首次建连时 window_label = mcp-{port};GUI connect 命中时接管改成本窗口 label。
+/// 已有连接当前是否没有窗口显示(label 为 mcp-{port}):agent 建的、或窗口关掉后留在后台的。
+/// GUI connect 命中时挂上(改成本窗口 label),不重开串口。
 fn existing_label_is_mcp(h: &ConnectionHandle) -> bool {
-    h.window_label.read().ok().map(|s| s.starts_with("mcp-")).unwrap_or(false)
+    h.window_label.read().ok().map(|s| is_detached_label(&s)).unwrap_or(false)
 }
 
 /// 判断已有连接是否为僵尸(reader/writer 已退出但 handle 仍残留在 map)。
@@ -234,59 +234,48 @@ pub async fn disconnect(
     .map_err(|e| format!("断开连接任务执行异常: {}", e))?
 }
 
-/// 接管窗口关闭时:把它持有的连接按出身处理。
-/// - mcp_origin=true(agent 经 MCP 建的,GUI 接管的):改回 `mcp-{port}` 回退接管,
-///   连接留着不断,agent 继续用,+ 号红点恢复。
-/// - mcp_origin=false(GUI 自己 connect 新建的):断开连接(原语义,关窗口即断)。
-///
-/// 为什么区分:接管 mcp 连接是 GUI"借走"显示,关窗口应还回去不断开;
-/// GUI 自建的连接没人"等用",关窗口应断开避免泄漏。
-pub fn release_takeover(state: &AppState, app_handle: &tauri::AppHandle, window_label: &str) {
-    // 先扫出本窗口持有的连接:区分 mcp_origin 决定回退还是断开。
-    let (mcp_ports, gui_ports): (Vec<String>, Vec<String>) = {
-        let conns = state.connections.lock().ok();
-        let Some(conns) = conns else { return };
-        let mut mcp = Vec::new();
-        let mut gui = Vec::new();
+/// 窗口关闭时处理它持有的连接,策略由 tray::close_plan 按模式给出:
+/// - DetachAll(后台模式):一律不断,label 改回 `mcp-{port}` 进入后台,托盘/红点可重新打开。
+/// - ReleaseGuiKeepAgent(轻量模式):agent 建的(mcp_origin)交还 agent(同上改 label);
+///   窗口自己 connect 新建的断开释放——没人"等用"的连接不该占着口。
+pub fn release_window_connections(
+    state: &AppState,
+    app_handle: &tauri::AppHandle,
+    window_label: &str,
+    policy: crate::tray::ConnPolicy,
+) {
+    // 锁内一次扫完:本窗口持有的连接按策略分成"转后台"与"断开"两组,转后台的顺手改 label。
+    let (detached, to_disconnect): (Vec<String>, Vec<String>) = {
+        let Ok(conns) = state.connections.lock() else { return };
+        let mut detached = Vec::new();
+        let mut to_disconnect = Vec::new();
         for h in conns.values() {
             let is_ours = h.window_label.read().ok().map(|wl| wl.as_str() == window_label).unwrap_or(false);
-            if is_ours {
-                if h.mcp_origin.load(std::sync::atomic::Ordering::SeqCst) {
-                    mcp.push(h.port.clone());
-                } else {
-                    gui.push(h.port.clone());
+            if !is_ours {
+                continue;
+            }
+            let keep = match policy {
+                crate::tray::ConnPolicy::DetachAll => true,
+                crate::tray::ConnPolicy::ReleaseGuiKeepAgent => {
+                    h.mcp_origin.load(std::sync::atomic::Ordering::SeqCst)
                 }
+            };
+            if keep {
+                if let Ok(mut wl) = h.window_label.write() {
+                    *wl = detached_label(&h.port);
+                }
+                detached.push(h.port.clone());
+            } else {
+                to_disconnect.push(h.port.clone());
             }
         }
-        (mcp, gui)
+        (detached, to_disconnect)
     };
-    // mcp 出身的:改回 mcp label 回退(连接留着)
-    if !mcp_ports.is_empty() {
-        let conns = state.connections.lock().ok();
-        if let Some(conns) = conns {
-            for h in conns.values() {
-                let is_ours = h.window_label.read().ok().map(|wl| wl.as_str() == window_label).unwrap_or(false);
-                if is_ours && h.mcp_origin.load(std::sync::atomic::Ordering::SeqCst) {
-                    let mcp_label = format!("mcp-{}", h.port);
-                    if let Ok(mut wl) = h.window_label.write() {
-                        *wl = mcp_label;
-                    }
-                }
-            }
-        }
-        // 红点状态变化:回退的连接重新进 mcp-only 列表
+    if !detached.is_empty() {
+        // 无窗口连接集合变了:所有窗口的 + 号红点、托盘菜单/tooltip 据此刷新
         let _ = app_handle.emit("mcp-connections-changed", ());
-        // 通知原窗口:本窗口不再接管,UI 显示断开(连接还在但归 mcp 了)
-        for p in &mcp_ports {
-            let _ = app_handle.emit_to(window_label, "connection-state", crate::connection::ConnectionState {
-                connected: false,
-                port: Some(p.clone()),
-                baud_rate: None,
-            });
-        }
     }
-    // GUI 出身的:断开(关窗口即断,原语义)
-    for p in &gui_ports {
+    for p in &to_disconnect {
         let _ = disconnect_port(state, app_handle, p);
     }
 }
@@ -355,9 +344,9 @@ pub async fn list_ports() -> Result<Vec<String>, String> {
     Ok(ports)
 }
 
-/// 查询"agent 连了但还没 GUI 窗口接管"的端口:即 window_label 仍是 mcp- 前缀的连接。
-/// 供 main 窗口 + 号旁渲染快捷 chip:点击 = 开窗口并接管该连接。
-/// GUI 接管后 window_label 改成本窗口 label,此处不再返回(从 chip 列表消失)。
+/// 查询"没有窗口显示"的连接:agent 经 MCP 建的、或后台模式下窗口关掉留在后台的
+/// (window_label 为 mcp-{port})。供每个窗口 + 号旁的红点列表与托盘菜单:点击 = 开窗口挂上。
+/// 窗口挂上后 window_label 改成该窗口 label,此处不再返回。命令名沿用旧称,前端已引用。
 #[derive(serde::Serialize)]
 pub struct McpOnlyConn {
     pub port: String,
@@ -367,15 +356,26 @@ pub struct McpOnlyConn {
 pub fn get_mcp_only_connections(state: State<'_, AppState>) -> Result<Vec<McpOnlyConn>, String> {
     let conns = state.connections.lock().map_err(|e| e.to_string())?;
     let mut list: Vec<McpOnlyConn> = conns.iter()
-        .filter(|(_, h)| {
-            // window_label 仍是 mcp- 前缀 = agent 连的、GUI 还没接管
-            h.window_label.read().ok().map(|s| s.starts_with("mcp-")).unwrap_or(false)
-        })
+        .filter(|(_, h)| existing_label_is_mcp(h))
         .map(|(_, h)| McpOnlyConn { port: h.port.clone(), baud: h.baud })
         .collect();
     // 按 port 排序,保证 chip 顺序稳定(COM 号顺序)
     list.sort_by(|a, b| a.port.cmp(&b.port));
     Ok(list)
+}
+
+/// 本窗口挂上一个已有连接(agent 建的 / 后台留下的)后拉历史回填日志区:
+/// 该连接 rx_history 里的全部行(tx+rx,按序)。新建的连接历史为空,调用无害。
+/// 前端按 line_index 与已到达的实时行去重,见 App.svelte。
+#[tauri::command]
+pub fn get_window_history(state: State<'_, AppState>, port: String) -> Result<Vec<crate::buffer::log_line::LogLine>, String> {
+    let history = {
+        let conns = state.connections.lock().map_err(|e| e.to_string())?;
+        conns.get(&port).map(|h| h.rx_history.clone())
+    };
+    let Some(history) = history else { return Ok(Vec::new()) };
+    let (lines, _) = history.since(0);
+    Ok(lines.into_iter().map(|(_, _, line)| line).collect())
 }
 
 /// 前端调用:开一个新串口窗口(完整界面的复制品)。

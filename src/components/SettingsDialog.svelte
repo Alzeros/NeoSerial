@@ -54,8 +54,8 @@
   let editMcpAutoStart = $state(true);
   // MCP 端口编辑副本（默认 34594;被占自动递增。改后需重新 claude mcp add）
   let editMcpPort = $state(34594);
-  // "点 × 直接退出应用"编辑副本（从 cachedSettings 拷贝;默认 false = 收进托盘）
-  let editCloseExitsApp = $state(false);
+  // "后台运行"编辑副本（从 cachedSettings 拷贝;兜底值与后端 default_background_mode 一致=关）
+  let editBackgroundMode = $state(false);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -77,7 +77,7 @@
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
-    editCloseExitsApp = cachedSettings.value?.ui?.close_exits_app ?? false;
+    editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
     mcpCopied = false;
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
@@ -178,7 +178,7 @@
     if (base) {
       const next: Settings = {
         ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', close_exits_app: editCloseExitsApp },
+        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode },
         presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
         mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
       };
@@ -430,23 +430,25 @@
             <!-- 分隔：窗口行为 -->
             <div class="my-5 border-t border-[var(--border)]"></div>
 
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">窗口行为</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              关闭主窗口默认只收进系统托盘，串口连接与 MCP 服务继续运行；左键托盘图标可重新打开。
-            </div>
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">后台运行</div>
             <div class="flex items-center gap-3">
               <label class="switch">
-                <input type="checkbox" bind:checked={editCloseExitsApp} />
+                <input type="checkbox" bind:checked={editBackgroundMode} />
                 <span class="switch-track"></span>
-                <span class="switch-label">点 × 直接退出应用</span>
+                <span class="switch-label">后台运行（托盘常驻）</span>
               </label>
             </div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mt-1">
-              开启后关闭主窗口即断开所有连接、停止 MCP 服务（经典行为，不再进托盘）。
+            <div class="text-[12px] text-[var(--muted-foreground)] mt-2 leading-relaxed">
+              {#if editBackgroundMode}
+                开启：关闭窗口不断开串口连接，连接留在后台继续收发、存日志、跑序列；关掉最后一个窗口应用留在托盘，MCP 服务照常。
+                托盘右键菜单可重新打开后台连接、切到已开窗口或退出应用。
+              {:else}
+                关闭：不显示托盘图标。关闭窗口会断开该窗口自己建立的连接（agent 建立的交还 agent）；关掉最后一个窗口即退出应用、停止 MCP 服务。
+              {/if}
             </div>
             <div class="mt-4 flex items-center gap-3">
               <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => exitApp()}>退出 NeoSerial</button>
-              <span class="text-[12px] text-[var(--muted-foreground)]">与托盘菜单"退出"相同：断开所有连接并停止 MCP 服务。</span>
+              <span class="text-[12px] text-[var(--muted-foreground)]">断开所有连接并停止 MCP 服务（与托盘菜单"退出"相同）。</span>
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->
