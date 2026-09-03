@@ -188,7 +188,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（152 passed）
+cargo test           # Rust 单元测试（156 passed）
 npm run check        # Svelte/TypeScript 类型检查
 ```
 
