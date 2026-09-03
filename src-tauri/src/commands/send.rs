@@ -119,67 +119,31 @@ pub async fn send_file(
     .map_err(|e| format!("文件发送任务执行异常: {}", e))?
 }
 
-/// send_file 的同步实现(在阻塞线程池执行)。逻辑与旧同步 command 逐行一致。
+/// send_file 的同步实现(在阻塞线程池执行)。切块入队与"写完才返回"见
+/// connection::file_send;这里只负责把进度定向发给连接归属的窗口。
 fn send_file_impl(
     state: &AppState,
     app_handle: &tauri::AppHandle,
     path: String,
     port: Option<String>,
 ) -> Result<usize, String> {
-    let (write_tx, window_label) = {
+    let (write_tx, running, window_label) = {
         let conns = state.connections.lock().map_err(|e| e.to_string())?;
         let resolved = resolve_port(&conns, port)?;
         let handle = conns.get(&resolved).ok_or("未连接串口")?;
-        (handle.write_tx.clone(), handle.window_label.clone())
+        (handle.write_tx.clone(), handle.running.clone(), handle.window_label.clone())
     };
-    // 锁已在块内释放,send_file 的文件读 + 循环发送不持 connections 锁
+    // 锁已在块内释放,文件读 + 入队 + 等写完都不持 connections 锁
 
-    // 获取文件大小
-    let file = std::fs::File::open(&path).map_err(|e| format!("打开文件失败: {}", e))?;
-    let total_size = file.metadata().map_err(|e| e.to_string())?.len() as usize;
-    if total_size == 0 {
-        return Ok(0);
-    }
-
-    // 分块读取 + 发送，每块 1024 字节
-    use std::io::Read;
-    let mut reader = std::io::BufReader::new(file);
-    let mut buf = [0u8; 1024];
-    let mut sent = 0usize;
-    // 进度事件节流:旧版每 1KB chunk 一个(1MB 文件 = 1024 个事件),节流到
-    // ≥100ms 一个;循环结束后必发终值(100% 保证到达),进度条只是刷新变粗。
-    let mut last_progress = std::time::Instant::now();
-
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| format!("读取文件失败: {}", e))?;
-        if n == 0 {
-            break;
-        }
-        let chunk = buf[..n].to_vec();
-        write_tx.send(WriteCommand::Send(chunk))
-            .map_err(|e| format!("发送队列写入失败: {}", e))?;
-        sent += n;
-
-        if last_progress.elapsed() >= std::time::Duration::from_millis(100) {
-            last_progress = std::time::Instant::now();
-            let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
-            let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress {
-                sent,
-                total: total_size,
-            });
-        }
-    }
-
-    // 终值必发:节流可能压掉最后一个 chunk 的更新,这里保证前端进度到 100%。
-    let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
-    let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress {
-        sent,
-        total: total_size,
-    });
-
-    Ok(sent)
+    // 每次 emit 重新读 window_label:发送中窗口接管/交还连接,进度跟着去新窗口。
+    let emit_progress = |sent: usize, total: usize| {
+        let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
+        let _ = app_handle.emit_to(&wl, "file-send-progress", FileSendProgress { sent, total });
+    };
+    crate::connection::file_send::send_file_tracked(&write_tx, &running, &path, emit_progress)
 }
 
+/// sent 是写线程已实际写进驱动的字节数(不是入队数),total 为文件大小。
 #[derive(Clone, serde::Serialize)]
 pub struct FileSendProgress {
     pub sent: usize,

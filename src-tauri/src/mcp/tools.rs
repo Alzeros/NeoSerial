@@ -608,31 +608,18 @@ pub struct SendFileResp {
     pub sent: usize,
 }
 
-/// 发送文件(二进制安全)。分块 1024 字节写入,返回已发送字节数。
+/// 发送文件(二进制安全)。分块 1024 字节写入,写线程把最后一块写进驱动才返回,
+/// sent 即文件大小;中途断开/写错返回 ok:false 并带"已写出 x/y 字节"。
+/// 与 GUI 共用 connection::file_send 的实现,进度不回报(agent 只看返回)。
 pub fn send_file(shared: &McpShared, req: SendFileReq) -> Result<SendFileResp, ErrorResp> {
-    let write_tx = {
+    let (write_tx, running) = {
         let conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-        conns.get(&req.port)
-            .ok_or_else(|| ErrorResp::new(format!("端口 {} 未连接", req.port)))?
-            .write_tx.clone()
+        let handle = conns.get(&req.port)
+            .ok_or_else(|| ErrorResp::new(format!("端口 {} 未连接", req.port)))?;
+        (handle.write_tx.clone(), handle.running.clone())
     };
-    let file = std::fs::File::open(&req.path).map_err(|e| ErrorResp::new(format!("打开文件失败: {}", e)))?;
-    let total = file.metadata().map_err(|e| ErrorResp::new(e.to_string()))?.len() as usize;
-    if total == 0 {
-        return Ok(SendFileResp { ok: true, sent: 0 });
-    }
-    use std::io::Read;
-    let mut reader = std::io::BufReader::new(file);
-    let mut buf = [0u8; 1024];
-    let mut sent = 0usize;
-    loop {
-        let n = reader.read(&mut buf).map_err(|e| ErrorResp::new(format!("读取文件失败: {}", e)))?;
-        if n == 0 { break; }
-        let chunk = buf[..n].to_vec();
-        write_tx.send(WriteCommand::Send(chunk))
-            .map_err(|e| ErrorResp::new(format!("发送队列写入失败: {}", e)))?;
-        sent += n;
-    }
+    let sent = crate::connection::file_send::send_file_tracked(&write_tx, &running, &req.path, |_, _| {})
+        .map_err(ErrorResp::new)?;
     Ok(SendFileResp { ok: true, sent })
 }
 

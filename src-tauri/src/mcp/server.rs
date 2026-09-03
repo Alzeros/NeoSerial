@@ -194,7 +194,7 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 SEND_FILE,
-                "发送文件(二进制安全,用于固件/二进制烧录)。参数: port, path(文件绝对路径)。分块 1024 字节写入。返回 { ok, sent } 或 { ok:false, error }。",
+                "发送文件(二进制安全,用于固件/二进制烧录)。参数: port, path(文件绝对路径)。分块 1024 字节写入,阻塞到最后一字节写进串口驱动才返回(大文件按波特率可能要等几分钟),sent 等于文件大小。中途断开/写错返回 { ok:false, error }(带已写出 x/y 字节)。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {

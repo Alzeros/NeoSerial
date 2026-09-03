@@ -95,7 +95,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ### 线程模型
 
 - **读线程**: overlapped read（20ms 超时）→ `LineAssembler` 按 `\r\n` / `\n` / `\r` 切行 → 构造 `LogLine` → 批量 `emit_to`（攒够 16 行或超过 5ms）+ push per-conn `RxHistory`。超时时 flush 不换行的残尾。
-- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，逐条 `write_all`（overlapped write，等待上限按 长度/波特率 推算，短写循环补写，不合并积压命令）+ `emit_to` tx-line/tx-update。文件发送用 `Send`；手动发送/脚本序列/MCP 用 `SendSilent`（发起方已乐观回显，避免被写阻塞拖慢节奏）。
+- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，逐条 `write_all`（overlapped write，等待上限按 长度/波特率 推算，短写循环补写，零进展的超时重试至累计 3s 才判设备卡住，不合并积压命令）+ `emit_to` tx-line/tx-update。文件发送用 `FileChunk`（带 `FileSendTracker`，写线程每块写完累加实际写出字节；`send_file` 据此报进度并等最后一块写完才返回——"100%" 指驱动已收下全部字节，不是塞满了队列；某块写失败后同一文件余下的块直接丢弃）；手动发送/脚本序列/MCP 用 `SendSilent`（发起方已乐观回显，避免被写阻塞拖慢节奏）。
 - **存盘线程**: `FileLogger` 独立线程 + `BufWriter`，全局单份（多连接收发进同一文件）。
 - **监控线程**: 等待读/写线程都退出后清理状态并通知归属窗口断开。
 

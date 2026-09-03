@@ -1,3 +1,4 @@
+pub mod file_send;
 pub mod line_assembler;
 pub mod reader;
 pub mod writer;
@@ -33,9 +34,11 @@ pub fn is_detached_label(label: &str) -> bool {
 
 /// 发送到写线程的命令。
 pub enum WriteCommand {
-    Send(Vec<u8>),
-    /// 只写串口不 emit tx-line（调用方已自行 emit）。用于脚本序列：
-    /// sequence 线程按 delay 间隔发起并 emit，writer 异步写，避免写阻塞拖慢发起节奏。
+    /// 文件的一块:写入并 emit tx-line,写完把实际写出字节记到 tracker
+    /// (send_file 据此报进度、等最后一块写完;见 [`file_send::FileSendTracker`])。
+    FileChunk(Vec<u8>, Arc<file_send::FileSendTracker>),
+    /// 只写串口不 emit tx-line（调用方已自行 emit）。用于手动发送与脚本序列：
+    /// 发起方先回显,writer 异步写,避免写阻塞拖慢发起节奏。
     SendSilent(Vec<u8>),
     Close,
 }
