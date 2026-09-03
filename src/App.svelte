@@ -17,6 +17,7 @@
     connectionParams,
     currentPort,
     displayMode,
+    fileSendProgress,
     textEncoding,
     lineEnding,
     logLines,
@@ -310,9 +311,10 @@
         if (s.port) connectionParams.port = s.port;
         if (s.baud_rate) connectionParams.baudRate = s.baud_rate;
       }
-      // 断开时把当前 UI 设置落盘
+      // 断开时把当前 UI 设置落盘;文件发送进度也随连接作废(中途断开的那次不会再有结果)
       if (!s.connected) {
         persistSettings();
+        fileSendProgress.value = 0;
       }
     });
     const unlistenSeqDone = onSequenceDone((d) => {

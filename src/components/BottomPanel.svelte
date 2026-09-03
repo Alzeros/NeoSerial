@@ -23,6 +23,8 @@
 
   onMount(() => {
     const unlisten = onFileSendProgress((p) => {
+      // 只认本窗口正在进行的那次发送:失败/结束后迟到的进度事件、agent 对同一口发文件的进度都不上按钮
+      if (!fileSendBusy) return;
       fileSendProgress.value = p.total > 0 ? Math.round((p.sent / p.total) * 100) : 0;
     });
 
@@ -71,19 +73,33 @@
     }
   }
 
+  // 文件发送没有断点续传:每次点击都从头发当前选中的文件。进度和失败态只描述"这个文件的上一次发送",
+  // 换文件即作废——否则新文件名旁挂着旧文件的进度,用户分不清再点发的是哪个、从哪开始。
+  let fileSendBusy = $state(false);
+  let fileSendError = $state<string | null>(null);
+
   async function handleSelectFile() {
     const path = await openFileDialog('选择要发送的文件');
-    if (path) fileSendPath.value = path;
+    if (!path) return;
+    fileSendPath.value = path;
+    fileSendProgress.value = 0;
+    fileSendError = null;
   }
 
   async function handleSendFile() {
-    if (!fileSendPath.value) return;
+    if (!fileSendPath.value || fileSendBusy) return;
+    fileSendBusy = true;
+    fileSendError = null;
+    fileSendProgress.value = 0;
     try {
-      fileSendProgress.value = 0;
       await sendFile(windowPort.value!, fileSendPath.value);
       fileSendProgress.value = 100;
     } catch (e) {
       console.error('文件发送失败:', e);
+      fileSendError = String(e);
+      fileSendProgress.value = 0;
+    } finally {
+      fileSendBusy = false;
     }
   }
 
@@ -271,18 +287,26 @@
         >
           <span class="truncate">{fileSendPath.value || '点击选择发送文件路径'}</span>
         </button>
+        <!-- 发送中不用 disabled(:disabled 的 0.45 透明度会把进度填充层压得看不见),靠 handleSendFile 内拒绝重入。
+             失败态用内联样式:.btn-secondary 定义在 @tailwind utilities 之后,同权重的 bg-[...] 工具类会被它盖掉 -->
         <button
           class="relative overflow-hidden min-w-[96px] h-10 btn btn-secondary"
+          style={fileSendError
+            ? 'background: var(--danger-overlay); color: var(--error); border-color: var(--error);'
+            : fileSendBusy ? 'cursor: progress;' : ''}
           onclick={handleSendFile}
           disabled={!connected.value || !fileSendPath.value}
-          title="发送文件"
+          aria-busy={fileSendBusy}
+          title={fileSendError ? `发送失败：${fileSendError}` : '从头发送当前选中的文件'}
         >
           <!-- 进度填充层 -->
           <span
             class="absolute inset-y-0 left-0 transition-[width] duration-150"
             style="width: {fileSendProgress.value}%; background: var(--primary); opacity: 0.18;"
           ></span>
-          <span class="relative z-10 font-medium">发送文件 {fileSendProgress.value > 0 && fileSendProgress.value < 100 ? fileSendProgress.value + '%' : ''}</span>
+          <span class="relative z-10 font-medium">
+            {#if fileSendBusy}发送中 {fileSendProgress.value}%{:else if fileSendError}发送失败{:else}发送文件{/if}
+          </span>
         </button>
       </div>
     {/if}
