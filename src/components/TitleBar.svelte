@@ -1,11 +1,10 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
-  import { ask } from '@tauri-apps/plugin-dialog';
   import { onMount } from 'svelte';
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
-  import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest } from '$lib/stores';
-  import { openPortWindow, hasActiveSessions, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
+  import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
+  import { openPortWindow, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
   import SettingsDialog from '$components/SettingsDialog.svelte';
 
   const appWindow = getCurrentWindow();
@@ -28,24 +27,15 @@
     await appWindow.toggleMaximize();
   }
 
+  // main 的 × 由后端 CloseRequested 处理:默认收进托盘(连接与 MCP 常驻),
+  // 设置了"点 × 直接退出"才退出;副窗口 × 关本窗口(接管的连接回退给 mcp)。
+  // 都不再需要前端二次确认——关窗口不会再误杀其他窗口或 agent 会话。
   async function handleClose() {
-    // main 窗口:有其他窗口 或 活跃连接时,二次确认(关 main 会断所有连接+退 app+停 MCP)
-    if (isMain) {
-      const { other_windows, connections } = await hasActiveSessions();
-      if (other_windows > 0 || connections > 0) {
-        const detail = [
-          other_windows > 0 ? `${other_windows} 个其他窗口` : '',
-          connections > 0 ? `${connections} 个串口连接` : '',
-        ].filter(Boolean).join('、');
-        const confirmed = await ask(
-          `关闭主窗口会同时关闭${detail}并停止 MCP 服务,确定吗?`,
-          { title: '关闭 NeoSerial', kind: 'warning', okLabel: '关闭', cancelLabel: '取消' }
-        );
-        if (!confirmed) return;
-      }
-    }
     await appWindow.close();
   }
+  const closeTitle = $derived(
+    isMain && !cachedSettings.value?.ui?.close_exits_app ? '关闭到托盘' : '关闭'
+  );
 
   async function handleToggleAlwaysOnTop() {
     alwaysOnTop.value = !alwaysOnTop.value;
@@ -254,7 +244,7 @@
   <button
     class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--error)] hover:text-white cursor-pointer transition-colors"
     onclick={handleClose}
-    title="关闭"
+    title={closeTitle}
   >
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
       <path d="M1 1L11 11M11 1L1 11" stroke="currentColor" stroke-width="1.2" stroke-linecap="round" />

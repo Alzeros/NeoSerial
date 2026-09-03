@@ -5,12 +5,11 @@ mod connection;
 mod logging;
 mod mcp;
 mod state;
+mod tray;
 mod util;
 
-use tauri::{Emitter, Manager};
-use tauri::menu::{Menu, MenuItem};
-use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, has_active_sessions, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
+use tauri::Manager;
+use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
 use commands::logging::{start_logging, stop_logging, is_logging};
@@ -70,10 +69,10 @@ struct McpStatusResp {
 /// 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone)。
 /// 返回 RegistryHandle(供 connect/disconnect 工具调 update_connections)。
 fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registry::RegistryHandle> {
-    // 从设置读首选端口(默认 34594)。被占时 bind_port 向上递增最多 20 个找空闲——
-    // 这是多实例设计的一部分:第二个实例必然撞首选端口,递增绑定后把实际端口写进
-    // registry,agent 经 registry(或从 34594 起逐端口探测)找到实际端口。
-    // 固定 URL 配置(claude mcp add http://localhost:34594/mcp)只命中绑到首选端口的实例。
+    // 从设置读首选端口(默认 34594)。被占时 bind_port 向上递增最多 20 个找空闲
+    // (单实例后只剩"别的程序占了端口"这种情况),实际端口写进 registry,
+    // agent 经 registry(或从 34594 起逐端口探测)找到实际端口。
+    // 固定 URL 配置(claude mcp add http://localhost:34594/mcp)只命中绑到首选端口的情况。
     let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(34594);
     let (port, listener) = match mcp::server::bind_port(port) {
         Ok(p) => p,
@@ -115,9 +114,9 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
 }
 
 /// 断开所有连接 + 注销 registry + 退出应用。
-/// 被 CloseRequested（设置关闭=直接退出路径）、resolve_close（用户选退出）、
-/// 托盘"退出"菜单共用。
-fn cleanup_and_exit(state: &AppState, app_handle: &tauri::AppHandle) {
+/// 被 CloseRequested(设置"点 × 直接退出"路径)、exit_app 命令(设置页"退出")、
+/// 托盘"退出"菜单共用——这是应用真正退出的唯一出口。
+pub(crate) fn cleanup_and_exit(state: &AppState, app_handle: &tauri::AppHandle) {
     let ports: Vec<String> = {
         let conns = state.connections.lock().map(|c| {
             c.keys().cloned().collect::<Vec<_>>()
@@ -133,35 +132,23 @@ fn cleanup_and_exit(state: &AppState, app_handle: &tauri::AppHandle) {
     app_handle.exit(0);
 }
 
-/// 前端关闭确认弹窗的回调：用户选了"最小化到托盘"或"退出应用"。
-/// dont_remind=true 时把选择写入设置（close_prompted=true），下次不再弹窗。
+/// 应用内的"退出应用"入口(设置页按钮)。Windows 11 默认把托盘图标收进溢出区,
+/// 只靠托盘右键退出太隐蔽,应用内必须有一个可见出口。
 #[tauri::command]
-fn resolve_close(
-    minimize: bool,
-    dont_remind: bool,
-    state: tauri::State<'_, AppState>,
-    app_handle: tauri::AppHandle,
-) -> std::result::Result<(), String> {
-    if dont_remind {
-        if let Ok(mut s) = state.settings.lock() {
-            s.ui.close_prompted = true;
-            s.ui.minimize_to_tray = minimize;
-            let _ = s.save();
-        }
-    }
-    if minimize {
-        if let Some(window) = app_handle.get_webview_window("main") {
-            let _ = window.hide();
-        }
-    } else {
-        cleanup_and_exit(&state, &app_handle);
-    }
-    Ok(())
+fn exit_app(state: tauri::State<'_, AppState>, app_handle: tauri::AppHandle) {
+    cleanup_and_exit(&state, &app_handle);
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // 单实例必须最先注册。主窗口收进托盘后用户再双击图标"打开软件",若起了第二个
+        // 进程:MCP 落到 34595、第一个进程还占着 COM 口,第二个里连同一口报"被占用"。
+        // 二次启动只把已有实例的主窗口拉出来,然后自行退出。
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            tray::show_main_window(app);
+        }))
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_shell::init())
@@ -181,41 +168,7 @@ pub fn run() {
             };
             state.registry = registry;
             app.manage(state);
-            // 系统托盘：左键点击显示主窗口，右键菜单"显示窗口"/"退出"
-            let show_item = MenuItem::with_id(app, "tray-show", "显示窗口", true, None::<&str>)?;
-            let quit_item = MenuItem::with_id(app, "tray-quit", "退出", true, None::<&str>)?;
-            let tray_menu = Menu::with_items(app, &[&show_item, &quit_item])?;
-            TrayIconBuilder::with_id("main-tray")
-                .icon(app.default_window_icon().unwrap().clone())
-                .menu(&tray_menu)
-                .tooltip("NeoSerial")
-                .on_menu_event(|app, event| {
-                    match event.id().as_ref() {
-                        "tray-show" => {
-                            if let Some(window) = app.get_webview_window("main") {
-                                let _ = window.show();
-                                let _ = window.set_focus();
-                            }
-                        }
-                        "tray-quit" => {
-                            if let Some(state) = app.try_state::<AppState>() {
-                                cleanup_and_exit(&state, app);
-                            }
-                        }
-                        _ => {}
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    // 左键点击：显示主窗口（只显示，不切换隐藏）
-                    if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                        let app = tray.app_handle();
-                        if let Some(window) = app.get_webview_window("main") {
-                            let _ = window.show();
-                            let _ = window.set_focus();
-                        }
-                    }
-                })
-                .build(app)?;
+            tray::build_tray(app)?;
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
             Ok(())
@@ -246,7 +199,9 @@ pub fn run() {
                     }
                 }
                 // 窗口关闭生命周期:
-                // main 关 → 按 minimize_to_tray 设置决定隐藏到托盘还是退出;
+                // main 关 → 默认收进托盘(应用常驻,连接与 MCP 不受影响),不弹任何确认;
+                //   仅当用户在设置里选了"点 × 直接退出应用"才走退出。关窗口不再是退出的入口,
+                //   原先"关主窗口会误杀其他窗口和 agent 会话"的问题随之消失。
                 // 副窗口(win-*)关 → 回退本窗口接管的连接(改回 mcp label,不断开)后放行。
                 tauri::WindowEvent::CloseRequested { api, .. } => {
                     let label = window.label().to_string();
@@ -254,20 +209,13 @@ pub fn run() {
                     if let Some(state) = app_handle.try_state::<AppState>() {
                         if label == "main" {
                             api.prevent_close();
-                            let (minimize_to_tray, close_prompted) = state.settings.lock()
-                                .map(|s| (s.ui.minimize_to_tray, s.ui.close_prompted))
-                                .unwrap_or((true, false));
-                            if !minimize_to_tray {
-                                // 设置关闭=直接退出
+                            let close_exits_app = state.settings.lock()
+                                .map(|s| s.ui.close_exits_app)
+                                .unwrap_or(false);
+                            if close_exits_app {
                                 cleanup_and_exit(&state, &app_handle);
-                            } else if close_prompted {
-                                // 已弹过提示=直接隐藏到托盘
-                                if let Some(window) = app_handle.get_webview_window("main") {
-                                    let _ = window.hide();
-                                }
                             } else {
-                                // 首次：emit 给前端弹确认对话框
-                                let _ = app_handle.emit_to("main", "close-requested", ());
+                                tray::hide_main_to_tray(&app_handle, &state);
                             }
                         } else {
                             // 副窗口(win-{自增}):回退本窗口接管的连接(改回 mcp label,
@@ -290,10 +238,9 @@ pub fn run() {
             open_port_window,
             open_theme_editor,
             get_window_conn_state,
-            has_active_sessions,
             get_mcp_only_connections,
             take_pending_takeover,
-            resolve_close,
+            exit_app,
             send,
             send_file,
             get_settings,

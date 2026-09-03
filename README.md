@@ -16,7 +16,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 
 - **前端**: Svelte 5（$state 响应式）+ TypeScript + Tailwind CSS + Vite + lucide-svelte（图标）
 - **后端**: Rust + Tauri 2 + windows-sys（原生 overlapped I/O，绕过 serialport 同步 WriteFile 阻塞）+ crossbeam-channel + rmcp 3.1（MCP streamable HTTP）
-- **插件**: tauri-plugin-dialog / fs / shell / updater / process
+- **插件**: tauri-plugin-dialog / fs / shell / updater / process / single-instance / notification
 - **通信**: Tauri IPC（invoke + 定向 emit_to）+ MCP HTTP
 
 ## 多窗口 + MCP 共享串口
@@ -27,6 +27,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 - **MCP 共享连接**：agent `connect` 一个已被 GUI 连的端口 → 复用，不报冲突。`ConnectionHandle.window_label`（`Arc<RwLock>`）记录连接归属窗口，GUI 接管 MCP 连接时改此值，reader/writer 线程下次 emit 自动用新 label，无需重启线程。
 - **事件定向**：所有事件（rx-line/tx-line/sequence-progress 等）用 `emit_to(window_label)` 定向到归属窗口，前端用 `getCurrentWebview().listen` 接收，多窗口不串流。
 - **能力（capability）**：`capabilities/default.json` 的 `windows: ["main", "win-*"]` 用通配符授权所有窗口的监听/窗口控制/文件读写等权限。
+- **托盘常驻 + 单实例**：关主窗口只是收进系统托盘，串口连接与 MCP 服务照常运行（首次收托盘发一条系统通知说明）；托盘 tooltip 列出仍被占用的端口。真正退出只有托盘菜单"退出"或设置页"退出 NeoSerial"两个入口（设置里可选"点 × 直接退出"恢复经典行为）。单实例：主窗口收起后再次启动 exe 只会把已有窗口拉出来，不会起第二个进程去抢 COM 口和 MCP 端口。
 
 ### MCP 工具（16 个）
 
@@ -45,7 +46,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 | `get_sequence_status` | 查序列运行状态（端口断开导致中止后 running=false） |
 | `get_settings` / `save_settings` | 读/写配置（持久化） |
 
-agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`，优先找连接目标 COM 且心跳新鲜（30s 内）的实例；无则找空闲实例，再退化为从默认端口 34594 起逐端口 `get_status` 探测。Claude Code 配置：
+agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`（单实例下只有一条，记录实际 MCP 端口与已连端口，心跳 5s），没有新鲜（30s 内）条目就启动 NeoSerial；再退化为从默认端口 34594 起逐端口 `get_status` 探测。Claude Code 配置：
 
 ```
 claude mcp add --transport http neoserial http://localhost:34594/mcp
@@ -125,7 +126,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 | 设置 | `%APPDATA%\neoserial\settings.json` | 串口默认值、UI 偏好、命令组、错误关键词、预设波特率、主题、MCP 设置 |
 | 脚本序列 | `%APPDATA%\neoserial\sequence.json` | 脚本模块/页签/命令（防抖自动保存） |
 | 日志文件 | `%APPDATA%\neoserial\logs\` | 默认存盘目录 |
-| MCP registry | `%APPDATA%\neoserial\mcp-registry.json` | 多实例 port→COM 映射（供 agent 发现） |
+| MCP registry | `%APPDATA%\neoserial\mcp-registry.json` | 实例 MCP 端口 + 已连 COM 列表（供 agent 发现，心跳 5s） |
 
 - 配置损坏自动备份为 `.bad` 并回退默认值
 - 时间戳固定 UTC+8

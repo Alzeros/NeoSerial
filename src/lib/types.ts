@@ -116,10 +116,10 @@ export interface Settings {
     /** 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值 */
     log_font_cjk: string;
     text_encoding: 'Ascii' | 'Utf8' | 'Gbk';
-    /** 关闭主窗口时最小化到系统托盘（保持 MCP 服务运行） */
-    minimize_to_tray: boolean;
-    /** 是否已弹过首次关闭提示（true=不再弹） */
-    close_prompted: boolean;
+    /** 点主窗口 × 直接退出应用;默认 false = 收进系统托盘(连接与 MCP 服务常驻) */
+    close_exits_app: boolean;
+    /** 首次收进托盘的系统通知是否已发过。后端写,前端只透传 */
+    tray_hint_shown: boolean;
   };
   command_groups: CommandGroup[];
   error_keywords: string[];

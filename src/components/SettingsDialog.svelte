@@ -3,7 +3,7 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { saveSettings, getMcpStatus, openUrl, openThemeEditor } from '$lib/tauri';
+  import { saveSettings, getMcpStatus, openUrl, openThemeEditor, exitApp } from '$lib/tauri';
   import { Github } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings } from '$lib/types';
@@ -54,8 +54,8 @@
   let editMcpAutoStart = $state(true);
   // MCP 端口编辑副本（默认 34594;被占自动递增。改后需重新 claude mcp add）
   let editMcpPort = $state(34594);
-  // 最小化到托盘编辑副本（从 cachedSettings 拷贝）
-  let editMinimizeToTray = $state(true);
+  // "点 × 直接退出应用"编辑副本（从 cachedSettings 拷贝;默认 false = 收进托盘）
+  let editCloseExitsApp = $state(false);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -77,7 +77,7 @@
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
-    editMinimizeToTray = cachedSettings.value?.ui?.minimize_to_tray ?? true;
+    editCloseExitsApp = cachedSettings.value?.ui?.close_exits_app ?? false;
     mcpCopied = false;
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
@@ -178,7 +178,7 @@
     if (base) {
       const next: Settings = {
         ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', minimize_to_tray: editMinimizeToTray },
+        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', close_exits_app: editCloseExitsApp },
         presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
         mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
       };
@@ -431,15 +431,22 @@
             <div class="my-5 border-t border-[var(--border)]"></div>
 
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">窗口行为</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              关闭主窗口默认只收进系统托盘，串口连接与 MCP 服务继续运行；左键托盘图标可重新打开。
+            </div>
             <div class="flex items-center gap-3">
               <label class="switch">
-                <input type="checkbox" bind:checked={editMinimizeToTray} />
+                <input type="checkbox" bind:checked={editCloseExitsApp} />
                 <span class="switch-track"></span>
-                <span class="switch-label">关闭时最小化到托盘</span>
+                <span class="switch-label">点 × 直接退出应用</span>
               </label>
             </div>
             <div class="text-[12px] text-[var(--muted-foreground)] mt-1">
-              关闭主窗口时隐藏到系统托盘，MCP 服务和串口连接保持运行。
+              开启后关闭主窗口即断开所有连接、停止 MCP 服务（经典行为，不再进托盘）。
+            </div>
+            <div class="mt-4 flex items-center gap-3">
+              <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => exitApp()}>退出 NeoSerial</button>
+              <span class="text-[12px] text-[var(--muted-foreground)]">与托盘菜单"退出"相同：断开所有连接并停止 MCP 服务。</span>
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->

@@ -61,8 +61,6 @@
     onThemeChanged,
     onThemePreview,
     onThemeHighlight,
-    onCloseRequested,
-    resolveClose,
   } from '$lib/tauri';
   import { connect as connectPort } from '$lib/tauri';
 
@@ -190,30 +188,6 @@
 
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
-
-  // 关闭确认弹窗:用户点 × 首次关闭时,后端 emit close-requested,前端弹窗选择
-  let closeDialogOpen = $state(false);
-  let closeDontRemind = $state(false);
-
-  // 把选择告诉后端(minimize=false 时后端直接退出,await 可能永不返回,先关弹窗)。
-  // 勾了"不再提醒"时后端会改 settings 里的 close_prompted/minimize_to_tray;这里同步进
-  // cachedSettings,否则本窗口后续整份回传(persistSettings 等)带的还是旧值。
-  // 后端 save_settings 也会以内存态覆盖 close_prompted,这里是让前端快照自身保持一致。
-  async function handleResolveClose(minimize: boolean) {
-    const dontRemind = closeDontRemind;
-    closeDialogOpen = false;
-    closeDontRemind = false;
-    try {
-      await resolveClose(minimize, dontRemind);
-      const base = cachedSettings.value;
-      if (dontRemind && base) {
-        base.ui.close_prompted = true;
-        base.ui.minimize_to_tray = minimize;
-      }
-    } catch (e) {
-      console.error('处理关闭选择失败:', e);
-    }
-  }
 
   onMount(() => {
     // 主题编辑器窗口:不加载串口连接等设置,ThemeEditor 组件自行加载主题
@@ -353,11 +327,6 @@
     document.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('resize', handleResize);
 
-    // 关闭确认:后端 emit close-requested 时弹窗
-    const unlistenClose = onCloseRequested(() => {
-      closeDialogOpen = true;
-    });
-
     return () => {
       unlistenRxLine.then((f) => f());
       unlistenTxLine.then((f) => f());
@@ -371,7 +340,6 @@
       unlistenTheme.then((f) => f());
       unlistenPreview.then((f) => f());
       unlistenHighlight.then((f) => f());
-      unlistenClose.then((f) => f());
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
@@ -587,39 +555,6 @@
         class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] text-[var(--foreground)] transition-colors cursor-pointer"
         onclick={inputSelectAll}
       >全选</button>
-    </div>
-  {/if}
-
-  <!-- 关闭确认弹窗:首次点 × 时弹出,选择最小化到托盘或退出 -->
-  {#if closeDialogOpen}
-    <div
-      class="fixed inset-0 z-[100] flex items-center justify-center"
-      style="background: rgba(0,0,0,0.35);"
-      onclick={() => { closeDialogOpen = false; closeDontRemind = false; }}
-    >
-      <div
-        class="rounded-lg shadow-xl w-[340px] border"
-        style="background: var(--background-elevated); border-color: var(--border);"
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={(e) => { if (e.key === 'Escape') { closeDialogOpen = false; closeDontRemind = false; } }}
-      >
-        <div class="px-6 py-5">
-          <div class="text-[14px] font-medium text-[var(--foreground)] mb-2">关闭窗口</div>
-          <div class="text-[13px] text-[var(--muted-foreground)] mb-4">
-            最小化到系统托盘后，MCP 服务和串口连接将继续运行。<br />
-            退出应用将断开所有连接并停止 MCP 服务。
-          </div>
-          <label class="flex items-center gap-2 cursor-pointer select-none mb-1">
-            <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={closeDontRemind} />
-            <span class="text-[12px] text-[var(--muted-foreground)]">不再提醒</span>
-          </label>
-        </div>
-        <div class="flex justify-end gap-2 px-4 pb-4">
-          <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={() => { closeDialogOpen = false; closeDontRemind = false; }}>取消</button>
-          <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => handleResolveClose(false)}>退出应用</button>
-          <button class="btn btn-primary" style="padding: 6px 14px;" onclick={() => handleResolveClose(true)}>最小化到托盘</button>
-        </div>
-      </div>
     </div>
   {/if}
 </div>

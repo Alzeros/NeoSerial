@@ -181,13 +181,22 @@ fn connect_impl(
             return Err(e);
         }
     };
-    // 重取锁 insert。占位期间没有别的 connect 能走到 spawn,这里必然是空位。
-    {
+    // 重取锁 insert + 取快照。占位期间没有别的 connect 能走到 spawn,这里必然是空位。
+    let snapshot: Vec<crate::mcp::registry::ConnInfo> = {
         let mut conns = state.connections.lock().map_err(|e| e.to_string())?;
         conns.insert(port.clone(), handle);
-    }
+        conns.values()
+            .map(|h| crate::mcp::registry::ConnInfo { com: h.port.clone(), baud: h.baud })
+            .collect()
+    };
     // 先 insert 再放占位:两者之间到来的 connect 会命中 connections 走正常复用/接管路径。
     drop(guard);
+    // 与 MCP connect 同步:registry 记下 GUI 连的口,agent 按 COM 找实例才找得到;
+    // 全局广播连接集合变化(托盘 tooltip 靠它刷新;chip 列表多刷一次无害)。
+    if let Some(reg) = state.registry.as_ref() {
+        let _ = reg.update_connections(snapshot);
+    }
+    let _ = app_handle.emit("mcp-connections-changed", ());
     Ok(())
 }
 
@@ -367,28 +376,6 @@ pub fn get_mcp_only_connections(state: State<'_, AppState>) -> Result<Vec<McpOnl
     // 按 port 排序,保证 chip 顺序稳定(COM 号顺序)
     list.sort_by(|a, b| a.port.cmp(&b.port));
     Ok(list)
-}
-
-/// 查询是否有"需要二次确认关闭"的活跃会话:其他可见窗口 + 活跃连接。
-/// 供 main 窗口关闭按钮判断是否弹确认(关 main 会断所有连接+退 app+停 MCP)。
-#[derive(serde::Serialize)]
-pub struct ActiveSessions {
-    /// 其他可见窗口数(非 main 的 win-* 窗口)
-    pub other_windows: usize,
-    /// 活跃串口连接数
-    pub connections: usize,
-}
-
-#[tauri::command]
-pub fn has_active_sessions(state: State<'_, AppState>, app_handle: tauri::AppHandle) -> Result<ActiveSessions, String> {
-    let connections = state.connections.lock().map_err(|e| e.to_string())?.len();
-    // 其他可见窗口:非 main 的 webview 窗口
-    use tauri::Manager;
-    let other_windows = app_handle.webview_windows()
-        .into_iter()
-        .filter(|(label, _)| label != "main")
-        .count();
-    Ok(ActiveSessions { other_windows, connections })
 }
 
 /// 前端调用:开一个新串口窗口(完整界面的复制品)。

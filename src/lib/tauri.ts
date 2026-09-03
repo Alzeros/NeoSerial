@@ -77,15 +77,6 @@ export async function takePendingTakeover(): Promise<McpOnlyConn | null> {
   return await invoke<McpOnlyConn | null>('take_pending_takeover');
 }
 
-/** 查活跃会话(其他窗口数 + 连接数),供 main 关闭二次确认。 */
-export interface ActiveSessions {
-  other_windows: number;
-  connections: number;
-}
-export async function hasActiveSessions(): Promise<ActiveSessions> {
-  return await invoke<ActiveSessions>('has_active_sessions');
-}
-
 /** 用系统默认浏览器打开 URL(关于页 GitHub 链接)。 */
 export async function openUrl(url: string): Promise<void> {
   await invoke('open_url', { url });
@@ -324,15 +315,8 @@ export function onMcpConnectionsChanged(cb: () => void) {
 
 // ============ 系统托盘 ============
 
-/** close-requested 事件:用户点 × 关闭主窗口,后端读设置发现需要弹首次提示,
- *  emit 给前端显示确认对话框（最小化到托盘 / 退出应用 + 不再提醒）。 */
-export function onCloseRequested(cb: () => void) {
-  return getCurrentWebview().listen('close-requested', () => cb());
-}
-
-/** 关闭确认弹窗的回调:告诉后端用户选择。
- *  minimize=true 隐藏到托盘, false 退出应用。
- *  dontRemind=true 时把选择写入设置（不再弹窗）。 */
-export async function resolveClose(minimize: boolean, dontRemind: boolean): Promise<void> {
-  await invoke('resolve_close', { minimize, dontRemind });
+/** 真正退出应用(断开所有连接、停 MCP、注销 registry)。主窗口 × 只是收进托盘,
+ *  这是应用内唯一的退出入口(设置页按钮),与托盘菜单"退出"同一后端路径。 */
+export async function exitApp(): Promise<void> {
+  await invoke('exit_app');
 }

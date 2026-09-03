@@ -103,20 +103,17 @@ pub struct UiSettings {
     /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
     #[serde(default = "default_text_encoding")]
     pub text_encoding: TextEncoding,
-    /// 关闭主窗口时最小化到系统托盘（保持 MCP 服务运行），默认 true
-    #[serde(default = "default_minimize_to_tray")]
-    pub minimize_to_tray: bool,
-    /// 是否已弹过首次关闭提示（true=不再弹，直接按用户上次选择执行）
+    /// 点主窗口 × 直接退出应用(经典行为)。默认 false = 收进系统托盘,
+    /// 串口连接与 MCP 服务常驻,只有托盘菜单/设置页"退出"才真正退出。
     #[serde(default)]
-    pub close_prompted: bool,
+    pub close_exits_app: bool,
+    /// 首次收进托盘的系统通知是否已发过(只提示一次)。后端写,见 merge_backend_owned。
+    #[serde(default)]
+    pub tray_hint_shown: bool,
 }
 
 fn default_text_encoding() -> TextEncoding {
     TextEncoding::Ascii
-}
-
-fn default_minimize_to_tray() -> bool {
-    true
 }
 
 fn default_log_font_size() -> u32 {
@@ -187,7 +184,7 @@ pub struct McpSettings {
     #[serde(default = "default_mcp_auto_start")]
     pub auto_start: bool,
     /// MCP server **首选**监听端口（默认 34594）。
-    /// 被占时自动向上递增(最多 +20)找空闲绑定——多实例场景第二个实例必然撞首选端口。
+    /// 被占时(别的程序占了该端口)自动向上递增(最多 +20)找空闲绑定。
     /// 实际绑定端口见设置页(get_mcp_status)与 registry。
     /// claude mcp add 的固定 URL 只命中绑到首选端口的实例;改端口后需重新配置。
     #[serde(default = "default_mcp_port")]
@@ -255,8 +252,8 @@ impl Settings {
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
-                minimize_to_tray: default_minimize_to_tray(),
-                close_prompted: false,
+                close_exits_app: false,
+                tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup::default_group()],
             error_keywords: vec![
@@ -307,10 +304,19 @@ impl Settings {
     ///
     /// 前端/MCP 的 save_settings 回传的是整份 Settings,基于调用方手里(可能已过期)的快照;
     /// 后端自行改过、调用方拿不到的字段若照单全收就会被冲回旧值。目前只有
-    /// `ui.close_prompted`(用户在关闭确认框勾"不再提醒"时由 resolve_close 写),
+    /// `ui.tray_hint_shown`(主窗口首次收进托盘时由 mark_tray_hint_shown 写),
     /// 后续再有这类字段加到这里。
     pub fn merge_backend_owned(&mut self, current: &Settings) {
-        self.ui.close_prompted = current.ui.close_prompted;
+        self.ui.tray_hint_shown = current.ui.tray_hint_shown;
+    }
+
+    /// 首次收进托盘的提示只发一次:未发过则置标记并返回 true(调用方负责落盘与发通知)。
+    pub fn mark_tray_hint_shown(&mut self) -> bool {
+        if self.ui.tray_hint_shown {
+            return false;
+        }
+        self.ui.tray_hint_shown = true;
+        true
     }
 
     /// 保存配置。目录不存在会创建。
@@ -372,8 +378,8 @@ impl LegacySettings {
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
-                minimize_to_tray: default_minimize_to_tray(),
-                close_prompted: false,
+                close_exits_app: false,
+                tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup {
                 name: "默认".into(),
@@ -523,6 +529,48 @@ mod tests {
         let s = Settings::default_settings();
         assert!(s.ui.show_timestamp);
         assert!(s.ui.log_send);
+    }
+
+    /// 关闭行为默认:点 × 收进托盘(close_exits_app=false),首次收托盘提示尚未显示。
+    #[test]
+    fn test_default_close_behavior_is_tray() {
+        let s = Settings::default_settings();
+        assert!(!s.ui.close_exits_app);
+        assert!(!s.ui.tray_hint_shown);
+    }
+
+    /// mark_tray_hint_shown:首次返回 true(该提示),之后一直 false,且标记落在字段上。
+    #[test]
+    fn test_mark_tray_hint_shown_only_first_time() {
+        let mut s = Settings::default_settings();
+        assert!(s.mark_tray_hint_shown(), "首次应提示");
+        assert!(s.ui.tray_hint_shown);
+        assert!(!s.mark_tray_hint_shown(), "第二次不再提示");
+    }
+
+    /// 前端/MCP 整份回写带的是旧快照(tray_hint_shown=false),不能把后端已置 true 的标记冲掉。
+    #[test]
+    fn test_merge_backend_owned_keeps_tray_hint_shown() {
+        let mut current = Settings::default_settings();
+        current.ui.tray_hint_shown = true;
+        let mut incoming = Settings::default_settings();
+        incoming.ui.tray_hint_shown = false;
+        incoming.ui.close_exits_app = true;
+        incoming.merge_backend_owned(&current);
+        assert!(incoming.ui.tray_hint_shown, "后端持有字段以内存态为准");
+        assert!(incoming.ui.close_exits_app, "用户可改字段照回写值");
+    }
+
+    /// 旧开发版写过 ui.minimize_to_tray / ui.close_prompted,读到这两个多余键应忽略而非解析失败。
+    #[test]
+    fn test_load_ignores_removed_tray_fields() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        let ui = v["ui"].as_object_mut().unwrap();
+        ui.insert("minimize_to_tray".into(), serde_json::Value::Bool(false));
+        ui.insert("close_prompted".into(), serde_json::Value::Bool(true));
+        let s: Settings = serde_json::from_value(v).expect("多余的旧键应被忽略");
+        assert!(!s.ui.close_exits_app);
+        assert!(!s.ui.tray_hint_shown);
     }
 
     #[test]
