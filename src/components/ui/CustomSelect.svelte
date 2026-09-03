@@ -37,6 +37,19 @@
     open = false;
   }
 
+  // 选项是 div,不算交互元素:组件若放在 <label> 里(连接栏就是),点选项后 label 的默认行为
+  // 会再给触发按钮补一次合成 click,把刚关掉的列表重新打开。preventDefault 取消这个默认行为。
+  function handleOptionClick(e: MouseEvent, opt: { label: string; value: string }) {
+    e.preventDefault();
+    selectOption(opt);
+  }
+
+  function handleAddClick(e: MouseEvent) {
+    e.preventDefault();
+    onAddOption?.();
+    open = false;
+  }
+
   function handleKeyDown(e: KeyboardEvent) {
     if (disabled) return;
     if (!open) {
@@ -125,7 +138,7 @@
           style="height: 30px; padding: 0 12px; font-size: 13px; line-height: 1;
             {i === highlightIndex ? 'background: var(--overlay-hover);' : ''}
             {opt.value === value ? 'color: var(--primary); font-weight: 600;' : 'color: var(--foreground);'}"
-          onclick={() => selectOption(opt)}
+          onclick={(e) => handleOptionClick(e, opt)}
           onmouseenter={() => (highlightIndex = i)}
         >
           {opt.label}
@@ -138,7 +151,7 @@
           style="height: 30px; padding: 0 12px; font-size: 13px; line-height: 1;
             {highlightIndex === options.length ? 'background: var(--overlay-hover);' : ''}
             color: var(--primary);"
-          onclick={() => { onAddOption(); open = false; }}
+          onclick={handleAddClick}
           onmouseenter={() => (highlightIndex = options.length)}
         >
           <svg width="10" height="10" viewBox="0 0 12 12" fill="none">
