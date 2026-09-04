@@ -1,6 +1,7 @@
 pub mod settings;
 pub mod command_group;
 pub mod command_index;
+pub mod send_history;
 
 use std::path::PathBuf;
 
