@@ -53,6 +53,10 @@
     return matchSuggestions(q, manualEntries, commandIndex.history);
   });
 
+  // 列表自下而上展示:rank 0(最佳匹配/最近发送的历史)贴着输入框渲染在最下,↑ 从输入框
+  // 进入后向上走。内部逻辑(高亮/预览/Tab 兜底)全用 rank 下标,只在渲染这一处反转。
+  const rows = $derived(items.map((item, i) => ({ item, i })).reverse());
+
   const open = $derived(items.length > 0 && query !== dismissedFor);
   const hasManual = $derived(items.some((i) => i.kind === 'manual'));
   // 详情卡显示项:有高亮看高亮,否则预览第 0 项(列表不画高亮条)
@@ -97,6 +101,17 @@
     listEl?.querySelector<HTMLElement>(`[data-idx="${highlight}"]`)?.scrollIntoView({ block: 'nearest' });
   }
 
+  // 列表反转后 rank 0(最佳候选)在 DOM 末尾:候选多到溢出时,滚动默认停在 DOM 顶部=最旧的
+  // 候选,贴输入框的最佳候选反而看不见。弹层刚开、还没高亮时把滚动钉到底部;之后有高亮
+  // 就交给 scrollHighlightIntoView,这里不再动。
+  $effect(() => {
+    if (open && highlight < 0) {
+      void tick().then(() => {
+        if (listEl && highlight < 0) listEl.scrollTop = listEl.scrollHeight;
+      });
+    }
+  });
+
   /** 父组件 handleKeydown 先调这里;返回 true 表示该键已被弹层处理。
    *  无高亮时的回车返回 false → 父组件照旧发送。IME 组合中一律不处理。 */
   export function handleKey(e: KeyboardEvent): boolean {
@@ -113,27 +128,21 @@
       return false;
     }
     switch (e.key) {
+      // 弹层在输入框上方(bottom-full)且列表反转(最佳候选贴着输入框):
+      // ↑ 是唯一"进入列表"的键,进入即选中贴着输入框的最佳候选,继续 ↑ 向列表上方翻;
+      // ↓ 只在高亮列表内向下走(回向输入框方向),无高亮时放行给输入框。
       case 'ArrowDown':
+        if (highlight < 0) return false;
         e.preventDefault();
-        highlight = Math.min(highlight + 1, items.length - 1);
+        // 视觉下方 = rank 减小(向贴输入框的最佳候选回);高亮可能因后台刷新越界,先夹回再移
+        highlight = Math.max(Math.min(highlight, items.length) - 1, 0);
         sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
       case 'ArrowUp':
-        if (highlight < 0) {
-          // 普通联想里无高亮的 ↑ 不吃掉,光标行为交还输入框;
-          // 历史列表模式选中最近一条——↑↑回车 = 重发上一条
-          if (!forcedHistory) return false;
-          e.preventDefault();
-          highlight = 0;
-          scrollHighlightIntoView();
-          return true;
-        }
         e.preventDefault();
-        // 高亮可能因后台刷新导致 items 变短而越界:先夹回范围再上移
-        highlight = Math.max(Math.min(highlight, items.length) - 1, -1);
-        // 历史列表模式最上只到第 0 项,避免 ↑ 在 -1/0 之间振荡
-        if (forcedHistory && highlight < 0) highlight = 0;
+        // 无高亮 → 最佳候选(rank 0,视觉上在最下贴着输入框);继续 ↑ 向视觉上方移动
+        highlight = Math.min(highlight + 1, items.length - 1);
         sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
@@ -176,7 +185,7 @@
   >
     <!-- 左:候选列表(只有历史项时占满);role="listbox" 放这里使 option 行是其直接子元素 -->
     <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="flex: {hasManual ? '0 0 40%' : '1 1 auto'}; min-width: 220px;">
-      {#each items as item, i (item.kind === 'history' ? 'h:' + item.text : 'm:' + item.entry.key)}
+      {#each rows as { item, i } (item.kind === 'history' ? 'h:' + item.text : 'm:' + item.entry.key)}
         {@const text = item.kind === 'history' ? item.text : item.entry.key}
         {@const [before, hit, after] = splitMatch(text)}
         <div
