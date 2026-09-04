@@ -35,8 +35,12 @@ axum = { version = "0.8", features = ["http1", "tokio"], default-features = fals
 tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 tokio-util = "0.7"
 # 知识库手册指令索引拉取(纯 http 内网)。updater 插件已带 reqwest 0.13(rustls-no-provider+json),
-# 这里关掉默认特性只复用它那份:开默认会多拉 aws-lc-sys(cmake C 编译)、quinn(HTTP/3)等一整套
-reqwest = { version = "0.13", default-features = false, features = ["json"] }
+# 这里关掉默认特性只复用它那份:开默认会多拉 aws-lc-sys(cmake C 编译)、quinn(HTTP/3)等一整套。
+# rustls-no-provider 必须显式再写一遍:该特性下建 Client 前必须先装全局 crypto provider
+# (见 command_index.rs ensure_crypto_provider),否则 Client::build() 直接 panic。
+reqwest = { version = "0.13", default-features = false, features = ["json", "rustls-no-provider"] }
+# 只为 reqwest(rustls-no-provider) 装 ring crypto provider,ring 已被 rustls 传递依赖带入,零新增 crate
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_System_Threading", "Win32_Devices_Communication", "Win32_Storage_FileSystem", "Win32_Security"] }

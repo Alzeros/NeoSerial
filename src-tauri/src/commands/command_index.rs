@@ -153,6 +153,16 @@ async fn fetch_all_commands(
     Ok(items)
 }
 
+/// reqwest 以 updater 插件传递带入的 rustls-no-provider 特性编译,建 Client 前必须已装
+/// 全局 rustls crypto provider,否则 Client::build() panic(纯 http 也一样,检查在建 Client 时)。
+/// 用与 updater 插件相同的 ring provider:装过(updater 先跑过检查更新)就跳过,失败也不拦
+/// (极小概率的并发安装竞争,输家下次 get_default 能拿到赢家装的)。
+fn ensure_crypto_provider() {
+    if rustls::crypto::CryptoProvider::get_default().is_none() {
+        let _ = rustls::crypto::ring::default_provider().install_default();
+    }
+}
+
 /// 刷新主流程(不落盘、不广播):手册列表 → 逐本拉指令 → 与旧缓存合并。
 /// 单本失败不中断,记进 failed 并沿用旧缓存;手册列表本身失败整体返错。
 /// 对所有 cmd_status=done 的手册都拉,不按 disabled_doc_ids 跳过(那是前端显示层过滤)。
@@ -167,6 +177,7 @@ pub async fn refresh_impl(
     if base.is_empty() || key.is_empty() {
         return Err("请先填写知识库地址和 API Key".into());
     }
+    ensure_crypto_provider();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
         .build()
@@ -334,6 +345,14 @@ mod tests {
         assert_eq!(normalize_base_url(" http://10.12.16.11:8200/ "), "http://10.12.16.11:8200");
         assert_eq!(normalize_base_url("http://h:8200//"), "http://h:8200");
         assert_eq!(normalize_base_url("   "), "");
+    }
+
+    /// rustls-no-provider 特性下,没装全局 crypto provider 时建 Client 直接 panic
+    /// (线上踩过:设置页刷新指令库按钮永远"刷新中…")。装了必须能建出来。
+    #[test]
+    fn test_client_builds_after_crypto_provider_installed() {
+        ensure_crypto_provider();
+        reqwest::Client::builder().build().expect("装了 provider 后建 Client 不应失败");
     }
 
     /// 接口 { total, items[] } 形态(items 带 created_at、page_no 有值)能解析。
