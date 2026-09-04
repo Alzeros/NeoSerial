@@ -74,8 +74,9 @@
     const isHex = hexSend.value;
     try {
       await send(windowPort.value!, text, lineEnding.value, isHex);
-      // 发送后保留输入内容，便于重复发送/修改后再发;联想收起到文本再变化
-      suggest?.dismiss();
+      // 发送后保留输入内容，便于重复发送/修改后再发;联想收起到文本再变化。
+      // await 期间已开始输入下一条时不收起——dismiss 记的是"当前文本",会误伤新输入的联想
+      if (sendText.value === text) suggest?.dismiss();
       // 只记输入框手动发送的文本指令;HEX 内容不记(联想在 HEX 模式下也不弹)
       if (!isHex) {
         sendHistoryPush(text).catch((e) => console.error('记录发送历史失败:', e));

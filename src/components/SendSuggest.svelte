@@ -120,9 +120,20 @@
         scrollHighlightIntoView();
         return true;
       case 'ArrowUp':
+        if (highlight < 0) {
+          // 普通联想里无高亮的 ↑ 不吃掉,光标行为交还输入框;
+          // 历史列表模式选中最近一条——↑↑回车 = 重发上一条
+          if (!forcedHistory) return false;
+          e.preventDefault();
+          highlight = 0;
+          scrollHighlightIntoView();
+          return true;
+        }
         e.preventDefault();
         // 高亮可能因后台刷新导致 items 变短而越界:先夹回范围再上移
         highlight = Math.max(Math.min(highlight, items.length) - 1, -1);
+        // 历史列表模式最上只到第 0 项,避免 ↑ 在 -1/0 之间振荡
+        if (forcedHistory && highlight < 0) highlight = 0;
         sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
@@ -132,6 +143,8 @@
         acceptItem(items[highlight]);
         return true;
       case 'Tab':
+        // Shift+Tab 是反向焦点导航,不劫持
+        if (e.shiftKey) return false;
         e.preventDefault();
         acceptItem(items[highlight >= 0 && highlight < items.length ? highlight : 0]);
         return true;
