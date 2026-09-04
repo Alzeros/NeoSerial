@@ -1,18 +1,15 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { cachedSettings } from '$lib/stores';
+  import { cachedSettings, previewedCommand, suggestFillRequest } from '$lib/stores';
   import { commandIndex } from '$lib/commandIndex';
   import {
     buildManualEntries,
     displayName,
     docTitle,
-    exampleLines,
     matchSuggestions,
     shortTitle,
-    splitSyntax,
     type Suggestion,
   } from '$lib/suggest';
-  import type { ManualCommand } from '$lib/types';
 
   let {
     query,
@@ -32,8 +29,6 @@
 
   // 键盘高亮项;-1 = 无高亮(此时回车照旧发送)。只由键盘改,鼠标悬停不改。
   let highlight = $state(-1);
-  // 详情卡当前看的来源:0 = 主记录,n = alsoIn[n-1]
-  let sourceIndex = $state(0);
   // 空输入按 ↑ 弹出的纯历史列表
   let forcedHistory = $state(false);
   // 收起态记的是"针对哪段文本收起":Esc/发送/失焦时记当前文本,接受候选时记将要填入的文本;
@@ -58,20 +53,34 @@
   const rows = $derived(items.map((item, i) => ({ item, i })).reverse());
 
   const open = $derived(items.length > 0 && query !== dismissedFor);
-  const hasManual = $derived(items.some((i) => i.kind === 'manual'));
-  // 详情卡显示项:有高亮看高亮,否则预览第 0 项(列表不画高亮条)
+  // 详情卡显示项:有高亮看高亮,否则预览第 0 项(列表不画高亮条)。供右栏参考面板展示
   const previewIndex = $derived(highlight >= 0 && highlight < items.length ? highlight : 0);
   const preview = $derived(open ? items[previewIndex] : undefined);
-  const record = $derived.by((): ManualCommand | null => {
-    if (!preview || preview.kind !== 'manual') return null;
-    const e = preview.entry;
-    return sourceIndex === 0 ? e.primary : (e.alsoIn[sourceIndex - 1] ?? e.primary);
+
+  // 广播当前预览项给右栏参考面板:popup 开着就发(高亮项或默认 rank 0),关闭后不清(保持上次)。
+  // 预览项变化即复位 sourceIndex=0(右栏"也见于"切换改 sourceIndex 不触发本 effect,故不会回退)。
+  $effect(() => {
+    const p = preview;
+    if (p) {
+      previewedCommand.suggestion = p;
+      previewedCommand.sourceIndex = 0;
+    }
   });
 
-  /** 父组件在输入框 oninput 时调:文本变了,高亮与来源复位。 */
+  // 右栏"点示例填入":nonce 变化即走自己的 accept(填输入框 + 设 dismissedFor 防弹层重开)。
+  // 读 nonce 不读 text:accept 内部会改 query 相关态,不与 text 形成环。
+  let lastFillNonce = 0;
+  $effect(() => {
+    const n = suggestFillRequest.nonce;
+    if (n !== lastFillNonce) {
+      lastFillNonce = n;
+      accept(suggestFillRequest.text);
+    }
+  });
+
+  /** 父组件在输入框 oninput 时调:文本变了,高亮复位。 */
   export function onInput() {
     highlight = -1;
-    sourceIndex = 0;
     forcedHistory = false;
   }
 
@@ -86,7 +95,6 @@
     dismissedFor = text;
     forcedHistory = false;
     highlight = -1;
-    sourceIndex = 0;
     onAccept(text);
   }
 
@@ -136,14 +144,14 @@
         e.preventDefault();
         // 视觉下方 = rank 减小(向贴输入框的最佳候选回);高亮可能因后台刷新越界,先夹回再移
         highlight = Math.max(Math.min(highlight, items.length) - 1, 0);
-        sourceIndex = 0;
+        previewedCommand.sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
       case 'ArrowUp':
         e.preventDefault();
         // 无高亮 → 最佳候选(rank 0,视觉上在最下贴着输入框);继续 ↑ 向视觉上方移动
         highlight = Math.min(highlight + 1, items.length - 1);
-        sourceIndex = 0;
+        previewedCommand.sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
       case 'Enter':
@@ -178,13 +186,13 @@
 {#if open}
   <!-- mousedown 阻止默认:点弹层不让输入框失焦(失焦会收起),点完焦点仍在输入框 -->
   <div
-    class="absolute left-0 right-0 bottom-full mb-1 z-[300] flex overflow-hidden"
+    class="absolute left-0 right-0 bottom-full mb-1 z-[300] overflow-hidden"
     style="background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 320px;"
     tabindex="-1"
     onmousedown={(e) => e.preventDefault()}
   >
-    <!-- 左:候选列表(只有历史项时占满);role="listbox" 放这里使 option 行是其直接子元素 -->
-    <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="flex: {hasManual ? '0 0 40%' : '1 1 auto'}; min-width: 220px;">
+    <!-- 候选列表:弹层只放列表,详情在右栏 CommandDetail。role="listbox" 放这里使 option 行是其直接子元素 -->
+    <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="min-width: 0;">
       {#each rows as { item, i } (item.kind === 'history' ? 'h:' + item.text : 'm:' + item.entry.key)}
         {@const text = item.kind === 'history' ? item.text : item.entry.key}
         {@const [before, hit, after] = splitMatch(text)}
@@ -208,89 +216,11 @@
         </div>
       {/each}
     </div>
-
-    <!-- 右:详情卡(只有历史项时不显示) -->
-    {#if hasManual && preview}
-      <div class="overflow-y-auto px-4 py-3 text-[12px] leading-relaxed" style="flex: 1 1 60%; border-left: 1px solid var(--border); color: var(--foreground);">
-        {#if preview.kind === 'history'}
-          <div class="text-[13px] break-all" style="font-family: var(--font-mono);">{preview.text}</div>
-          <div class="mt-1" style="color: var(--muted-foreground);">来自发送历史</div>
-        {:else if preview.kind === 'manual' && record}
-          {@const entry = preview.entry}
-          <div class="flex items-baseline gap-2 flex-wrap">
-            <span class="text-[13px] font-semibold" style="font-family: var(--font-mono);">{record.command.trim()}</span>
-            <span style="color: var(--muted-foreground);">{displayName(record, 60)}</span>
-          </div>
-
-          {#if record.syntax.trim()}
-            <div class="mt-2 font-medium" style="color: var(--muted-foreground);">语法</div>
-            {#each splitSyntax(record.syntax) as line}
-              <div class="break-all" style="font-family: var(--font-mono);">{line}</div>
-            {/each}
-          {/if}
-
-          {#if record.parameters.length}
-            <div class="mt-2 font-medium" style="color: var(--muted-foreground);">参数 <span class="font-normal">(* 必选)</span></div>
-            <!-- 参数多的指令(AT+MQTTCFG 23 个)在区域内滚动,不撑高弹层 -->
-            <div class="overflow-y-auto" style="max-height: 120px;">
-              {#each record.parameters as p}
-                <div class="flex gap-2 py-0.5" style="border-top: 1px solid var(--border-subtle);">
-                  <span class="shrink-0" style="font-family: var(--font-mono); min-width: 96px;">{p.name}{p.required ? ' *' : ''}</span>
-                  <span class="break-all" style="color: var(--muted-foreground);">{p.description}</span>
-                </div>
-              {/each}
-            </div>
-          {/if}
-
-          {#if record.example.trim()}
-            <div class="mt-2 font-medium" style="color: var(--muted-foreground);">示例 <span class="font-normal">(点 AT 行填入)</span></div>
-            <div class="flex flex-col gap-0.5 items-start">
-              {#each exampleLines(record.example) as ex}
-                {#if ex.fillable}
-                  <button
-                    type="button"
-                    class="suggest-example text-left rounded px-1.5 py-0.5 break-all"
-                    style="font-family: var(--font-mono); background: var(--border-subtle); color: var(--foreground);"
-                    onclick={() => accept(ex.text)}
-                  >{ex.text}</button>
-                {:else}
-                  <div class="px-1.5 break-all" style="font-family: var(--font-mono); color: var(--muted-foreground);">{ex.text}</div>
-                {/if}
-              {/each}
-            </div>
-          {/if}
-
-          {#if record.summary.trim()}
-            <div class="mt-2" style="color: var(--muted-foreground);">{record.summary}</div>
-          {/if}
-
-          <div class="mt-2 flex flex-wrap items-center gap-x-2 gap-y-0.5" style="color: var(--muted-foreground);">
-            <span>来源:{docTitle(commandIndex.documents, record.document_id)}{record.page_no != null ? ` · 第 ${record.page_no} 页` : ''}</span>
-            {#if entry.alsoIn.length}
-              <span>也见于:</span>
-              {#each [entry.primary, ...entry.alsoIn] as rec, si}
-                {#if si !== sourceIndex}
-                  <button
-                    type="button"
-                    class="underline decoration-dotted hover:opacity-80"
-                    style="color: var(--primary);"
-                    onclick={() => (sourceIndex = si)}
-                  >{docTitle(commandIndex.documents, rec.document_id)}</button>
-                {/if}
-              {/each}
-            {/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
   </div>
 {/if}
 
 <style>
   .suggest-row:hover {
-    background: var(--overlay-hover);
-  }
-  .suggest-example:hover {
     background: var(--overlay-hover);
   }
 </style>
