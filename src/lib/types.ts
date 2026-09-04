@@ -88,6 +88,19 @@ export interface CommandGroup {
   items: CommandItem[];
 }
 
+/** settings.json 的 command_index 段。与后端 CommandIndexSettings 对齐。 */
+export interface CommandIndexSettings {
+  /** 知识库服务器地址,如 http://10.12.16.11:8200;空 = 未配置,联想只用发送历史 */
+  base_url: string;
+  api_key: string;
+  /** 手册 id 排除名单:不在此列的手册都参与候选 */
+  disabled_doc_ids: number[];
+  /** 启动时后台刷新一次缓存 */
+  auto_refresh: boolean;
+  /** 联想总开关 */
+  suggest_enabled: boolean;
+}
+
 export interface Settings {
   version: number;
   window: { width: number; height: number; x: number; y: number };
@@ -136,6 +149,7 @@ export interface Settings {
     /** MCP server 监听端口(默认 23333),改后需重新 claude mcp add */
     port: number;
   };
+  command_index: CommandIndexSettings;
 }
 
 export interface ScriptCommand {

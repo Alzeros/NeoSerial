@@ -215,6 +215,42 @@ impl Default for McpSettings {
     }
 }
 
+/// 输入框指令联想设置:知识库手册索引接入 + 联想开关。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct CommandIndexSettings {
+    /// 知识库服务器地址,如 http://10.12.16.11:8200;空 = 未配置,联想只用发送历史
+    #[serde(default)]
+    pub base_url: String,
+    /// X-API-Key。明文存 settings.json,与本机其他配置同等对待
+    #[serde(default)]
+    pub api_key: String,
+    /// 手册 id 排除名单:不在此列的手册都参与候选,新出现的手册默认参与
+    #[serde(default)]
+    pub disabled_doc_ids: Vec<i64>,
+    /// 启动时后台刷新一次缓存(仅在地址与 key 都非空时)
+    #[serde(default = "default_true")]
+    pub auto_refresh: bool,
+    /// 联想总开关
+    #[serde(default = "default_true")]
+    pub suggest_enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl Default for CommandIndexSettings {
+    fn default() -> Self {
+        CommandIndexSettings {
+            base_url: String::new(),
+            api_key: String::new(),
+            disabled_doc_ids: Vec::new(),
+            auto_refresh: default_true(),
+            suggest_enabled: default_true(),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
     pub version: u32,
@@ -230,6 +266,9 @@ pub struct Settings {
     /// MCP 服务设置。旧配置缺该字段时取默认（auto_start=true）。
     #[serde(default)]
     pub mcp: McpSettings,
+    /// 指令联想设置。旧配置缺该字段时取默认(联想开、只用历史)。
+    #[serde(default)]
+    pub command_index: CommandIndexSettings,
 }
 
 impl Settings {
@@ -271,6 +310,7 @@ impl Settings {
             ],
             presets: PresetSettings::default(),
             mcp: McpSettings::default(),
+            command_index: CommandIndexSettings::default(),
         }
     }
 
@@ -401,6 +441,7 @@ impl LegacySettings {
             error_keywords: self.error_keywords,
             presets: PresetSettings::default(),
             mcp: def.mcp.clone(),
+            command_index: CommandIndexSettings::default(),
         }
     }
 }
@@ -629,5 +670,30 @@ mod tests {
         assert!(loaded.ui.log_send);
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// 旧配置没有 command_index 段 → 整段取默认(auto_refresh/suggest_enabled 为 true,不是 bool 默认的 false)。
+    #[test]
+    fn test_missing_command_index_takes_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        v.as_object_mut().unwrap().remove("command_index");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert!(s.command_index.auto_refresh);
+        assert!(s.command_index.suggest_enabled);
+        assert!(s.command_index.base_url.is_empty());
+        assert!(s.command_index.api_key.is_empty());
+        assert!(s.command_index.disabled_doc_ids.is_empty());
+    }
+
+    /// 段里只写了部分键 → 缺的键各取默认。
+    #[test]
+    fn test_command_index_partial_keys_take_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        v["command_index"] = serde_json::json!({ "base_url": "http://h:8200/", "disabled_doc_ids": [3] });
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert_eq!(s.command_index.base_url, "http://h:8200/");
+        assert_eq!(s.command_index.disabled_doc_ids, vec![3]);
+        assert!(s.command_index.auto_refresh, "缺 auto_refresh 键应为 true");
+        assert!(s.command_index.suggest_enabled);
     }
 }
