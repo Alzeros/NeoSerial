@@ -121,7 +121,8 @@
         return true;
       case 'ArrowUp':
         e.preventDefault();
-        highlight = Math.max(highlight - 1, -1);
+        // 高亮可能因后台刷新导致 items 变短而越界:先夹回范围再上移
+        highlight = Math.max(Math.min(highlight, items.length) - 1, -1);
         sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
@@ -157,12 +158,11 @@
   <div
     class="absolute left-0 right-0 bottom-full mb-1 z-[300] flex overflow-hidden"
     style="background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 320px;"
-    role="listbox"
     tabindex="-1"
     onmousedown={(e) => e.preventDefault()}
   >
-    <!-- 左:候选列表(只有历史项时占满) -->
-    <div bind:this={listEl} class="overflow-y-auto py-1" style="flex: {hasManual ? '0 0 40%' : '1 1 auto'}; min-width: 220px;">
+    <!-- 左:候选列表(只有历史项时占满);role="listbox" 放这里使 option 行是其直接子元素 -->
+    <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="flex: {hasManual ? '0 0 40%' : '1 1 auto'}; min-width: 220px;">
       {#each items as item, i (item.kind === 'history' ? 'h:' + item.text : 'm:' + item.entry.key)}
         {@const text = item.kind === 'history' ? item.text : item.entry.key}
         {@const [before, hit, after] = splitMatch(text)}
