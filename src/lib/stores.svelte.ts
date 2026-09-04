@@ -240,20 +240,15 @@ export function toggleScriptPanel() {
   scriptPanelOpen.value = !scriptPanelOpen.value;
 }
 
-// ============ 指令参考面板(右栏,常驻显示当前预览指令的语法/参数/示例) ============
-export const commandRefPanelOpen = $state<{ value: boolean }>({ value: false });
-export function toggleCommandRefPanel() {
-  commandRefPanelOpen.value = !commandRefPanelOpen.value;
-}
-
-/** SendSuggest 写入(高亮项或默认预览 rank 0),右栏 CommandDetail 读。popup 关闭后不清,
- *  保持上次参考直到下次预览。sourceIndex 由右栏"也见于"切换改;预览项变化时 SendSuggest 复位为 0。 */
+// ============ 指令参考(Script 面板顶部 tab 之一,显示当前预览指令的语法/参数/示例) ============
+/** SendSuggest 写入(高亮项或默认预览 rank 0),CommandDetail 读。popup 关闭后不清,
+ *  保持上次参考直到下次预览。sourceIndex 由面板"也见于"切换改;预览项变化时 SendSuggest 复位为 0。 */
 export const previewedCommand = $state<{
   suggestion: Suggestion | null;
   sourceIndex: number;
 }>({ suggestion: null, sourceIndex: 0 });
 
-/** 右栏"点示例行填入"跨组件触发:CommandDetail 调 requestSuggestFill(text),
+/** 面板"点示例行填入"跨组件触发:CommandDetail 调 requestSuggestFill(text),
  *  SendSuggest 监听 nonce 变化走自己的 accept(填输入框 + 设 dismissedFor 防弹层重开 + 焦点回输入框)。
  *  用 nonce 而非 text:连点同一示例也要触发;且 effect 读 nonce 不读 text,避免回写造成的环。 */
 export const suggestFillRequest = $state<{ nonce: number; text: string }>({ nonce: 0, text: '' });

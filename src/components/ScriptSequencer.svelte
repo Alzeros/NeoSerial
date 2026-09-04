@@ -1,4 +1,5 @@
 <script lang="ts">
+  import CommandDetail from '$components/CommandDetail.svelte';
   import {
     activeScriptModule,
     activeScriptPage,
@@ -16,6 +17,9 @@
     scriptRunState,
     switchScriptModule,
   } from '$lib/stores';
+
+  // 面板顶部视图切换:快捷指令(脚本序列) / 指令参考(单条指令的语法/参数/示例,来自输入框联想)
+  let scriptView = $state<'scripts' | 'reference'>('scripts');
 
   // 顺序调整模式：开启后行可拖拽排序
   let orderMode = $state<{ value: boolean }>({ value: false });
@@ -529,7 +533,26 @@
 }} />
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
-  <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分 -->
+  <!-- 顶部视图切换:快捷指令 / 指令参考(复用同一面板,不另开侧栏) -->
+  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-1.5" style="background: var(--background);">
+    <button
+      class="rounded px-3 py-1 text-[13px] font-medium transition-colors cursor-pointer {scriptView === 'scripts'
+        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+        : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+      onclick={() => (scriptView = 'scripts')}
+    >快捷指令</button>
+    <button
+      class="rounded px-3 py-1 text-[13px] font-medium transition-colors cursor-pointer {scriptView === 'reference'
+        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+        : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+      onclick={() => (scriptView = 'reference')}
+    >指令参考</button>
+  </div>
+
+  {#if scriptView === 'scripts'}
+  <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分。
+       仅多模块时显示;当前只有"快捷指令"一个预置模块,与顶部 view tab 重名,藏掉避免重复。 -->
+  {#if scriptModules.length > 1}
   <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     {#each scriptModules as m, i}
       <button
@@ -542,6 +565,7 @@
       </button>
     {/each}
   </div>
+  {/if}
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
@@ -795,6 +819,9 @@
       {/if}
     </div>
   </div>
+  {:else}
+    <CommandDetail />
+  {/if}
 </div>
 
 <!-- 页签右键菜单 -->

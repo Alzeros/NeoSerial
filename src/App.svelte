@@ -43,12 +43,10 @@
     showLineIndex,
     txBytes,
     windowPort,
-    commandRefPanelOpen,
   } from '$lib/stores';
   import type { LogLine, Settings } from '$lib/types';
   import { normalizeCustomTheme } from '$lib/customTheme';
   import { initCommandIndex } from '$lib/commandIndex';
-  import CommandDetail from '$components/CommandDetail.svelte';
   import {
     getSettings,
     getWindowConnState,
@@ -598,14 +596,6 @@
       <StatusBar />
     </div>
   </div>
-
-  <!-- 分隔条 + 右侧指令参考面板(常驻显示当前预览指令的语法/参数/示例;详情从弹层移到此处) -->
-  {#if commandRefPanelOpen.value}
-    <div class="w-1 shrink-0" style="background: var(--border);"></div>
-    <div class="flex flex-col" style="width: 380px; flex: 0 0 auto; min-height: 0; height: 100%; overflow: hidden;">
-      <CommandDetail />
-    </div>
-  {/if}
 
   <!-- 分隔条 + 右侧脚本面板 -->
   {#if scriptPanelOpen.value}

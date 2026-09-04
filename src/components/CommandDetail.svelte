@@ -16,11 +16,6 @@
 </script>
 
 <div class="flex flex-col h-full min-h-0">
-  <!-- 头:折叠条 + 标题 -->
-  <div class="flex items-center gap-2 px-3 h-8 shrink-0" style="border-bottom: 1px solid var(--border); background: var(--background-elevated);">
-    <span class="text-[12px] font-medium" style="color: var(--muted-foreground);">指令参考</span>
-  </div>
-
   <div class="overflow-y-auto px-4 py-3 text-[12px] leading-relaxed" style="color: var(--foreground);">
     {#if suggestion?.kind === 'history'}
       <div class="text-[13px] break-all" style="font-family: var(--font-mono);">{suggestion.text}</div>

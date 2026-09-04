@@ -1,8 +1,8 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
   import { onMount } from 'svelte';
-  import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus, BookOpen } from 'lucide-svelte';
-  import { scriptPanelOpen, toggleScriptPanel, commandRefPanelOpen, toggleCommandRefPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
+  import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
+  import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
   import { openPortWindow, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
   import SettingsDialog from '$components/SettingsDialog.svelte';
 
@@ -192,15 +192,6 @@
     {:else}
       <Pin size={15} />
     {/if}
-  </button>
-
-  <!-- 指令参考面板折叠按钮：常驻显示当前预览指令的语法/参数/示例 -->
-  <button
-    class="flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
-    onclick={toggleCommandRefPanel}
-    title={commandRefPanelOpen.value ? '收起指令参考' : '展开指令参考'}
-  >
-    <BookOpen size={15} />
   </button>
 
   <!-- 脚本面板折叠按钮：lucide PanelRight / PanelRightClose -->
