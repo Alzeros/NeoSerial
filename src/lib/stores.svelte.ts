@@ -190,8 +190,6 @@ export const logSendContent = $state<{ value: boolean }>({ value: true });
 export const sendText = $state<{ value: string }>({ value: '' });
 export const lineEnding = $state<{ value: 'None' | 'Cr' | 'Lf' | 'Crlf' }>({ value: 'Crlf' });
 export const hexSend = $state<{ value: boolean }>({ value: false });
-export const sendHistory = $state<{ value: string[] }>({ value: [] });
-export const sendHistoryIndex = $state<{ value: number }>({ value: -1 });
 
 // ============ 文件发送 ============
 export const fileSendPath = $state<{ value: string | null }>({ value: null });

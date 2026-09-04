@@ -217,3 +217,55 @@ export function presetScriptModules(): ScriptModule[] {
     },
   ];
 }
+
+// ============ 指令联想:知识库手册指令索引缓存(与后端 config/command_index.rs 对齐) ============
+
+export interface ManualDocument {
+  id: number;
+  title: string;
+  filename: string;
+  status: string;
+  /** '' 未提取 / running / done / failed。只有 done 的手册有指令 */
+  cmd_status: string;
+  cmd_count: number;
+  category_id: number;
+  updated_at: string;
+}
+
+export interface CommandParameter {
+  name: string;
+  required: boolean;
+  description: string;
+}
+
+export interface ManualCommand {
+  id: number;
+  document_id: number;
+  /** 如 AT+MHTTPCFG */
+  command: string;
+  /** 指令名称/一句话功能。LLM 抽取,可能就是指令本身,显示前过 suggest.ts 的 displayName */
+  name: string;
+  /** 语法,可能多种形式挤在一起,显示前过 splitSyntax */
+  syntax: string;
+  parameters: CommandParameter[];
+  /** 多行示例,混有响应行,显示前过 exampleLines */
+  example: string;
+  page_no: number | null;
+  summary: string;
+}
+
+export interface CommandIndexCache {
+  /** RFC 3339;null = 从未刷新 */
+  fetched_at: string | null;
+  base_url: string;
+  documents: ManualDocument[];
+  commands: ManualCommand[];
+}
+
+export interface CommandIndexRefreshResult {
+  doc_count: number;
+  cmd_count: number;
+  fetched_at: string;
+  /** 拉失败、沿用旧缓存的手册标题 */
+  failed: string[];
+}

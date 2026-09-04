@@ -2,6 +2,8 @@ import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import type {
+  CommandIndexCache,
+  CommandIndexRefreshResult,
   ConnectionMode,
   ConnectionParams,
   ConnectionState,
@@ -205,6 +207,31 @@ export async function loadSequenceAuto(): Promise<ScriptModule[]> {
   }));
 }
 
+// ============ 指令联想(知识库手册索引 + 发送历史) ============
+
+/** 设置页"刷新指令库":用编辑框里的地址/Key 按手册拉全量并写本地缓存;成功后后端广播 command-index-changed。 */
+export async function commandIndexRefresh(baseUrl: string, apiKey: string): Promise<CommandIndexRefreshResult> {
+  return await invoke<CommandIndexRefreshResult>('command_index_refresh', { baseUrl, apiKey });
+}
+
+/** 读本地缓存(%APPDATA%/neoserial/command-index.json)。从未刷新过返回空 documents/commands。 */
+export async function commandIndexLoad(): Promise<CommandIndexCache> {
+  return await invoke<CommandIndexCache>('command_index_load');
+}
+
+/** 输入框手动发送成功后记一条历史;后端去重挪前、上限 500,变化时广播 send-history-changed。返回最新全量列表。 */
+export async function sendHistoryPush(text: string): Promise<string[]> {
+  return await invoke<string[]>('send_history_push', { text });
+}
+
+export async function sendHistoryLoad(): Promise<string[]> {
+  return await invoke<string[]>('send_history_load');
+}
+
+export async function sendHistoryClear(): Promise<void> {
+  await invoke('send_history_clear');
+}
+
 // ============ 文件对话框 ============
 
 export async function openFileDialog(title?: string, filters?: { name: string; extensions: string[] }[]): Promise<string | null> {
@@ -323,6 +350,16 @@ export function onMcpConnectionsChanged(cb: () => void) {
  *  否则下次整份回写会把别处改过的字段(如 background_mode)冲回旧值。payload 为空。 */
 export function onSettingsChanged(cb: () => void) {
   return getCurrentWebview().listen('settings-changed', () => cb());
+}
+
+/** command-index-changed 全局事件:任一窗口/启动任务刷新了指令库缓存,收到后重新 commandIndexLoad。payload 为空。 */
+export function onCommandIndexChanged(cb: () => void) {
+  return getCurrentWebview().listen('command-index-changed', () => cb());
+}
+
+/** send-history-changed 全局事件:任一窗口记了/清了发送历史,payload 带全量列表(最近在前)。 */
+export function onSendHistoryChanged(cb: (items: string[]) => void) {
+  return getCurrentWebview().listen<{ items: string[] }>('send-history-changed', (e) => cb(e.payload.items));
 }
 
 // ============ 系统托盘 ============
