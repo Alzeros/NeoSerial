@@ -64,6 +64,22 @@ pub fn normalize_base_url(raw: &str) -> String {
     raw.trim().trim_end_matches('/').to_string()
 }
 
+/// reqwest::Error 的 Display 不带 source 链,"error sending request" 看不出是拒绝连接还是超时。
+/// 这里把底层原因串上;超时单独说,用户最常撞的就是地址/端口填错和不在内网。
+fn describe_reqwest_error(prefix: &str, e: &reqwest::Error) -> String {
+    if e.is_timeout() {
+        return format!("{}: 连接知识库超时(15s),检查地址、端口与内网连接", prefix);
+    }
+    let mut msg = format!("{}: {}", prefix, e);
+    let mut src = std::error::Error::source(e);
+    while let Some(s) = src {
+        msg.push_str(" ← ");
+        msg.push_str(&s.to_string());
+        src = s.source();
+    }
+    msg
+}
+
 /// 单页条数上限(接口允许 1–200)。
 const PAGE_SIZE: usize = 200;
 /// 翻页安全上限:一本手册最多 50 页 × 200 条,超出视为接口异常停止。
@@ -82,7 +98,7 @@ async fn get_json<T: DeserializeOwned>(
             .header("X-API-Key", api_key)
             .send()
             .await
-            .map_err(|e| format!("无法连接服务器: {}", e))?;
+            .map_err(|e| describe_reqwest_error("无法连接服务器", &e))?;
         let status = resp.status();
         if status.as_u16() == 429 && !retried {
             let wait = resp
@@ -102,7 +118,7 @@ async fn get_json<T: DeserializeOwned>(
         return resp
             .json::<T>()
             .await
-            .map_err(|e| format!("响应解析失败: {}", e));
+            .map_err(|e| describe_reqwest_error("响应解析失败", &e));
     }
 }
 
@@ -114,6 +130,7 @@ async fn fetch_all_commands(
     document_id: i64,
 ) -> Result<Vec<ManualCommand>, String> {
     let mut items = Vec::new();
+    let mut complete = false;
     for page in 1..=MAX_PAGES {
         let url = format!(
             "{}/api/v1/commands?document_id={}&page={}&page_size={}",
@@ -123,8 +140,15 @@ async fn fetch_all_commands(
         let got = out.items.len();
         items.extend(out.items);
         if got == 0 || items.len() as i64 >= out.total {
+            complete = true;
             break;
         }
+    }
+    if !complete {
+        log::warn!(
+            "手册 {} 指令超过 {} 页 × {} 条上限,已截断",
+            document_id, MAX_PAGES, PAGE_SIZE
+        );
     }
     Ok(items)
 }
@@ -132,6 +156,8 @@ async fn fetch_all_commands(
 /// 刷新主流程(不落盘、不广播):手册列表 → 逐本拉指令 → 与旧缓存合并。
 /// 单本失败不中断,记进 failed 并沿用旧缓存;手册列表本身失败整体返错。
 /// 对所有 cmd_status=done 的手册都拉,不按 disabled_doc_ids 跳过(那是前端显示层过滤)。
+/// 调用方若要把返回的缓存 save() 落盘,必须先拿到 REFRESHING(见 command_index_refresh),
+/// 否则破坏 save_to 的单写入者前提。
 pub async fn refresh_impl(
     base_url: &str,
     api_key: &str,
@@ -190,16 +216,19 @@ pub async fn command_index_refresh(
     }
     let _guard = RefreshGuard;
     let (cache, failed) = refresh_impl(&base_url, &api_key).await?;
-    let to_save = cache.clone();
-    tauri::async_runtime::spawn_blocking(move || to_save.save())
+    // 统计先算出来,cache 整份移进落盘闭包,不为了取三个数多复制一份指令表
+    let doc_count = cache.documents.iter().filter(|d| d.cmd_status == "done").count();
+    let cmd_count = cache.commands.len();
+    let fetched_at = cache.fetched_at.clone().unwrap_or_default();
+    tauri::async_runtime::spawn_blocking(move || cache.save())
         .await
         .map_err(|e| format!("写缓存任务执行异常: {}", e))?
         .map_err(|e| format!("写入缓存失败: {}", e))?;
     let _ = app_handle.emit("command-index-changed", ());
     Ok(RefreshResult {
-        doc_count: cache.documents.iter().filter(|d| d.cmd_status == "done").count(),
-        cmd_count: cache.commands.len(),
-        fetched_at: cache.fetched_at.clone().unwrap_or_default(),
+        doc_count,
+        cmd_count,
+        fetched_at,
         failed,
     })
 }
