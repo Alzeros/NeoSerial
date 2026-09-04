@@ -440,6 +440,11 @@ input[type="number"]:disabled {
   cursor: not-allowed;
 }
 
+/* API Key 这类密文:仍用 type="text" 沿用输入框样式,只把字形换成圆点(WebView2/Chromium 支持) */
+.masked-input {
+  -webkit-text-security: disc;
+}
+
 /* 隐藏 number 输入框的上下箭头（带后缀的紧凑输入框用） */
 .no-spin::-webkit-inner-spin-button,
 .no-spin::-webkit-outer-spin-button {
