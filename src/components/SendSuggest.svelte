@@ -109,10 +109,11 @@
     listEl?.querySelector<HTMLElement>(`[data-idx="${highlight}"]`)?.scrollIntoView({ block: 'nearest' });
   }
 
-  // 列表反转后 rank 0(最佳候选)在 DOM 末尾:候选多到溢出时,滚动默认停在 DOM 顶部=最旧的
-  // 候选,贴输入框的最佳候选反而看不见。弹层刚开、还没高亮时把滚动钉到底部;之后有高亮
-  // 就交给 scrollHighlightIntoView,这里不再动。
+  // 列表反转后 rank 0(最佳候选)在 DOM 末尾。候选多到溢出时浏览器默认 scrollTop=0 停在顶部
+  // (最旧候选),贴输入框的最佳候选被滚出视野。无高亮时把滚动钉到底部:open、候选数
+  // (items.length)、高亮清除都会触发重跑;有高亮交给 scrollHighlightIntoView。tick 等 DOM 渲染完再读 scrollHeight。
   $effect(() => {
+    void items.length;
     if (open && highlight < 0) {
       void tick().then(() => {
         if (listEl && highlight < 0) listEl.scrollTop = listEl.scrollHeight;
@@ -187,12 +188,13 @@
   <!-- mousedown 阻止默认:点弹层不让输入框失焦(失焦会收起),点完焦点仍在输入框 -->
   <div
     class="absolute left-0 right-0 bottom-full mb-1 z-[300] overflow-hidden"
-    style="background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 320px;"
+    style="background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg);"
     tabindex="-1"
     onmousedown={(e) => e.preventDefault()}
   >
-    <!-- 候选列表:弹层只放列表,详情在右栏 CommandDetail。role="listbox" 放这里使 option 行是其直接子元素 -->
-    <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="min-width: 0;">
+    <!-- 候选列表:弹层只放列表,详情在右栏 CommandDetail。max-height 放内层使它成为真正的
+         滚动容器(外层 overflow:hidden 只管圆角裁剪,不滚);role="listbox" 放这里使 option 行是其直接子元素 -->
+    <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="min-width: 0; max-height: 320px;">
       {#each rows as { item, i } (item.kind === 'history' ? 'h:' + item.text : 'm:' + item.entry.key)}
         {@const text = item.kind === 'history' ? item.text : item.entry.key}
         {@const [before, hit, after] = splitMatch(text)}
