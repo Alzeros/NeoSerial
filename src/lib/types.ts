@@ -88,6 +88,19 @@ export interface CommandGroup {
   items: CommandItem[];
 }
 
+/** settings.json 的 command_index 段。与后端 CommandIndexSettings 对齐。 */
+export interface CommandIndexSettings {
+  /** 知识库服务器地址,如 http://10.12.16.11:8200;空 = 未配置,联想只用发送历史 */
+  base_url: string;
+  api_key: string;
+  /** 手册 id 排除名单:不在此列的手册都参与候选 */
+  disabled_doc_ids: number[];
+  /** 启动时后台刷新一次缓存 */
+  auto_refresh: boolean;
+  /** 联想总开关 */
+  suggest_enabled: boolean;
+}
+
 export interface Settings {
   version: number;
   window: { width: number; height: number; x: number; y: number };
@@ -136,6 +149,7 @@ export interface Settings {
     /** MCP server 监听端口(默认 23333),改后需重新 claude mcp add */
     port: number;
   };
+  command_index: CommandIndexSettings;
 }
 
 export interface ScriptCommand {
@@ -202,4 +216,56 @@ export function presetScriptModules(): ScriptModule[] {
       pages: [defaultScriptPage('Page0')],
     },
   ];
+}
+
+// ============ 指令联想:知识库手册指令索引缓存(与后端 config/command_index.rs 对齐) ============
+
+export interface ManualDocument {
+  id: number;
+  title: string;
+  filename: string;
+  status: string;
+  /** '' 未提取 / running / done / failed。只有 done 的手册有指令 */
+  cmd_status: string;
+  cmd_count: number;
+  category_id: number;
+  updated_at: string;
+}
+
+export interface CommandParameter {
+  name: string;
+  required: boolean;
+  description: string;
+}
+
+export interface ManualCommand {
+  id: number;
+  document_id: number;
+  /** 如 AT+MHTTPCFG */
+  command: string;
+  /** 指令名称/一句话功能。LLM 抽取,可能就是指令本身,显示前过 suggest.ts 的 displayName */
+  name: string;
+  /** 语法,可能多种形式挤在一起,显示前过 splitSyntax */
+  syntax: string;
+  parameters: CommandParameter[];
+  /** 多行示例,混有响应行,显示前过 exampleLines */
+  example: string;
+  page_no: number | null;
+  summary: string;
+}
+
+export interface CommandIndexCache {
+  /** RFC 3339;null = 从未刷新 */
+  fetched_at: string | null;
+  base_url: string;
+  documents: ManualDocument[];
+  commands: ManualCommand[];
+}
+
+export interface CommandIndexRefreshResult {
+  doc_count: number;
+  cmd_count: number;
+  fetched_at: string;
+  /** 拉失败、沿用旧缓存的手册标题 */
+  failed: string[];
 }

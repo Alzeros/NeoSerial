@@ -3,8 +3,9 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { saveSettings, getMcpStatus, openUrl, openThemeEditor, exitApp } from '$lib/tauri';
-  import { Github } from 'lucide-svelte';
+  import { saveSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, sendHistoryClear } from '$lib/tauri';
+  import { commandIndex } from '$lib/commandIndex';
+  import { Github, Eye, EyeOff } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
@@ -13,12 +14,13 @@
   let open = $state(false);
 
   // 左侧导航：当前激活的设置项
-  type Section = 'about' | 'general' | 'appearance' | 'mcp';
+  type Section = 'about' | 'general' | 'appearance' | 'suggest' | 'mcp';
   let activeSection = $state<Section>('about');
   const sections: { key: Section; label: string }[] = [
     { key: 'about', label: '关于' },
     { key: 'general', label: '通用' },
     { key: 'appearance', label: '外观' },
+    { key: 'suggest', label: '指令联想' },
     { key: 'mcp', label: 'MCP 服务' },
   ];
   // 应用版本号（打开关于页时懒加载）
@@ -59,6 +61,18 @@
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
+  // 指令联想编辑副本(从 cachedSettings.command_index 拷贝;保存后立即生效,不需重启)
+  let editSuggestEnabled = $state(true);
+  let editKbBaseUrl = $state('');
+  let editKbApiKey = $state('');
+  let editKbAutoRefresh = $state(true);
+  let editDisabledDocIds = $state<number[]>([]);
+  let showApiKey = $state(false);
+  let indexRefreshing = $state(false);
+  // 刷新结果:ok 全部成功 / warn 部分手册失败沿用旧缓存 / error 整体失败
+  let indexRefreshMsg = $state<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
+  let historyCleared = $state(false);
+  const canRefreshIndex = $derived(editKbBaseUrl.trim().length > 0 && editKbApiKey.trim().length > 0 && !indexRefreshing);
 
   export function show(section: Section = 'about') {
     editBaudRates = [...presetBaudRates.value];
@@ -79,6 +93,15 @@
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
     editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
     mcpCopied = false;
+    const ci = cachedSettings.value?.command_index;
+    editSuggestEnabled = ci?.suggest_enabled ?? true;
+    editKbBaseUrl = ci?.base_url ?? '';
+    editKbApiKey = ci?.api_key ?? '';
+    editKbAutoRefresh = ci?.auto_refresh ?? true;
+    editDisabledDocIds = [...(ci?.disabled_doc_ids ?? [])];
+    showApiKey = false;
+    indexRefreshMsg = null;
+    historyCleared = false;
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
     getMcpStatus().then((s) => (mcpStatus = s)).catch(() => {});
@@ -181,6 +204,13 @@
         ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode },
         presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
         mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
+        command_index: {
+          base_url: editKbBaseUrl.trim(),
+          api_key: editKbApiKey.trim(),
+          disabled_doc_ids: [...editDisabledDocIds],
+          auto_refresh: editKbAutoRefresh,
+          suggest_enabled: editSuggestEnabled,
+        },
       };
       try {
         await saveSettings(next);
@@ -203,6 +233,47 @@
     } catch {
       // 剪贴板不可用时静默
     }
+  }
+
+  // 刷新指令库:用编辑框里的地址/Key(不必先保存)。缓存更新后后端广播,commandIndex store 自己重载。
+  async function handleRefreshIndex() {
+    if (!canRefreshIndex) return;
+    indexRefreshing = true;
+    indexRefreshMsg = null;
+    try {
+      const r = await commandIndexRefresh(editKbBaseUrl, editKbApiKey);
+      indexRefreshMsg = r.failed.length
+        ? { kind: 'warn', text: `${r.failed.length} 本手册更新失败,沿用旧缓存:${r.failed.join('、')}` }
+        : { kind: 'ok', text: `已更新 · ${r.doc_count} 本手册 · ${r.cmd_count} 条指令` };
+    } catch (e) {
+      indexRefreshMsg = { kind: 'error', text: `刷新失败:${e}` };
+    } finally {
+      indexRefreshing = false;
+    }
+  }
+
+  // 勾选 = 不在排除名单
+  function toggleDoc(id: number, checked: boolean) {
+    editDisabledDocIds = checked ? editDisabledDocIds.filter((d) => d !== id) : [...editDisabledDocIds, id];
+  }
+
+  async function handleClearHistory() {
+    try {
+      await sendHistoryClear();
+      historyCleared = true;
+      setTimeout(() => (historyCleared = false), 1500);
+    } catch (e) {
+      console.error('清空发送历史失败:', e);
+    }
+  }
+
+  /** "上次更新 09-03 10:22" 用的短时间;解析不了就原样显示 */
+  function formatFetchedAt(iso: string | null): string {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return iso;
+    const p = (n: number) => String(n).padStart(2, '0');
+    return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
   function handleCancel() {
@@ -501,6 +572,85 @@
                   </button>
                 </div>
               {/if}
+            </div>
+          {:else if activeSection === 'suggest'}
+            <!-- 指令联想:总开关 + 知识库接入 + 手册勾选 + 发送历史 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              发送输入框输入时弹出候选指令:来自知识库手册索引(带语法/参数/示例)与发送历史。↑↓ 选,Tab/回车填入,Esc 收起。
+            </div>
+            <label class="switch mb-4">
+              <input type="checkbox" bind:checked={editSuggestEnabled} />
+              <span class="switch-track"></span>
+              <span class="switch-label">启用输入联想</span>
+            </label>
+
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">知识库服务器</div>
+            <div class="flex items-center gap-3 mb-3">
+              <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
+              <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
+            </div>
+            <div class="flex items-center gap-3 mb-3">
+              <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
+              <input type="text" class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}" style="padding: 6px 10px;" bind:value={editKbApiKey} placeholder="kb_…" spellcheck="false" autocomplete="off" />
+              <button type="button" class="btn btn-ghost shrink-0" style="padding: 4px 8px;" title={showApiKey ? '隐藏' : '显示'} onclick={() => (showApiKey = !showApiKey)}>
+                {#if showApiKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
+              </button>
+            </div>
+            <div class="flex items-center gap-3 mb-3">
+              <label class="flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editKbAutoRefresh} />
+                <span class="text-[13px] text-[var(--foreground)]">启动时自动刷新</span>
+              </label>
+              <button
+                class="btn btn-secondary ml-auto"
+                style="padding: 6px 14px;"
+                disabled={!canRefreshIndex}
+                title={canRefreshIndex || indexRefreshing ? '' : '填写地址和 API Key 后可刷新'}
+                onclick={handleRefreshIndex}
+              >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
+            </div>
+            <div
+              class="text-[12px] mb-4 px-3 py-2 rounded"
+              style="background: var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
+            >
+              {#if indexRefreshMsg}
+                {indexRefreshMsg.text}
+              {:else if !editKbBaseUrl.trim() || !editKbApiKey.trim()}
+                填写地址和 API Key 后可刷新;未配置时联想只用发送历史。
+              {:else if commandIndex.fetchedAt}
+                上次更新 {formatFetchedAt(commandIndex.fetchedAt)} · {commandIndex.documents.filter((d) => d.cmd_status === 'done').length} 本手册 · {commandIndex.commands.length} 条指令
+              {:else}
+                尚未拉取过,点"刷新指令库"。
+              {/if}
+            </div>
+
+            {#if commandIndex.documents.length}
+              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">参与联想的手册</div>
+              <div class="flex flex-col gap-1.5 mb-4">
+                {#each commandIndex.documents as d (d.id)}
+                  {@const ready = d.cmd_status === 'done'}
+                  <label class="flex items-center gap-2 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
+                    <input
+                      type="checkbox"
+                      class="h-4 w-4 rounded accent-[var(--primary)]"
+                      disabled={!ready}
+                      checked={ready && !editDisabledDocIds.includes(d.id)}
+                      onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
+                    />
+                    <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
+                    <span class="text-[12px] text-[var(--muted-foreground)] shrink-0">
+                      {#if ready}({d.cmd_count} 条指令){:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
+                    </span>
+                  </label>
+                {/each}
+              </div>
+            {/if}
+
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">发送历史</div>
+            <div class="flex items-center gap-3">
+              <span class="text-[12px] text-[var(--muted-foreground)]">已记录 {commandIndex.history.length} 条(上限 500,最近发送优先联想)</span>
+              <button class="btn btn-secondary ml-auto" style="padding: 6px 14px;" disabled={commandIndex.history.length === 0} onclick={handleClearHistory}>{historyCleared ? '已清空' : '清空'}</button>
             </div>
           {:else if activeSection === 'mcp'}
             <!-- MCP 服务：自动启动 + 端口 + 连接指令 -->

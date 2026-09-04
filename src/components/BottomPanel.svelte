@@ -1,6 +1,7 @@
 <script lang="ts">
   import { send, onFileSendProgress } from '$lib/tauri';
   import {
+    cachedSettings,
     connected,
     clearLogLines,
     fileSendPath,
@@ -18,8 +19,9 @@
     appendLogLine,
     windowPort,
   } from '$lib/stores';
-  import { openFileDialog, saveFileDialog, sendFile, startLogging, stopLogging } from '$lib/tauri';
-  import { onMount } from 'svelte';
+  import { openFileDialog, saveFileDialog, sendFile, sendHistoryPush, startLogging, stopLogging } from '$lib/tauri';
+  import { onMount, tick } from 'svelte';
+  import SendSuggest from '$components/SendSuggest.svelte';
 
   onMount(() => {
     const unlisten = onFileSendProgress((p) => {
@@ -40,6 +42,19 @@
   let pendingSend = $state(false);
   let sendErrorFlash = $state(false);
 
+  // 联想弹层与输入框 DOM:bind:this,只在事件处理里读,不需要响应式
+  let suggest: ReturnType<typeof SendSuggest> | undefined;
+  let inputEl: HTMLInputElement | undefined;
+
+  /** 接受候选:填进输入框、光标放末尾、焦点留在输入框(可接着输 =参数 或回车发送)。
+   *  必须原样填 text:弹层用 dismissedFor === 填入文本 防止立刻重开,加空格/trim 都会破坏它。 */
+  async function handleSuggestAccept(text: string) {
+    sendText.value = text;
+    await tick();
+    inputEl?.focus();
+    inputEl?.setSelectionRange(text.length, text.length);
+  }
+
   async function handleSend() {
     if (!sendText.value.trim()) return;
     if (!connected.value) return;
@@ -53,9 +68,19 @@
     if (pendingSend) return;
     pendingSend = true;
 
+    // await 期间输入框仍可编辑:发送与记历史都用此刻的快照,不然 IPC 返回后
+    // 重读 sendText 会把用户已经开始输入的下一条记进历史
+    const text = sendText.value;
+    const isHex = hexSend.value;
     try {
-      await send(windowPort.value!, sendText.value, lineEnding.value, hexSend.value);
-      // 发送后保留输入内容，便于重复发送/修改后再发
+      await send(windowPort.value!, text, lineEnding.value, isHex);
+      // 发送后保留输入内容，便于重复发送/修改后再发;联想收起到文本再变化。
+      // await 期间已开始输入下一条时不收起——dismiss 记的是"当前文本",会误伤新输入的联想
+      if (sendText.value === text) suggest?.dismiss();
+      // 只记输入框手动发送的文本指令;HEX 内容不记(联想在 HEX 模式下也不弹)
+      if (!isHex) {
+        sendHistoryPush(text).catch((e) => console.error('记录发送历史失败:', e));
+      }
     } catch (e) {
       console.error('发送失败:', e);
       sendErrorFlash = true;
@@ -160,6 +185,8 @@
   let isComposing = $state(false);
 
   function handleKeydown(e: KeyboardEvent) {
+    // 联想弹层先处理 ↑↓/Tab/Esc 和"有高亮时的回车";它放行的键(含无高亮的回车)照旧走下面
+    if (suggest?.handleKey(e)) return;
     // Enter 键：无论是否在 IME 组合中都触发发送。
     // 中文输入法下 e.key 是 'Process' 不是 'Enter'，所以用 e.code 判断物理键位。
     if (e.code === 'Enter' && !e.shiftKey) {
@@ -239,15 +266,28 @@
 
     <!-- 发送输入（输入框始终可输入，仅发送按钮在未连接时禁用）；与上方工具条同容器同 padding -->
     <div class="flex items-center gap-3 pb-2">
-      <input
-        type="text"
-        style="flex:1 1 0%;min-width:0;height:40px;"
-        placeholder="输入要发送的内容..."
-        bind:value={sendText.value}
-        onkeydown={handleKeydown}
-        oncompositionstart={handleCompositionStart}
-        oncompositionend={handleCompositionEnd}
-      />
+      <!-- 相对定位容器只包输入框:联想弹层贴输入框上方、与输入框同宽 -->
+      <div class="relative" style="flex:1 1 0%;min-width:0;">
+        <SendSuggest
+          bind:this={suggest}
+          query={sendText.value}
+          hexMode={hexSend.value}
+          enabled={cachedSettings.value?.command_index?.suggest_enabled ?? true}
+          onAccept={handleSuggestAccept}
+        />
+        <input
+          bind:this={inputEl}
+          type="text"
+          style="width:100%;height:40px;"
+          placeholder="输入要发送的内容..."
+          bind:value={sendText.value}
+          onkeydown={handleKeydown}
+          oninput={() => suggest?.onInput()}
+          onblur={() => suggest?.dismiss()}
+          oncompositionstart={handleCompositionStart}
+          oncompositionend={handleCompositionEnd}
+        />
+      </div>
       <button
         class="btn btn-primary min-w-[96px] h-10 transition-all {sendErrorFlash ? 'bg-[var(--error)] border-[var(--error)]' : ''}"
         onclick={handleSend}

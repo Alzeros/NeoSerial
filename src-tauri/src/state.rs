@@ -25,6 +25,9 @@ pub struct AppState {
     /// 上次日志保存路径。stop_logging 后保留,再次 start_logging 不传 path 时续写此文件。
     pub last_log_path: Mutex<Option<String>>,
     pub settings: Mutex<crate::config::settings::Settings>,
+    /// 输入框发送历史(最近在前,上限 500)。后端持有真相:push/clear 在这里改、落盘、广播,
+    /// 前端只镜像事件推来的全量列表,多窗口同时发送不会互相覆盖。
+    pub send_history: Mutex<crate::config::send_history::SendHistory>,
     /// MCP server 当前监听端口(运行中 Some(port),未启动 None)。供前端显示实际连接指令。
     pub mcp_port: Mutex<Option<u16>>,
     /// MCP registry 句柄,进程退出时调 unregister 注销。
@@ -46,6 +49,7 @@ impl AppState {
             line_sender: Mutex::new(None),
             last_log_path: Mutex::new(None),
             settings: Mutex::new(crate::config::settings::Settings::load()),
+            send_history: Mutex::new(crate::config::send_history::SendHistory::load()),
             mcp_port: Mutex::new(None),
             registry: None,
             pending_takeover: Mutex::new(std::collections::HashMap::new()),

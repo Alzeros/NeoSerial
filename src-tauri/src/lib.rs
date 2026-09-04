@@ -14,6 +14,7 @@ use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
 use commands::logging::{start_logging, stop_logging, is_logging};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
+use commands::command_index::{command_index_refresh, command_index_load, send_history_push, send_history_load, send_history_clear};
 
 use state::AppState;
 
@@ -198,7 +199,12 @@ pub fn run() {
                 None
             };
             state.registry = registry;
+            // 指令联想:配了知识库地址和 Key 且开了自动刷新 → 后台刷新一次缓存(进程级一次,不按窗口)
+            let cidx_cfg = state.settings.lock().ok().map(|s| s.command_index.clone());
             app.manage(state);
+            if let Some(cfg) = cidx_cfg {
+                commands::command_index::spawn_auto_refresh(&handle, &cfg);
+            }
             tray::setup(app);
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
@@ -306,6 +312,11 @@ pub fn run() {
             load_sequence_auto,
             export_theme_file,
             import_theme_file,
+            command_index_refresh,
+            command_index_load,
+            send_history_push,
+            send_history_load,
+            send_history_clear,
 
         ])
         .build(tauri::generate_context!())

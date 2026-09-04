@@ -46,6 +46,7 @@
   } from '$lib/stores';
   import type { LogLine, Settings } from '$lib/types';
   import { normalizeCustomTheme } from '$lib/customTheme';
+  import { initCommandIndex } from '$lib/commandIndex';
   import {
     getSettings,
     getWindowConnState,
@@ -286,6 +287,9 @@
       .then(applySettings)
       .catch((e) => console.error('加载设置失败:', e));
 
+    // 指令联想:订阅手册索引缓存 / 发送历史的变化广播,并载入初值
+    const cleanupCommandIndex = initCommandIndex();
+
     const unlistenRxLine = onRxLines(handleRxLines);
     const unlistenTxLine = onTxLine((line) => handleRxLines([line]));
     const unlistenTx = onTxUpdate((u) => (txBytes.value = u.total));
@@ -403,6 +407,7 @@
     });
 
     return () => {
+      cleanupCommandIndex();
       unlistenGuard.then((f) => f());
       unlistenSettings.then((f) => f());
       unlistenRxLine.then((f) => f());

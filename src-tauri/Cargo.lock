@@ -2463,6 +2463,7 @@ dependencies = [
  "crossbeam-channel",
  "env_logger",
  "log",
+ "reqwest",
  "rmcp",
  "serde",
  "serde_json",
