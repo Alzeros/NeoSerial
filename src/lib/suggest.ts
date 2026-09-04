@@ -1,7 +1,8 @@
 // 输入框指令联想的纯函数:候选构建、匹配排序、显示兜底。不依赖 Svelte,tests/suggest.test.ts 直接跑。
 import type { ManualCommand, ManualDocument } from './types';
 
-/** 同名指令(大小写无关)合并后的一条候选。primary 是手册列表里排前面那本的记录,其余进 alsoIn(各自完整记录,详情卡可切换)。 */
+/** 同名指令(大小写无关)合并后的一条候选。primary 是手册列表里排前面那本的记录,其余进 alsoIn(各自完整记录,详情卡可切换)。
+ *  UI 展示与填入输入框一律用 key(规范大写);primary.command 是原始 DB 字符串,可能脏(如 "at+csq " —— 小写+尾随空格),不要直接拿去填。 */
 export interface ManualEntry {
   /** 合并键:指令去首尾空格后大写 */
   key: string;
@@ -45,9 +46,9 @@ export function buildManualEntries(
   return entries;
 }
 
-/** 去掉 AT 前缀与紧随的 + / &:"AT+CSQ"→"CSQ","AT&W"→"W","ATE0"→"E0"。输入不以 AT 开头时用它匹配。 */
-export function stripAtPrefix(upperCmd: string): string {
-  return upperCmd.replace(/^AT[+&]?/, '');
+/** 去掉 AT 前缀与紧随的 + / &(大小写无关):"AT+CSQ"→"CSQ","AT&W"→"W","ATE0"→"E0"。输入不以 AT 开头时用它匹配。 */
+export function stripAtPrefix(cmd: string): string {
+  return cmd.replace(/^AT[+&]?/i, '');
 }
 
 function prefixHit(upperText: string, upperQuery: string): boolean {
@@ -55,36 +56,42 @@ function prefixHit(upperText: string, upperQuery: string): boolean {
   return !upperQuery.startsWith('AT') && stripAtPrefix(upperText).startsWith(upperQuery);
 }
 
+/** 历史只占前 10 席,多出的排在手册候选之后——常用指令发得越多,不该越难看到它的手册卡。 */
+const HISTORY_FIRST_MAX = 10;
+
 /** 匹配 + 排序。query 去首尾空格后不足 2 字符返回空。
- *  ① 历史前缀(最近在前;排除与当前输入相同的、与手册指令同名的——后者手册那条有详情)
+ *  ① 历史前缀,最多占前 HISTORY_FIRST_MAX 席(按传入顺序即最近在前;排除与当前输入相同的、与手册指令同名的——后者手册那条有详情)
  *  ② 手册指令前缀;输入不以 AT 开头时也用去前缀的指令体匹配(CSQ→AT+CSQ)
- *  ③ 手册名称包含(含 alsoIn 的名称)
+ *  ③ 手册名称包含(含 alsoIn 的名称),大小写无关
+ *  ④ ①里超出 10 席的剩余历史,补在手册候选之后
  *  同一条只出现一次,总量截到 limit。 */
 export function matchSuggestions(query: string, entries: ManualEntry[], history: string[], limit = 50): Suggestion[] {
   const q = query.trim();
   const Q = q.toUpperCase();
   if (Q.length < 2) return [];
   const manualKeys = new Set(entries.map((e) => e.key));
-  const out: Suggestion[] = [];
+  const historyHits: Suggestion[] = [];
   for (const h of history) {
     const t = h.trim();
     const T = t.toUpperCase();
-    if (t !== q && !manualKeys.has(T) && prefixHit(T, Q)) out.push({ kind: 'history', text: h });
+    if (t !== q && !manualKeys.has(T) && prefixHit(T, Q)) historyHits.push({ kind: 'history', text: h });
   }
+  const manualHits: Suggestion[] = [];
   const seen = new Set<string>();
   for (const e of entries) {
     if (prefixHit(e.key, Q)) {
       seen.add(e.key);
-      out.push({ kind: 'manual', entry: e });
+      manualHits.push({ kind: 'manual', entry: e });
     }
   }
   for (const e of entries) {
     if (seen.has(e.key)) continue;
-    if (e.primary.name.includes(q) || e.alsoIn.some((r) => r.name.includes(q))) {
+    if (e.primary.name.toUpperCase().includes(Q) || e.alsoIn.some((r) => r.name.toUpperCase().includes(Q))) {
       seen.add(e.key);
-      out.push({ kind: 'manual', entry: e });
+      manualHits.push({ kind: 'manual', entry: e });
     }
   }
+  const out = [...historyHits.slice(0, HISTORY_FIRST_MAX), ...manualHits, ...historyHits.slice(HISTORY_FIRST_MAX)];
   return out.slice(0, limit);
 }
 

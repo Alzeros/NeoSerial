@@ -51,15 +51,24 @@ test('stripAtPrefix', () => {
   assert.equal(stripAtPrefix('CSQ'), 'CSQ');
 });
 
-test('matchSuggestions:历史在前(排除与手册同名的),手册前缀次之按字母序', () => {
+test('matchSuggestions:历史在前(按传入顺序即最近在前,排除与手册同名的),手册前缀次之按字母序', () => {
   const entries = buildManualEntries(docs, cmds, []);
-  const history = ['AT+MQTTCONN=0,"h"', 'AT+CSQ', 'AT+MIPLCREATE'];
+  const history = ['AT+MQTTCONN=1,"new"', 'AT+MQTTCONN=0,"h"', 'AT+CSQ', 'AT+MIPLCREATE'];
   const out = matchSuggestions('AT+M', entries, history);
   assert.deepEqual(
     out.map((s) => (s.kind === 'history' ? 'h:' + s.text : 'm:' + s.entry.key)),
-    ['h:AT+MQTTCONN=0,"h"', 'm:AT+MIPLCREATE', 'm:AT+MIPLDELETE', 'm:AT+MQTTCFG', 'm:AT+MQTTCONN'],
-    '历史里的 AT+MIPLCREATE 与手册同名,只出手册那条',
+    ['h:AT+MQTTCONN=1,"new"', 'h:AT+MQTTCONN=0,"h"', 'm:AT+MIPLCREATE', 'm:AT+MIPLDELETE', 'm:AT+MQTTCFG', 'm:AT+MQTTCONN'],
+    '两条历史按传入顺序(最近在前);历史里的 AT+MIPLCREATE 与手册同名,只出手册那条',
   );
+});
+
+test('matchSuggestions:历史最多占前 10 席,超出部分补在手册候选之后', () => {
+  const entries = buildManualEntries(docs, cmds, []);
+  const variants = Array.from({ length: 15 }, (_, i) => `AT+CSQ=${i}`);
+  const out = matchSuggestions('AT+CS', entries, variants);
+  assert.deepEqual(out.slice(0, 10).map((s) => s.kind === 'history' && s.text), variants.slice(0, 10), '前 10 席是最靠前(最近)的 10 条历史');
+  assert.deepEqual(out[10], { kind: 'manual', entry: entries.find((e) => e.key === 'AT+CSQ') }, '手册 AT+CSQ 紧接着 10 席历史之后');
+  assert.deepEqual(out.slice(11).map((s) => s.kind === 'history' && s.text), variants.slice(10), '剩余 5 条历史补在手册候选之后');
 });
 
 test('matchSuggestions:输入不以 AT 开头时按去前缀的指令体匹配;中文名包含排最后', () => {
@@ -72,6 +81,11 @@ test('matchSuggestions:输入不以 AT 开头时按去前缀的指令体匹配;�
     'AT+CSQ 靠 alsoIn 的名称"信号质量(MQTT手册)"包含匹配,排在前缀匹配之后',
   );
   assert.deepEqual(matchSuggestions('信号', entries, []).map((s) => s.kind === 'manual' && s.entry.key), ['AT+CSQ']);
+  assert.deepEqual(
+    matchSuggestions('lwm2m', entries, []).map((s) => s.kind === 'manual' && s.entry.key),
+    ['AT+MIPLCREATE'],
+    '中文名里夹的英文缩写"LwM2M"包含匹配不分大小写',
+  );
 });
 
 test('matchSuggestions:不足 2 字符为空;排除与当前输入相同的历史;截到 limit', () => {
