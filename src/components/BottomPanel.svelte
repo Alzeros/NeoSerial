@@ -68,13 +68,17 @@
     if (pendingSend) return;
     pendingSend = true;
 
+    // await 期间输入框仍可编辑:发送与记历史都用此刻的快照,不然 IPC 返回后
+    // 重读 sendText 会把用户已经开始输入的下一条记进历史
+    const text = sendText.value;
+    const isHex = hexSend.value;
     try {
-      await send(windowPort.value!, sendText.value, lineEnding.value, hexSend.value);
+      await send(windowPort.value!, text, lineEnding.value, isHex);
       // 发送后保留输入内容，便于重复发送/修改后再发;联想收起到文本再变化
       suggest?.dismiss();
       // 只记输入框手动发送的文本指令;HEX 内容不记(联想在 HEX 模式下也不弹)
-      if (!hexSend.value) {
-        sendHistoryPush(sendText.value).catch((e) => console.error('记录发送历史失败:', e));
+      if (!isHex) {
+        sendHistoryPush(text).catch((e) => console.error('记录发送历史失败:', e));
       }
     } catch (e) {
       console.error('发送失败:', e);
