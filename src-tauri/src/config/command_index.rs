@@ -74,10 +74,7 @@ pub struct CommandIndexCache {
 
 impl CommandIndexCache {
     fn cache_path() -> PathBuf {
-        let appdata = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        appdata.join("neoserial").join("command-index.json")
+        crate::config::config_dir().join("command-index.json")
     }
 
     pub fn load() -> Self {
@@ -104,6 +101,7 @@ impl CommandIndexCache {
     }
 
     /// 先写 .tmp 再改名覆盖:中途崩溃不会留下半个 JSON。
+    /// 临时文件名固定,同一时刻只能有一个写入者:唯一写入方是 commands::command_index 的刷新流程,由其 REFRESHING 标志串行化。
     pub(crate) fn save_to(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
@@ -120,6 +118,7 @@ impl CommandIndexCache {
 /// - `documents`:本次拉到的手册列表,顺序保留(前端"同名指令主记录取排前面那本"以此为准)
 /// - `fetched`:成功拉到的手册指令,按 document_id
 /// - `failed_ids`:拉失败的手册,沿用 `old` 里这本的指令(旧缓存没有就没有)
+/// - 既不在 fetched 也不在 failed_ids 的手册视为无指令(旧指令丢弃)。所以调用方必须对所有 cmd_status=done 的手册都发起拉取,不能为省配额跳过 disabled_doc_ids 里的——那是前端显示层过滤,不是拉取过滤。
 /// 不在 `documents` 里的旧指令一律丢弃(手册已删)。
 pub fn merge_fetched(
     documents: Vec<ManualDocument>,
@@ -257,6 +256,20 @@ mod tests {
         assert!(!path.with_extension("json.tmp").exists(), "临时文件应已改名为正式文件");
         let loaded = CommandIndexCache::load_from(&path);
         assert_eq!(loaded, cache);
+
+        // 覆盖写:目录里留着一份陈旧的 .tmp(比如上次写到一半就被杀掉的进程遗留下的),
+        // 生产路径里第二次刷新应正常覆盖为新内容,不受旧 .tmp 干扰,写完也不留 .tmp。
+        fs::write(path.with_extension("json.tmp"), b"stale").unwrap();
+        let second = CommandIndexCache {
+            fetched_at: Some("t2".into()),
+            base_url: "http://h".into(),
+            documents: vec![doc(1, "A", "done")],
+            commands: vec![cmd(2, 1, "AT+CGDCONT")],
+        };
+        second.save_to(&path).unwrap();
+        assert!(!path.with_extension("json.tmp").exists(), "残留的旧 .tmp 应被新一次 save_to 覆盖掉");
+        assert_eq!(CommandIndexCache::load_from(&path), second);
+
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 
@@ -273,7 +286,10 @@ mod tests {
         fs::write(&path, b"{not json").unwrap();
         assert_eq!(CommandIndexCache::load_from(&path), CommandIndexCache::default());
         assert!(!path.exists(), "损坏文件应被改名");
-        assert!(path.with_extension("json.bad").exists());
+        let bad_path = path.with_extension("json.bad");
+        assert!(bad_path.exists());
+        let bad_content = fs::read_to_string(&bad_path).unwrap();
+        assert_eq!(bad_content, "{not json");
         let _ = fs::remove_dir_all(path.parent().unwrap());
     }
 }

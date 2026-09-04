@@ -315,10 +315,7 @@ impl Settings {
     }
 
     fn config_path() -> PathBuf {
-        let appdata = std::env::var("APPDATA")
-            .map(PathBuf::from)
-            .unwrap_or_else(|_| PathBuf::from("."));
-        appdata.join("neoserial").join("settings.json")
+        crate::config::config_dir().join("settings.json")
     }
 
     /// 加载配置。文件不存在/损坏 → 用默认配置并静默降级；
