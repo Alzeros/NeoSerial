@@ -34,6 +34,9 @@ rmcp = { version = "3.1", features = ["server", "transport-streamable-http-serve
 axum = { version = "0.8", features = ["http1", "tokio"], default-features = false }
 tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
 tokio-util = "0.7"
+# 知识库手册指令索引拉取(纯 http 内网)。updater 插件已带 reqwest 0.13(rustls-no-provider+json),
+# 这里关掉默认特性只复用它那份:开默认会多拉 aws-lc-sys(cmake C 编译)、quinn(HTTP/3)等一整套
+reqwest = { version = "0.13", default-features = false, features = ["json"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_System_Threading", "Win32_Devices_Communication", "Win32_Storage_FileSystem", "Win32_Security"] }
