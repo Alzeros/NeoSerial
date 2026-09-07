@@ -95,7 +95,7 @@ export function matchSuggestions(query: string, entries: ManualEntry[], history:
   return out.slice(0, limit);
 }
 
-/** 模糊搜索(指令参考 tab 用,与输入框联想的精确前缀匹配分开):query 拆空格成多 token,
+/** 模糊搜索(指令查询 tab 用,与输入框联想的精确前缀匹配分开):query 拆空格成多 token,
  *  每个 token 都要在 command / name(alsoIn 也算) / summary 任一字段里 contains 命中(大小写无关)。
  *  不带 AT/+ 前缀也能命中(mqtt → AT+MQTTCFG)。按命中字段与位置排序:command 命中 > name > summary,
  *  前缀命中 > 包含命中。空 query 返回空(不预填全量,让用户主动输)。 */

@@ -20,7 +20,7 @@
     switchScriptModule,
   } from '$lib/stores';
 
-  // 面板顶部视图切换:快捷指令(脚本序列) / 指令参考(单条指令的语法/参数/示例,来自输入框联想) / MCP 日志(agent 实际操作记录)
+  // 面板顶部视图切换:快捷指令(脚本序列) / 指令查询(模糊搜索浏览指令的语法/参数/示例) / MCP 日志(agent 实际操作记录)
   let scriptView = $state<'scripts' | 'reference' | 'mcp'>('scripts');
 
   // tab 显隐 = 功能启用 AND 该模块 tab 开关。功能关时 tab 不显示但开关值保留(不改值,
@@ -551,7 +551,7 @@
 }} />
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
-  <!-- 顶部视图切换:快捷指令 / 指令参考。用文字下划线风格(轻),与下方页签的实心块(重)拉开层级。 -->
+  <!-- 顶部视图切换:快捷指令 / 指令查询。用文字下划线风格(轻),与下方页签的实心块(重)拉开层级。 -->
   <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     <button
       class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'scripts'
@@ -565,7 +565,7 @@
           ? 'text-[var(--foreground)] border-[var(--primary)]'
           : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
         onclick={() => (scriptView = 'reference')}
-      >指令参考</button>
+      >指令查询</button>
     {/if}
     {#if showMcpTab}
       <button

@@ -108,7 +108,7 @@ pub struct UiSettings {
     /// (agent 的交还 agent),关最后一个窗口即退出。改后即时生效。
     #[serde(default = "default_background_mode")]
     pub background_mode: bool,
-    /// 侧栏"指令参考"tab 是否显示(指令联想模块的展现项)。各模块独立,关掉只藏该 tab。
+    /// 侧栏"指令查询"tab 是否显示(指令联想模块的展现项)。各模块独立,关掉只藏该 tab。
     #[serde(default = "default_show_suggest_tab")]
     pub show_suggest_tab: bool,
     /// 侧栏"MCP 日志"tab 是否显示(MCP 模块的展现项)。
@@ -128,7 +128,7 @@ fn default_show_suggest_tab() -> bool {
 }
 
 fn default_show_mcp_tab() -> bool {
-    true
+    false
 }
 
 /// 后台运行的默认值,单独收在这里便于一处改。默认关:新用户拿到的是和其他串口工具

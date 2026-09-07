@@ -239,7 +239,7 @@ export function toggleScriptPanel() {
   scriptPanelOpen.value = !scriptPanelOpen.value;
 }
 
-// ============ 指令参考(Script 面板顶部 tab 之一,独立模糊搜索浏览,不跟随输入框) ============
+// ============ 指令查询(Script 面板顶部 tab 之一,独立模糊搜索浏览,不跟随输入框) ============
 /** "点示例行填入输入框"的跨组件触发:CommandDetail 调 requestSuggestFill(text),
  *  SendSuggest 监听 nonce 变化走自己的 accept(填输入框 + 设 dismissedFor 防弹层重开 + 焦点回输入框)。
  *  用 nonce 而非 text:连点同一示例也要触发;且 effect 读 nonce 不读 text,避免回写造成的环。 */

@@ -79,6 +79,19 @@
   let indexRefreshMsg = $state<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   let historyCleared = $state(false);
   const canRefreshIndex = $derived(editKbBaseUrl.trim().length > 0 && editKbApiKey.trim().length > 0 && !indexRefreshing);
+  // 有无未应用改动:对比"当前编辑副本快照"与"上次加载/应用时的快照"。只比编辑副本本身,
+  // 不依赖 cachedSettings 的字段完整性(避免后端版本差异导致 JSON 永远不等、应用按钮常亮)。
+  function editsSnapshot(): string {
+    return JSON.stringify({
+      editFontSize, editLineHeight, editDirLabel, editFontLatin, editFontCJK, editTextEncoding,
+      editBackgroundMode, editShowSuggestTab, editShowMcpTab,
+      editBaudRates, editTheme, editCustom,
+      editMcpAutoStart, editMcpPort,
+      editKbBaseUrl, editKbApiKey, editDisabledDocIds, editKbAutoRefresh, editSuggestEnabled,
+    });
+  }
+  let lastApplied = $state('');
+  const hasUnsavedChanges = $derived(editsSnapshot() !== lastApplied);
 
   export function show(section: Section = 'about') {
     editBaudRates = [...presetBaudRates.value];
@@ -99,7 +112,7 @@
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
     editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
     editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
-    editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? true;
+    editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
     mcpCopied = false;
     const ci = cachedSettings.value?.command_index;
     editSuggestEnabled = ci?.suggest_enabled ?? true;
@@ -110,6 +123,8 @@
     showApiKey = false;
     indexRefreshMsg = null;
     historyCleared = false;
+    // 记录"加载态快照",作为脏检测基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
+    lastApplied = editsSnapshot();
     activeSection = section;
     // 拉取 MCP 运行状态(显示实际端口)
     getMcpStatus().then((s) => (mcpStatus = s)).catch(() => {});
@@ -189,44 +204,60 @@
     editBaudRates = editBaudRates.filter((b) => b !== n);
   }
 
-  async function handleSave() {
-    // 合并：内置默认 3 项一定保留 + 用户自定义项（去重、排序）
+  /** 从编辑副本构建待保存的 Settings(基于 cachedSettings 透传未编辑字段)。应用/保存/脏检测共用。 */
+  function buildNextSettings(): Settings | null {
+    const base = cachedSettings.value;
+    if (!base) return null;
+    // 波特率:内置默认 3 项保留 + 用户自定义(去重、排序)
     const userAdded = editBaudRates.filter((b) => !isDefault(b));
     const rates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
-    presetBaudRates.value = rates;
-    // 主题：预览值落盘到 store（<html> 已在选中时应用）
+    return {
+      ...base,
+      ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode, show_suggest_tab: editShowSuggestTab, show_mcp_tab: editShowMcpTab },
+      presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
+      mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
+      command_index: {
+        base_url: editKbBaseUrl.trim(),
+        api_key: editKbApiKey.trim(),
+        disabled_doc_ids: [...editDisabledDocIds],
+        auto_refresh: editKbAutoRefresh,
+        suggest_enabled: editSuggestEnabled,
+      },
+    };
+  }
+
+  /** 应用:落盘 + 同步预览 store + 更新 cachedSettings,但不关窗。供"应用"按钮和"保存"共用。 */
+  async function applyEdits() {
+    const next = buildNextSettings();
+    if (!next) return;
+    // 预览值落盘到 store(主题/字体/编码/波特率),与落盘 settings 同步
+    presetBaudRates.value = next.presets.baud_rates;
     theme.value = editTheme;
     customTheme.value = { ...editCustom };
-    // 日志字体：预览值落盘到 store
     logFontSize.value = editFontSize;
     logLineHeight.value = editLineHeight;
     logDirLabelStyle.value = editDirLabel;
     logFontLatin.value = editFontLatin;
     logFontCJK.value = editFontCJK;
     textEncoding.value = editTextEncoding;
-    // 落盘：基于缓存 settings 透传，仅更新 presets 与 ui 字体
-    const base = cachedSettings.value;
-    if (base) {
-      const next: Settings = {
-        ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode, show_suggest_tab: editShowSuggestTab, show_mcp_tab: editShowMcpTab },
-        presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
-        mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
-        command_index: {
-          base_url: editKbBaseUrl.trim(),
-          api_key: editKbApiKey.trim(),
-          disabled_doc_ids: [...editDisabledDocIds],
-          auto_refresh: editKbAutoRefresh,
-          suggest_enabled: editSuggestEnabled,
-        },
-      };
-      try {
-        await saveSettings(next);
-        cachedSettings.value = next;
-      } catch (e) {
-        console.error('保存设置失败:', e);
-      }
+    try {
+      await saveSettings(next);
+      cachedSettings.value = next;
+      // 应用完成:把脏检测基准刷新到当前,应用按钮重新置灰
+      lastApplied = editsSnapshot();
+    } catch (e) {
+      console.error('保存设置失败:', e);
     }
+  }
+
+  /** 应用:保存但不关窗,便于继续调其他设置项。 */
+  async function handleApply() {
+    await applyEdits();
+  }
+
+  /** 保存:应用 + 关窗。 */
+  async function handleSave() {
+    await applyEdits();
     open = false;
   }
 
@@ -641,7 +672,7 @@
                 <label class="switch mb-4">
                   <input type="checkbox" bind:checked={editShowSuggestTab} />
                   <span class="switch-track"></span>
-                  <span class="switch-label">显示"指令参考"tab</span>
+                  <span class="switch-label">显示"指令查询"tab</span>
                 </label>
                 <!-- 启用后才展开:知识库接入 + 手册勾选 + 发送历史 -->
                 <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">知识库服务器</div>
@@ -776,9 +807,16 @@
         </div>
       </div>
 
-      <!-- 底部按钮 -->
+      <!-- 底部按钮:取消(撤销+关) | 应用(保存不关,无改动时置灰) | 保存(应用+关) -->
       <div class="flex justify-end gap-2 px-5 pb-3 border-t border-[var(--border)] pt-2">
         <button class="btn btn-ghost" style="padding: 4px 12px;" onclick={handleCancel}>取消</button>
+        <button
+          class="btn btn-secondary"
+          style="padding: 4px 12px;"
+          disabled={!hasUnsavedChanges}
+          title={hasUnsavedChanges ? '保存但不关闭,可继续调整其他设置' : '没有可应用的改动'}
+          onclick={handleApply}
+        >应用</button>
         <button class="btn btn-primary" style="padding: 4px 12px;" onclick={handleSave}>保存</button>
       </div>
     </div>

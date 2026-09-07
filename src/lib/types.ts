@@ -132,7 +132,7 @@ export interface Settings {
     /** 后台运行(托盘常驻):关窗口连接不断、关最后一个窗口应用仍在;
      *  关 = 无托盘,关窗口断开自己连的,关最后一个窗口即退出 */
     background_mode: boolean;
-    /** 侧栏"指令参考"tab 是否显示(指令联想模块)。 */
+    /** 侧栏"指令查询"tab 是否显示(指令联想模块)。 */
     show_suggest_tab: boolean;
     /** 侧栏"MCP 日志"tab 是否显示(MCP 模块)。 */
     show_mcp_tab: boolean;
