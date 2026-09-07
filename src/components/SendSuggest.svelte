@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
-  import { cachedSettings, previewedCommand, suggestFillRequest } from '$lib/stores';
+  import { cachedSettings, suggestFillRequest } from '$lib/stores';
   import { commandIndex } from '$lib/commandIndex';
   import {
     buildManualEntries,
@@ -53,19 +53,6 @@
   const rows = $derived(items.map((item, i) => ({ item, i })).reverse());
 
   const open = $derived(items.length > 0 && query !== dismissedFor);
-  // 详情卡显示项:有高亮看高亮,否则预览第 0 项(列表不画高亮条)。供右栏参考面板展示
-  const previewIndex = $derived(highlight >= 0 && highlight < items.length ? highlight : 0);
-  const preview = $derived(open ? items[previewIndex] : undefined);
-
-  // 广播当前预览项给右栏参考面板:popup 开着就发(高亮项或默认 rank 0),关闭后不清(保持上次)。
-  // 预览项变化即复位 sourceIndex=0(右栏"也见于"切换改 sourceIndex 不触发本 effect,故不会回退)。
-  $effect(() => {
-    const p = preview;
-    if (p) {
-      previewedCommand.suggestion = p;
-      previewedCommand.sourceIndex = 0;
-    }
-  });
 
   // 右栏"点示例填入":nonce 变化即走自己的 accept(填输入框 + 设 dismissedFor 防弹层重开)。
   // 读 nonce 不读 text:accept 内部会改 query 相关态,不与 text 形成环。
@@ -106,7 +93,18 @@
 
   async function scrollHighlightIntoView() {
     await tick();
-    listEl?.querySelector<HTMLElement>(`[data-idx="${highlight}"]`)?.scrollIntoView({ block: 'nearest' });
+    if (!listEl) return;
+    const row = listEl.querySelector<HTMLElement>(`[data-idx="${highlight}"]`);
+    if (!row) return;
+    // 只动内层列表,不碰外层容器。scrollIntoView 会滚所有祖先,反转+钉底布局下
+    // 可能滚到外层 overflow:hidden 而内层滚动条不动,看着像没跟到高亮项。
+    const rowRect = row.getBoundingClientRect();
+    const listRect = listEl.getBoundingClientRect();
+    if (rowRect.top < listRect.top) {
+      listEl.scrollTop -= listRect.top - rowRect.top;
+    } else if (rowRect.bottom > listRect.bottom) {
+      listEl.scrollTop += rowRect.bottom - listRect.bottom;
+    }
   }
 
   // 列表反转后 rank 0(最佳候选)在 DOM 末尾。候选多到溢出时浏览器默认 scrollTop=0 停在顶部
@@ -145,14 +143,12 @@
         e.preventDefault();
         // 视觉下方 = rank 减小(向贴输入框的最佳候选回);高亮可能因后台刷新越界,先夹回再移
         highlight = Math.max(Math.min(highlight, items.length) - 1, 0);
-        previewedCommand.sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
       case 'ArrowUp':
         e.preventDefault();
         // 无高亮 → 最佳候选(rank 0,视觉上在最下贴着输入框);继续 ↑ 向视觉上方移动
         highlight = Math.min(highlight + 1, items.length - 1);
-        previewedCommand.sourceIndex = 0;
         scrollHighlightIntoView();
         return true;
       case 'Enter':

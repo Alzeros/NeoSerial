@@ -95,7 +95,37 @@ export function matchSuggestions(query: string, entries: ManualEntry[], history:
   return out.slice(0, limit);
 }
 
-/** 列表行/详情标题用的名称:name 为空或就是指令本身(如 "AT+MIPLDELETE"、"+MIPLREADRSP")时改用 summary;超 max 截断加省略号。 */
+/** 模糊搜索(指令参考 tab 用,与输入框联想的精确前缀匹配分开):query 拆空格成多 token,
+ *  每个 token 都要在 command / name(alsoIn 也算) / summary 任一字段里 contains 命中(大小写无关)。
+ *  不带 AT/+ 前缀也能命中(mqtt → AT+MQTTCFG)。按命中字段与位置排序:command 命中 > name > summary,
+ *  前缀命中 > 包含命中。空 query 返回空(不预填全量,让用户主动输)。 */
+export function searchCommands(query: string, entries: ManualEntry[]): ManualEntry[] {
+  const tokens = query.trim().toUpperCase().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return [];
+  const scored: { e: ManualEntry; score: number }[] = [];
+  for (const e of entries) {
+    const cmd = e.key;
+    const summary = e.primary.summary.toUpperCase();
+    const names = [e.primary.name.toUpperCase(), ...e.alsoIn.map((r) => r.name.toUpperCase())];
+    let score = 0;
+    let allMatch = true;
+    for (const t of tokens) {
+      const cmdPos = cmd.indexOf(t);
+      const nameHit = names.some((n) => n.includes(t));
+      const sumPos = summary.indexOf(t);
+      if (cmdPos < 0 && !nameHit && sumPos < 0) {
+        allMatch = false;
+        break;
+      }
+      score += cmdPos >= 0 ? 1000 - cmdPos : nameHit ? 500 : 100 - sumPos;
+    }
+    if (allMatch) scored.push({ e, score });
+  }
+  scored.sort((a, b) => b.score - a.score || (a.e.key < b.e.key ? -1 : a.e.key > b.e.key ? 1 : 0));
+  return scored.map((s) => s.e);
+}
+
+
 export function displayName(rec: ManualCommand, max = 30): string {
   const norm = (s: string) => s.trim().toUpperCase().replace(/^AT/, '').replace(/^[+&]/, '');
   const name = rec.name.trim();

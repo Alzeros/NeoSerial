@@ -5,6 +5,7 @@ import {
   displayName,
   exampleLines,
   matchSuggestions,
+  searchCommands,
   shortTitle,
   splitSyntax,
   stripAtPrefix,
@@ -95,6 +96,23 @@ test('matchSuggestions:不足 2 字符为空;排除与当前输入相同的历�
   assert.equal(matchSuggestions('AT+CGDCONT=1', entries, ['AT+CGDCONT=1,"IP"']).length, 1);
   const many = Array.from({ length: 60 }, (_, i) => `AT+H${String(i).padStart(2, '0')}`);
   assert.equal(matchSuggestions('AT+H', entries, many).length, 50);
+});
+
+test('searchCommands:多 token contains 匹配 command/name/summary;不带 AT 前缀也命中;空 query 空', () => {
+  const entries = buildManualEntries(docs, cmds, []);
+  assert.deepEqual(searchCommands('', entries), []);
+  // mqtt → 命令体含 MQTT 的都命中
+  const mqtt = searchCommands('mqtt', entries).map((e) => e.key);
+  assert.ok(mqtt.includes('AT+MQTTCFG'));
+  assert.ok(mqtt.includes('AT+MQTTCONN'));
+  // 中文名/summary 命中:信号质量 → AT+CSQ
+  const csq = searchCommands('信号', entries).map((e) => e.key);
+  assert.deepEqual(csq, ['AT+CSQ']);
+  // 多 token:两词都得命中(配置 在 name,mqtt 在 command)
+  const two = searchCommands('mqtt 配置', entries).map((e) => e.key);
+  assert.deepEqual(two, ['AT+MQTTCFG']);
+  // 命中不了的字段组合不算
+  assert.deepEqual(searchCommands('mqtt 不存在词xyz', entries), []);
 });
 
 test('displayName:name 就是指令本身时改用 summary;超长截断', () => {
