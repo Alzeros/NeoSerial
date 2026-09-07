@@ -28,7 +28,6 @@
     logDirLabelStyle,
     logFontLatin,
     logFontCJK,
-    applyLogFont,
     theme,
     customTheme,
     applyTheme,
@@ -47,6 +46,7 @@
   import type { LogLine, Settings } from '$lib/types';
   import { normalizeCustomTheme } from '$lib/customTheme';
   import { initCommandIndex } from '$lib/commandIndex';
+  import { loadSettingsOnce } from '$lib/startup';
   import {
     getSettings,
     getWindowConnState,
@@ -109,45 +109,6 @@
     } catch (e) {
       console.error('回填连接历史失败:', e);
     }
-  }
-
-  // 把加载到的 Settings 回填到各响应式 store
-  function applySettings(s: Settings) {
-    cachedSettings.value = s;
-    connectionParams.port = s.last_port || connectionParams.port;
-    connectionParams.baudRate = s.serial_defaults.baud_rate;
-    connectionParams.dataBits = s.serial_defaults.data_bits;
-    connectionParams.parity = s.serial_defaults.parity;
-    // settings 里是后端枚举的 PascalCase 字串("One"/"Two"),connect 命令要数字(1/2)
-    connectionParams.stopBits = s.serial_defaults.stop_bits === 'Two' ? 2 : 1;
-    connectionParams.flowControl = s.serial_defaults.flow_control;
-    lineEnding.value = s.ui.line_ending;
-    showTimestamp.value = s.ui.show_timestamp;
-    showLineIndex.value = s.ui.show_line_index ?? false;
-    autoScroll.value = s.ui.auto_scroll;
-    displayMode.value = s.ui.display_mode === 'Hex' ? 'hex' : 'ascii';
-    textEncoding.value = (s.ui?.text_encoding || 'Ascii') === 'Utf8' ? 'utf8' : (s.ui?.text_encoding || 'Ascii') === 'Gbk' ? 'gbk' : 'ascii';
-    logSendContent.value = s.ui.log_send;
-    // 日志区字体：兜底默认 14px / 1.6
-    const fs = s.ui?.log_font_size ?? 14;
-    const lh = s.ui?.log_line_height ?? 1.6;
-    const fLatin = s.ui?.log_font_latin ?? 'default';
-    const fCjk = s.ui?.log_font_cjk ?? 'default';
-    logFontSize.value = fs;
-    logLineHeight.value = lh;
-    logFontLatin.value = fLatin;
-    logFontCJK.value = fCjk;
-    applyLogFont(fs, lh, fLatin, fCjk);
-    logDirLabelStyle.value = (s.ui?.log_dir_label === 'full') ? 'full' : 'short';
-    // 预设波特率：兜底为默认三项
-    presetBaudRates.value =
-      s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
-    // 自定义主题色板：缺失/非法字段回退默认底稿（旧配置无此字段也安全）
-    customTheme.value = normalizeCustomTheme(s.presets?.custom_theme);
-    // 主题：兜底为 preset-1，并应用到 <html>
-    const tk = s.presets?.theme || 'preset-1';
-    theme.value = tk;
-    applyTheme(tk, customTheme.value);
   }
 
   // 从当前 UI 状态构建可保存的 Settings（基于缓存，避免丢字段）
@@ -282,10 +243,8 @@
       })
       .catch((e) => console.error('查询待接管失败:', e));
 
-    // 启动时加载持久化设置
-    getSettings()
-      .then(applySettings)
-      .catch((e) => console.error('加载设置失败:', e));
+    // 持久化设置:main.ts 在挂载前已发起加载并回填 store(首帧就是按它画的),单飞,这里只是兜底
+    loadSettingsOnce();
 
     // 指令联想:订阅手册索引缓存 / 发送历史的变化广播,并载入初值
     const cleanupCommandIndex = initCommandIndex();

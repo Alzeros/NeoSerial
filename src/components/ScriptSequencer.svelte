@@ -145,6 +145,7 @@
 
   import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, loadSequenceAuto, saveSequenceAuto, sequenceRun, sequenceStop, send, onSequenceChanged } from '$lib/tauri';
   import { connected, windowPort } from '$lib/stores';
+  import { loadSequenceOnce } from '$lib/startup';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { onMount } from 'svelte';
 
@@ -230,7 +231,7 @@
   }
 
   // ---- 自动加载 & 自动保存 ----
-  // 启动时从默认路径加载；数据变化时防抖自动保存
+  // 启动时从默认路径加载(挂载前预取,见下方 onMount)；数据变化时防抖自动保存
   let autoSaveLoaded = $state(false);
   let autoSaveTimer: ReturnType<typeof setTimeout> | null = null;
   // 最近一次落盘/载入内容的快照。自动保存只在当前内容与它不同时才写:
@@ -238,28 +239,21 @@
   // "A reload → A 保存 → 广播 → B reload → B 保存 → 广播 → A reload …"每 800ms 一轮。
   let lastPersistedJson: string | null = null;
 
-  // keepSelection:多窗口同步 reload 时尽量停在当前模块/页签(越界才回 0),
-  // 启动首次加载则回到 0。
-  async function autoLoad(opts: { keepSelection?: boolean } = {}) {
+  // 多窗口同步 reload:重新从磁盘载入,尽量停在当前模块/页签(越界才回 0)。
+  // 启动首次加载不走这里——main.ts 挂载前经 loadSequenceOnce 预取,见下方 onMount。
+  async function autoLoad() {
     try {
       const modules = await loadSequenceAuto();
       if (modules.length > 0) {
         scriptModules.length = 0;
         scriptModules.push(...modules);
         lastPersistedJson = JSON.stringify(scriptModules);
-        if (opts.keepSelection) {
-          activeScriptModule.value = Math.min(activeScriptModule.value, scriptModules.length - 1);
-          const pages = scriptModules[activeScriptModule.value]?.pages ?? [];
-          activeScriptPage.value = Math.min(activeScriptPage.value, Math.max(0, pages.length - 1));
-        } else {
-          activeScriptModule.value = 0;
-          activeScriptPage.value = 0;
-        }
+        activeScriptModule.value = Math.min(activeScriptModule.value, scriptModules.length - 1);
+        const pages = scriptModules[activeScriptModule.value]?.pages ?? [];
+        activeScriptPage.value = Math.min(activeScriptPage.value, Math.max(0, pages.length - 1));
       }
     } catch (e) {
       console.error('自动加载序列配置失败:', e);
-    } finally {
-      autoSaveLoaded = true;
     }
   }
 
@@ -289,20 +283,21 @@
     }, 800);
   });
 
-  // 组件挂载时自动加载
-  $effect(() => {
-    if (!autoSaveLoaded) autoLoad();
-  });
-
   // 多窗口快捷指令同步:其他窗口改了 sequence.json 并保存时,广播 sequence-changed。
   // 本窗口收到(非自己触发的)→ reload 同步。若自己有未保存改动(autoSaveTimer pending)
   // → 跳过(等自己保存,最后保存的赢;改动频率低,冲突概率极小)。
   const myLabel = getCurrentWebview().label;
   onMount(() => {
+    // 启动首次加载:main.ts 挂载前已经发起并(通常)完成,首帧画的就是 sequence.json 的内容;
+    // 这里只接过"与磁盘一致"的基准快照(没有文件时为 null,预置内容随后被自动保存写盘)并放开自动保存。
+    loadSequenceOnce().then((persisted) => {
+      lastPersistedJson = persisted;
+      autoSaveLoaded = true;
+    });
     const unlisten = onSequenceChanged((e) => {
       if (e.source === myLabel) return; // 自己触发的跳过
       if (autoSaveTimer) return;        // 自己有未保存改动,跳过避免丢失
-      autoLoad({ keepSelection: true }); // reload 同步,停在当前页签
+      autoLoad(); // reload 同步,停在当前页签
     });
     return () => { unlisten.then((f) => f()); };
   });

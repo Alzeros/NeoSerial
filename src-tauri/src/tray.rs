@@ -6,7 +6,7 @@
 
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIcon, TrayIconBuilder, TrayIconEvent};
-use tauri::{AppHandle, Listener, Manager};
+use tauri::{AppHandle, Listener, Manager, WebviewUrl, WebviewWindowBuilder};
 use tauri_plugin_notification::NotificationExt;
 
 use crate::commands::connection::open_port_window;
@@ -16,6 +16,13 @@ use crate::state::AppState;
 
 const APP_NAME: &str = "NeoSerial";
 const TRAY_ID: &str = "main-tray";
+/// 后台常驻期间保活 WebView2 的隐藏空 webview。
+/// 进程里最后一个 webview 关掉时,WebView2 整组浏览器进程(6 个 msedgewebview2)随之退出,
+/// 托盘再开窗口得把它们重新拉起:正式版实测窗口框出来后还要约 2s 页面才开始加载,界面
+/// 就位要 2.4-3.8s;浏览器进程活着时 0.9-1.1s。留一个 about:blank 的隐藏 webview 撑着,
+/// 代价是常驻时多占几十 MB 内存。不是串口窗口(is_serial_window_label 为 false),
+/// 不参与"最后一个窗口"判定,托盘/二次启动也不会把它拉到前台。
+const KEEPALIVE_LABEL: &str = "webview-keepalive";
 
 /// setup 阶段调用:监听连接集合变化刷新托盘(tooltip + 菜单),再按当前设置决定托盘显隐。
 /// 所有连接增删路径(GUI/MCP 建连、断开、关窗口、拔线清理)都 emit 这个全局事件,
@@ -36,20 +43,54 @@ pub fn sync_visibility(app: &AppHandle) {
             let _ = tray.set_visible(true);
             refresh(app);
         }
+        ensure_keepalive(app);
     } else {
         if let Some(tray) = app.tray_by_id(TRAY_ID) {
             let _ = tray.set_visible(false);
         }
-        // 应用正收在托盘里(零窗口)时被 agent 经 save_settings 关掉后台运行:托盘一撤,
-        // 进程就成了既没窗口也没图标的隐身状态,用户只能去任务管理器找。补开一个窗口。
-        if !has_serial_window(app) {
-            open_blank_window(app);
-        }
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move {
+            // 应用正收在托盘里(零串口窗口)时被 agent 经 save_settings 关掉后台运行:托盘一撤,
+            // 进程就成了既没窗口也没图标的隐身状态,用户只能去任务管理器找。补开一个窗口。
+            // 必须先补窗口再关保活 webview:保活窗口若是进程里最后一个窗口,关它时 Tauri 发
+            // ExitRequested,轻量模式下不拦,应用就直接退出了。
+            if !has_serial_window(&app) {
+                let _ = open_port_window(app.clone(), None, None).await;
+            }
+            close_keepalive(&app);
+        });
     }
 }
 
 fn has_serial_window(app: &AppHandle) -> bool {
     app.webview_windows().keys().any(|l| is_serial_window_label(l))
+}
+
+/// 见 [`KEEPALIVE_LABEL`]。已存在则不动;建窗口不能在主线程事件回调里同步做(Windows 下死锁),
+/// 与 open_blank_window 一样丢到 async runtime。
+fn ensure_keepalive(app: &AppHandle) {
+    if app.get_webview_window(KEEPALIVE_LABEL).is_some() {
+        return;
+    }
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if app.get_webview_window(KEEPALIVE_LABEL).is_some() {
+            return;
+        }
+        let Ok(url) = "about:blank".parse() else { return };
+        let _ = WebviewWindowBuilder::new(&app, KEEPALIVE_LABEL, WebviewUrl::External(url))
+            .title("NeoSerial")
+            .visible(false)
+            .skip_taskbar(true)
+            .inner_size(1.0, 1.0)
+            .build();
+    });
+}
+
+fn close_keepalive(app: &AppHandle) {
+    if let Some(window) = app.get_webview_window(KEEPALIVE_LABEL) {
+        let _ = window.close();
+    }
 }
 
 pub fn background_mode(app: &AppHandle) -> bool {

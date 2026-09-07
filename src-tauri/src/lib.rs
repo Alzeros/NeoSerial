@@ -222,7 +222,8 @@ pub fn run() {
                     // (720x480,见 open_theme_editor),不能在这里被统一拉到 1216x500:
                     //   1) 拖动中 Resized -> set_size -> Resized 反复触发,窗口尺寸抖动闪烁;
                     //   2) set_size 同时写宽和高,缩宽度会把高度顶到 500,缩高度会把宽度顶到 1216。
-                    if window.label() != "theme-editor" {
+                    // 后台模式的 1x1 隐藏保活 webview(tray::KEEPALIVE_LABEL)更不该被撑大。
+                    if tray::is_serial_window_label(window.label()) {
                         // 目标内容区 1200，但无边框窗口下 Windows resize grip 会扣约 16px，
                         // 故阈值取 1216：被扣后落地 1200，右栏不再被截断。
                         let min_w = 1216.0;

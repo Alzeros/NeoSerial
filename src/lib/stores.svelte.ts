@@ -1,5 +1,5 @@
 import { defaultScriptCommand, defaultScriptPage, defaultScriptModule, presetScriptModules, type LogLine, type ScriptPage, type Settings } from './types';
-import { computeCustomVars, defaultCustomTheme, isCustomDark } from './customTheme';
+import { computeCustomVars, defaultCustomTheme, isCustomDark, normalizeCustomTheme } from './customTheme';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
@@ -252,6 +252,47 @@ export function requestSuggestFill(text: string) {
 
 // ============ 设置缓存（用于断开时回写） ============
 export const cachedSettings = $state<{ value: Settings | null }>({ value: null });
+
+/** 把加载到的 Settings 回填到各响应式 store,并把主题/日志字体套到 <html>。
+ *  启动预取(startup.ts)在挂载前调,首帧就按用户配置画。
+ *  主题编辑器窗口不走这里:它自己加载设置并强制切到 custom 主题。 */
+export function applySettings(s: Settings) {
+  cachedSettings.value = s;
+  connectionParams.port = s.last_port || connectionParams.port;
+  connectionParams.baudRate = s.serial_defaults.baud_rate;
+  connectionParams.dataBits = s.serial_defaults.data_bits;
+  connectionParams.parity = s.serial_defaults.parity;
+  // settings 里是后端枚举的 PascalCase 字串("One"/"Two"),connect 命令要数字(1/2)
+  connectionParams.stopBits = s.serial_defaults.stop_bits === 'Two' ? 2 : 1;
+  connectionParams.flowControl = s.serial_defaults.flow_control;
+  lineEnding.value = s.ui.line_ending;
+  showTimestamp.value = s.ui.show_timestamp;
+  showLineIndex.value = s.ui.show_line_index ?? false;
+  autoScroll.value = s.ui.auto_scroll;
+  displayMode.value = s.ui.display_mode === 'Hex' ? 'hex' : 'ascii';
+  textEncoding.value = (s.ui?.text_encoding || 'Ascii') === 'Utf8' ? 'utf8' : (s.ui?.text_encoding || 'Ascii') === 'Gbk' ? 'gbk' : 'ascii';
+  logSendContent.value = s.ui.log_send;
+  // 日志区字体：兜底默认 14px / 1.6
+  const fs = s.ui?.log_font_size ?? 14;
+  const lh = s.ui?.log_line_height ?? 1.6;
+  const fLatin = s.ui?.log_font_latin ?? 'default';
+  const fCjk = s.ui?.log_font_cjk ?? 'default';
+  logFontSize.value = fs;
+  logLineHeight.value = lh;
+  logFontLatin.value = fLatin;
+  logFontCJK.value = fCjk;
+  applyLogFont(fs, lh, fLatin, fCjk);
+  logDirLabelStyle.value = (s.ui?.log_dir_label === 'full') ? 'full' : 'short';
+  // 预设波特率：兜底为默认三项
+  presetBaudRates.value =
+    s.presets?.baud_rates?.length ? s.presets.baud_rates : [9600, 115200, 921600];
+  // 自定义主题色板：缺失/非法字段回退默认底稿（旧配置无此字段也安全）
+  customTheme.value = normalizeCustomTheme(s.presets?.custom_theme);
+  // 主题：兜底为 preset-1，并应用到 <html>
+  const tk = s.presets?.theme || 'preset-1';
+  theme.value = tk;
+  applyTheme(tk, customTheme.value);
+}
 
 // ===== 模块级操作（仅切换；模块为预置功能，用户不可增删） =====
 export function switchScriptModule(index: number) {
