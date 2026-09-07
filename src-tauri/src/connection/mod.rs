@@ -413,7 +413,7 @@ pub fn spawn_connection(
         // 主动 disconnect 已先 remove 此 key,这里 remove 幂等返回 None,不冲突。
         // 仅当 map 里仍是本 handle(同地址)才 remove——防止把 disconnect 后用同 port 新建的
         // 连接误删(极小竞态窗口:disconnect 与重连几乎同时)。地址比较兜底。
-        let snapshot: Vec<crate::mcp::registry::ConnInfo> = {
+        let (snapshot, removed_zombie): (Vec<crate::mcp::registry::ConnInfo>, bool) = {
             if let Ok(mut conns) = connections_clone.lock() {
                 // 用 Arc 地址比较:map 里该 port 的 handle 若仍是本次 spawn 的同一个,
                 // 则是僵尸,remove;若已是新连接(重连覆盖了),则不动。
@@ -422,20 +422,30 @@ pub fn spawn_connection(
                 if is_ours {
                     conns.remove(&port_name);
                 }
-                conns.values()
+                let snapshot = conns.values()
                     .map(|h| crate::mcp::registry::ConnInfo { com: h.port.clone(), baud: h.baud })
-                    .collect()
+                    .collect();
+                (snapshot, is_ours)
             } else {
-                Vec::new()
+                (Vec::new(), false)
             }
         };
+        // 被动断开(是我们从 map 里清掉的僵尸)时序列子系统无人通知:主动 disconnect_port 会先
+        // sequence_stop_inner,拔线不会。不停的话序列线程继续按 delay 往已死的写通道发命令,
+        // 界面上 Tx 一条条冒、停止按钮报"未连接"、重连后新 run 被拒"已在运行"。
+        // 只在 removed_zombie 时做:map 里若已是重连后的新连接,新序列不能被误停。
+        let seq_aborted = removed_zombie && crate::commands::sequence::sequence_abort(&port_name);
         if let Some(reg) = registry_clone.as_ref() {
             let _ = reg.update_connections(snapshot);
         }
         // 连接被清理(拔线等被动断开),mcp-only 集合变化,通知所有 GUI 窗口刷新 chip。
         let _ = app_handle_clone.emit("mcp-connections-changed", ());
-        // 定向通知该连接归属的窗口:连接已断开(线程退出,可能是被动断开如拔线)
+        // 定向通知该连接归属的窗口:序列(若有)已中止、连接已断开(线程退出,可能是被动断开如拔线)
         if let Ok(wl) = window_label_clone.read() {
+            if seq_aborted {
+                let _ = app_handle_clone.emit_to(&*wl, "sequence-done",
+                    crate::commands::sequence::SequenceDone { aborted: true });
+            }
             let _ = app_handle_clone.emit_to(&*wl, "connection-state", ConnectionState {
                 connected: false,
                 port: Some(port_name),

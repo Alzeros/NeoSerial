@@ -101,6 +101,15 @@ export interface CommandIndexSettings {
   suggest_enabled: boolean;
 }
 
+/** 递归可选:patchSettings 的入参是 Settings 的任意子集(嵌套对象按键合并,数组整体替换)。 */
+export type DeepPartial<T> = T extends (infer U)[]
+  ? U[]
+  : T extends object
+    ? { [K in keyof T]?: DeepPartial<T[K]> }
+    : T;
+
+export type SettingsPatch = DeepPartial<Settings>;
+
 export interface Settings {
   version: number;
   window: { width: number; height: number; x: number; y: number };

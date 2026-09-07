@@ -223,13 +223,16 @@ pub fn sequence_run_inner(
                 line_ending.append_bytes(&mut data);
 
                 if !data.is_empty() {
-                    // 复用 emit_tx_line:发起即 emit tx-line + push rx_history(Tx)
-                    // + 文件日志,与 send 命令同一逻辑。log_send=false 时不回显/记录。
-                    // (Task 2 deferred minor:原内联逻辑不 push Tx 到 rx_history,
-                    //  导致 sequence 发送的命令在 get_history_since 不可见,已修。)
-                    emit_tx_line(&app_handle, &rx_history, &window_label, &line_index, data.clone());
-                    // 塞 channel,writer 异步写(SendSilent:不 emit,emit_tx_line 已 emit)
-                    let _ = write_tx.send(WriteCommand::SendSilent(data));
+                    // 塞 channel,writer 异步写(SendSilent:不 emit,由下面的 emit_tx_line 回显)。
+                    // 写线程已退出(拔线等被动断开)时 send 返回 Err:连接没了,序列跟着中止——
+                    // 监控线程稍后也会 sequence_abort,这里先退能少发几条根本发不出去的幻影 Tx。
+                    if write_tx.send(WriteCommand::SendSilent(data.clone())).is_err() {
+                        aborted = true;
+                        break 'rounds;
+                    }
+                    // 复用 emit_tx_line:emit tx-line + push rx_history(Tx) + 文件日志,
+                    // 与 send 命令同一逻辑。log_send=false 时不回显/记录。
+                    emit_tx_line(&app_handle, &rx_history, &window_label, &line_index, data);
                     // 发送后更新 current_index:始终反映"最后发出去的是第几条"(0-based)
                     with_current_run(&port, run_id, |state| state.current_index = i);
                 }
@@ -311,7 +314,15 @@ pub fn sequence_stop_inner(
             return Err(format!("端口 {} 未连接", port));
         }
     }
-    let was_running = SEQUENCE_STATE.lock()
+    Ok(sequence_abort(port))
+}
+
+/// 中止指定 port 的运行序列,不校验连接是否存在。返回 true 表示确实停了一个正在运行的序列。
+/// 供两处用:sequence_stop_inner(已校验连接)和连接监控线程——拔线等被动断开时连接已经
+/// 从 map 移除,`sequence_stop_inner` 会报"未连接"而停不下来,序列线程就继续按 delay 往
+/// 已死的写通道发命令,界面上 Tx 一条条冒、停止按钮失效、重连后新 run 被拒"已在运行"。
+pub fn sequence_abort(port: &str) -> bool {
+    SEQUENCE_STATE.lock()
         .map(|mut g| {
             if let Some(state) = g.get_mut(port) {
                 let was = state.running;
@@ -323,8 +334,7 @@ pub fn sequence_stop_inner(
                 false
             }
         })
-        .unwrap_or(false);
-    Ok(was_running)
+        .unwrap_or(false)
 }
 
 /// 保存序列配置。data 为前端序列化后的 JSON（当前是 ScriptModule[]）。
@@ -751,7 +761,7 @@ mod tests {
         let port = "COM3";
         insert_running_with_id(port, 1, 10);
         // stop 旧 run
-        sequence_stop_state_only(port);
+        assert!(sequence_abort(port));
         assert!(!is_current_run(port, 1), "stop 后旧 run 不再是当前 run");
         // 新 run 顶替
         insert_running_with_id(port, 2, 5);
@@ -788,12 +798,24 @@ mod tests {
         assert!(start.elapsed() < Duration::from_secs(1));
     }
 
-    /// 测试用:只操作 SEQUENCE_STATE 的 stop(sequence_stop_inner 还要校验 connections)。
-    fn sequence_stop_state_only(port: &str) {
-        if let Some(state) = SEQUENCE_STATE.lock().unwrap().get_mut(port) {
-            state.running = false;
-            state.stop_signal.signal();
-        }
+    /// 被动断开路径:sequence_abort 不校验连接,停掉运行中的序列并唤醒睡眠;
+    /// 未在运行/从未跑过的 port 返回 false(监控线程据此决定要不要发 sequence-done)。
+    #[test]
+    fn test_abort_without_connection_stops_running_only() {
+        let _guard = TEST_LOCK.lock().unwrap();
+        reset();
+
+        insert_running("COM3", 10);
+        let signal = SEQUENCE_STATE.lock().unwrap().get("COM3").unwrap().stop_signal.clone();
+        assert!(sequence_abort("COM3"), "运行中的序列应被停掉并报告 true");
+        assert!(!is_current_run("COM3", 1));
+        // stop_signal 已置位:序列线程若正睡在 delay 里会立刻醒
+        let start = Instant::now();
+        signal.sleep(Duration::from_secs(10));
+        assert!(start.elapsed() < Duration::from_secs(1), "abort 应唤醒睡眠");
+        // 再 abort 同 port(已停)/ 从未跑过的 port:都不算"停了一个序列"
+        assert!(!sequence_abort("COM3"));
+        assert!(!sequence_abort("COM9"));
     }
 
     /// get_sequence_state 返回正确进度信息。

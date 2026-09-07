@@ -417,6 +417,9 @@ impl Settings {
     }
 
     /// 保存配置到指定路径。目录不存在会创建。
+    /// 先写临时文件再改名:直接覆盖写时崩溃/断电会留下半个 JSON,下次启动整份作废回默认
+    /// (命令组、自定义主题、知识库 Key 全没)。send_history / command_index / registry 早已是
+    /// tmp+rename,最重要的 settings 反而不是。
     /// 测试用（传入 temp 路径隔离，不依赖 APPDATA 环境变量）。
     pub(crate) fn save_to(&self, path: &Path) -> io::Result<()> {
         if let Some(parent) = path.parent() {
@@ -424,7 +427,45 @@ impl Settings {
         }
         let text = serde_json::to_string_pretty(self)
             .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        fs::write(path, text)
+        let tmp = path.with_extension("json.tmp");
+        fs::write(&tmp, text)?;
+        fs::rename(&tmp, path)
+    }
+
+    /// 局部更新:以本份(后端内存态)为底,把 `patch` 深合并进来并校验,返回新 Settings;
+    /// 不改 self。patch 是 Settings 的任意子集:对象按键递归合并,数组与标量整体替换。
+    /// 各窗口只回写自己改动的字段——原先前端整份回写,持旧快照的窗口一保存就把别处
+    /// (另一窗口的设置页、主题编辑器、agent)刚改的字段冲回旧值。
+    /// 合并结果反序列化失败(类型不对、端口越界等)→ Err,内存与磁盘都不动。
+    pub fn apply_patch(&self, patch: &serde_json::Value) -> Result<Settings, String> {
+        if !patch.is_object() {
+            return Err("设置补丁必须是对象".into());
+        }
+        let mut merged = serde_json::to_value(self).map_err(|e| e.to_string())?;
+        deep_merge(&mut merged, patch);
+        let mut next: Settings = serde_json::from_value(merged).map_err(|e| format!("设置值无效: {}", e))?;
+        // 后端持有字段与版本号不由补丁改
+        next.merge_backend_owned(self);
+        next.version = self.version;
+        Ok(next)
+    }
+}
+
+/// JSON 深合并:两边都是对象则按键递归,否则用 patch 的值整体替换(数组也是整体替换,
+/// 不做元素级合并——波特率列表、手册排除名单都是"整份提交"的语义)。
+fn deep_merge(base: &mut serde_json::Value, patch: &serde_json::Value) {
+    match (base, patch) {
+        (serde_json::Value::Object(b), serde_json::Value::Object(p)) => {
+            for (k, v) in p {
+                match b.get_mut(k) {
+                    Some(slot) if slot.is_object() && v.is_object() => deep_merge(slot, v),
+                    _ => {
+                        b.insert(k.clone(), v.clone());
+                    }
+                }
+            }
+        }
+        (b, p) => *b = p.clone(),
     }
 }
 
@@ -683,6 +724,69 @@ mod tests {
         incoming.merge_backend_owned(&current);
         assert!(incoming.ui.tray_hint_shown, "后端持有字段以内存态为准");
         assert_ne!(incoming.ui.background_mode, default_background_mode(), "用户可改字段照回写值");
+    }
+
+    /// apply_patch:只改补丁里给的键,嵌套对象递归合并,其余字段(含同一段里没提到的键)原样保留。
+    #[test]
+    fn test_apply_patch_merges_nested_and_keeps_rest() {
+        let mut base = Settings::default_settings();
+        base.ui.background_mode = true;
+        base.ui.log_font_size = 16;
+        base.presets.theme = "preset-3".into();
+        base.command_index.api_key = "k".into();
+        let next = base
+            .apply_patch(&serde_json::json!({ "ui": { "show_timestamp": false, "qc_font_size": 15 } }))
+            .unwrap();
+        assert!(!next.ui.show_timestamp);
+        assert_eq!(next.ui.qc_font_size, 15);
+        assert!(next.ui.background_mode, "同段未提到的键不能被冲掉");
+        assert_eq!(next.ui.log_font_size, 16);
+        assert_eq!(next.presets.theme, "preset-3");
+        assert_eq!(next.command_index.api_key, "k");
+    }
+
+    /// 数组整体替换(不做元素合并);非法值(端口越界、类型不对)整份拒绝,底稿不动。
+    #[test]
+    fn test_apply_patch_arrays_replace_and_invalid_rejected() {
+        let base = Settings::default_settings();
+        let next = base
+            .apply_patch(&serde_json::json!({ "presets": { "baud_rates": [9600, 460800] } }))
+            .unwrap();
+        assert_eq!(next.presets.baud_rates, vec![9600, 460800]);
+
+        assert!(base.apply_patch(&serde_json::json!({ "mcp": { "port": 70000 } })).is_err());
+        assert!(base.apply_patch(&serde_json::json!({ "mcp": { "port": null } })).is_err());
+        assert!(base.apply_patch(&serde_json::json!({ "ui": { "log_font_size": "14" } })).is_err());
+        assert!(base.apply_patch(&serde_json::json!([1, 2])).is_err(), "补丁须是对象");
+    }
+
+    /// 后端持有字段(tray_hint_shown)与 version 不由补丁改。
+    #[test]
+    fn test_apply_patch_keeps_backend_owned_and_version() {
+        let mut base = Settings::default_settings();
+        base.ui.tray_hint_shown = true;
+        let next = base
+            .apply_patch(&serde_json::json!({ "version": 99, "ui": { "tray_hint_shown": false } }))
+            .unwrap();
+        assert!(next.ui.tray_hint_shown);
+        assert_eq!(next.version, CONFIG_VERSION);
+    }
+
+    /// save_to 落盘后不留临时文件,且内容可读回。
+    #[test]
+    fn test_save_to_is_atomic_no_tmp_left() {
+        let dir = std::env::temp_dir().join(format!("neoserial_test_{}_atomic", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let path = dir.join("settings.json");
+        let mut s = Settings::default_settings();
+        s.last_port = "COM9".into();
+        s.save_to(&path).unwrap();
+        // 再存一次覆盖已有文件(rename 需替换已存在的目标)
+        s.last_port = "COM10".into();
+        s.save_to(&path).unwrap();
+        assert!(!path.with_extension("json.tmp").exists());
+        assert_eq!(Settings::load_from(&path).last_port, "COM10");
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// 旧开发版写过 ui.minimize_to_tray / close_prompted / close_exits_app,

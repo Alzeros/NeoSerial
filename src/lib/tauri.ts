@@ -16,6 +16,7 @@ import type {
   SequenceDone,
   SequenceProgress,
   Settings,
+  SettingsPatch,
   TxUpdate,
   WindowConnState,
 } from './types';
@@ -122,6 +123,13 @@ export async function saveSettings(settings: Settings): Promise<void> {
   await invoke('save_settings', { settings });
 }
 
+/** 局部更新设置:只传自己改动的字段,后端以内存态为底深合并、落盘、广播 settings-changed,
+ *  返回合并后的完整 Settings(调用方据此刷新 cachedSettings)。窗口/主题编辑器都走这条,
+ *  不再整份回写——持旧快照整份保存会把别处刚改的字段冲回去。值无效时 reject,后端不动。 */
+export async function patchSettings(patch: SettingsPatch): Promise<Settings> {
+  return await invoke<Settings>('patch_settings', { patch });
+}
+
 export async function saveCommands(groups: Settings['command_groups']): Promise<void> {
   await invoke('save_commands', { groups });
 }
@@ -146,8 +154,21 @@ export async function stopLogging(): Promise<void> {
   await invoke('stop_logging');
 }
 
-export async function isLogging(): Promise<boolean> {
-  return await invoke<boolean>('is_logging');
+/** 文件日志的全局状态(logger 是进程级单份)。path:记录中是正在写的文件,停止后是上次路径。 */
+export interface LoggingStatus {
+  active: boolean;
+  path: string | null;
+  /** 写盘失败原因,只在失败广播里带;此时 logger 已被后端摘掉,active 必为 false */
+  error: string | null;
+}
+
+export async function getLoggingStatus(): Promise<LoggingStatus> {
+  return await invoke<LoggingStatus>('get_logging_status');
+}
+
+/** logging-changed 全局事件:任一窗口/agent 开始或停止了记录、存盘线程写失败。各窗口据此刷新按钮与路径。 */
+export function onLoggingChanged(cb: (status: LoggingStatus) => void) {
+  return getCurrentWebview().listen<LoggingStatus>('logging-changed', (e) => cb(e.payload));
 }
 
 // ============ 脚本序列 ============

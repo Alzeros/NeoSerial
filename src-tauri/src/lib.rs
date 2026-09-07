@@ -11,8 +11,8 @@ mod util;
 use tauri::{Emitter, Manager};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
-use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
-use commands::logging::{start_logging, stop_logging, is_logging};
+use commands::config::{get_settings, save_settings, patch_settings, save_commands, export_theme_file, import_theme_file};
+use commands::logging::{start_logging, stop_logging, get_logging_status};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
 use commands::command_index::{command_index_refresh, command_index_load, command_index_test_connection, send_history_push, send_history_load, send_history_clear};
 use commands::mcp_log::get_mcp_call_log;
@@ -116,7 +116,7 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     registry
 }
 
-/// 断开所有连接 + 注销 registry + 退出应用。
+/// 断开所有连接 + 写完文件日志 + 注销 registry + 退出应用。
 /// 被 CloseRequested(设置"点 × 直接退出"路径)、exit_app 命令(设置页"退出")、
 /// 托盘"退出"菜单共用——这是应用真正退出的唯一出口。
 pub(crate) fn cleanup_and_exit(state: &AppState, app_handle: &tauri::AppHandle) {
@@ -129,6 +129,9 @@ pub(crate) fn cleanup_and_exit(state: &AppState, app_handle: &tauri::AppHandle) 
     for p in &ports {
         let _ = crate::commands::connection::disconnect_port(state, app_handle, p);
     }
+    // 断开之后再停日志:reader 退出前最后一次 flush 的行还在存盘通道里,stop 会等它们写进文件。
+    // Tauri 的 exit 走 process::exit,托管状态不析构,不在这里停的话 BufWriter 里的尾巴就丢了。
+    let _ = crate::commands::logging::stop_logging_impl(app_handle);
     if let Some(reg) = &state.registry {
         let _ = reg.unregister();
     }
@@ -303,10 +306,11 @@ pub fn run() {
             send_file,
             get_settings,
             save_settings,
+            patch_settings,
             save_commands,
             start_logging,
             stop_logging,
-            is_logging,
+            get_logging_status,
             sequence_run,
             sequence_stop,
             save_sequence_config,
@@ -334,8 +338,10 @@ pub fn run() {
                     api.prevent_exit();
                 }
             }
-            // 进程退出时注销 registry,避免残留条目让 agent 发现后连接失败
+            // 进程退出时注销 registry,避免残留条目让 agent 发现后连接失败;
+            // 没经 cleanup_and_exit 的退出路径(更新器 relaunch 等)也把文件日志写完。
             tauri::RunEvent::Exit => {
+                let _ = crate::commands::logging::stop_logging_impl(app);
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Some(reg) = &state.registry {
                         let _ = reg.unregister();

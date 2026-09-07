@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import TitleBar from '$components/TitleBar.svelte';
   import ConnectionBar from '$components/ConnectionBar.svelte';
@@ -11,23 +11,16 @@
   import {
     appendLogLines,
     insertLogLines,
-    autoScroll,
+    applySharedSettings,
     cachedSettings,
     connected,
     connectionParams,
     currentPort,
     displayMode,
     fileSendProgress,
-    textEncoding,
     lineEnding,
     logLines,
     logSendContent,
-    presetBaudRates,
-    logFontSize,
-    logLineHeight,
-    logDirLabelStyle,
-    logFontLatin,
-    logFontCJK,
     theme,
     customTheme,
     applyTheme,
@@ -51,7 +44,7 @@
     getSettings,
     getWindowConnState,
     getWindowHistory,
-    saveSettings,
+    patchSettings,
     takePendingTakeover,
     onConnectionMode,
     onConnectionState,
@@ -111,82 +104,97 @@
     }
   }
 
-  // 从当前 UI 状态构建可保存的 Settings（基于缓存，避免丢字段）
-  function buildSettingsFromUi(): Settings | null {
-    const base = cachedSettings.value;
-    if (!base) return null;
+  // 主题编辑器窗口(label=theme-editor)只渲染 ThemeEditor,不跑串口逻辑
+  const isThemeEditorWindow = getCurrentWebview().label === 'theme-editor';
+
+  // ============ 主界面开关的持久化 ============
+  // 主界面上直接拨的开关(HEX 显示/时间戳/行号/回车换行/记录发送)改了就回写,防抖 200ms:
+  // 原先只在"断开连接"时整份落盘,关窗口、托盘退出都不经过它,后台模式下用户几乎不点断开,
+  // 这些设置等于永不保存;而"记录发送"/"时间戳"后端还要拿来决定文件日志格式,拨了得立刻同步。
+  // 只回写**本窗口自己改过**的字段(与上次回写的快照逐项比对):多个窗口共用一份 settings,
+  // 整份覆盖会把别的窗口刚改的字段冲回旧值,只写差异就互不干扰(同一字段两边都改,后改的赢)。
+  type OwnedToggles = {
+    display_mode: 'Hex' | 'Ascii';
+    line_ending: Settings['ui']['line_ending'];
+    show_timestamp: boolean;
+    show_line_index: boolean;
+    log_send: boolean;
+  };
+  function ownedToggles(): OwnedToggles {
     return {
-      ...base,
-      last_port: connectionParams.port,
+      display_mode: displayMode.value === 'hex' ? 'Hex' : 'Ascii',
+      line_ending: lineEnding.value,
+      show_timestamp: showTimestamp.value,
+      show_line_index: showLineIndex.value,
+      log_send: logSendContent.value,
+    };
+  }
+  // 上次回写(或从设置同步进来)时各开关的值;null = 设置还没加载,先不比
+  let lastPersistedToggles: OwnedToggles | null = null;
+  let toggleFlushTimer: ReturnType<typeof setTimeout> | null = null;
+
+  $effect(() => {
+    if (isThemeEditorWindow) return;
+    const now = ownedToggles();
+    // 只依赖开关 store 本身:cachedSettings 变(别的窗口保存)不该触发回写,不然两个窗口来回覆盖
+    untrack(() => {
+      if (!lastPersistedToggles) {
+        if (cachedSettings.value) lastPersistedToggles = now;
+        return;
+      }
+      const changed = (Object.keys(now) as (keyof OwnedToggles)[]).filter((k) => now[k] !== lastPersistedToggles![k]);
+      if (changed.length === 0) return;
+      if (toggleFlushTimer) clearTimeout(toggleFlushTimer);
+      toggleFlushTimer = setTimeout(() => {
+        toggleFlushTimer = null;
+        const cur = ownedToggles();
+        const base = lastPersistedToggles!;
+        const ui: Partial<OwnedToggles> = {};
+        for (const k of Object.keys(cur) as (keyof OwnedToggles)[]) {
+          if (cur[k] !== base[k]) (ui as Record<string, unknown>)[k] = cur[k];
+        }
+        if (Object.keys(ui).length === 0) return;
+        lastPersistedToggles = cur;
+        patchSettings({ ui }).then((s) => {
+          cachedSettings.value = s;
+        }).catch((e) => console.error('保存界面开关失败:', e));
+      }, 200);
+    });
+  });
+
+  /** settings-changed 到达时同步三个全局开关(时间戳/行号/记录发送:文件日志格式是全局的,
+   *  窗口间必须一致)。只跟"与本窗口上次回写值不同"的字段——相同的是本窗口自己那次回写的回声,
+   *  跟了会把用户在这 200ms 里刚拨回去的新值又翻回来;跟进来的值同时记进快照,不然下次比对
+   *  会把它当成本窗口的改动再写一遍。 */
+  function syncGlobalToggles(s: Settings) {
+    if (!lastPersistedToggles) return;
+    const incoming = {
+      show_timestamp: s.ui.show_timestamp,
+      show_line_index: s.ui.show_line_index ?? false,
+      log_send: s.ui.log_send,
+    };
+    if (incoming.show_timestamp !== lastPersistedToggles.show_timestamp) showTimestamp.value = incoming.show_timestamp;
+    if (incoming.show_line_index !== lastPersistedToggles.show_line_index) showLineIndex.value = incoming.show_line_index;
+    if (incoming.log_send !== lastPersistedToggles.log_send) logSendContent.value = incoming.log_send;
+    lastPersistedToggles = { ...lastPersistedToggles, ...incoming };
+  }
+
+  /** 连接成功时把端口与串口参数记为下次启动的默认值。只在连接成功时记(不在下拉框每次变化时):
+   *  端口轮询会在模组还没枚举出来时把下拉框临时换成别的口,那不是用户的选择,不该被记下来。 */
+  function persistConnectionDefaults(port: string, baud: number) {
+    patchSettings({
+      last_port: port,
       serial_defaults: {
-        baud_rate: connectionParams.baudRate,
+        baud_rate: baud,
         data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
         stop_bits: connectionParams.stopBits === 2 ? 'Two' : 'One',
         flow_control: connectionParams.flowControl,
       },
-      ui: {
-        ...base.ui,
-        display_mode: displayMode.value === 'hex' ? 'Hex' : 'Ascii',
-        text_encoding: textEncoding.value === 'utf8' ? 'Utf8' : textEncoding.value === 'gbk' ? 'Gbk' : 'Ascii',
-        line_ending: lineEnding.value,
-        auto_scroll: autoScroll.value,
-        show_timestamp: showTimestamp.value,
-        show_line_index: showLineIndex.value,
-        log_send: logSendContent.value,
-        log_font_size: logFontSize.value,
-        log_line_height: logLineHeight.value,
-        log_dir_label: logDirLabelStyle.value,
-        log_font_latin: logFontLatin.value,
-        log_font_cjk: logFontCJK.value,
-      },
-      presets: {
-        baud_rates: presetBaudRates.value,
-        theme: theme.value,
-        custom_theme: customTheme.value,
-      },
-    };
+    }).then((s) => {
+      cachedSettings.value = s;
+    }).catch((e) => console.error('保存连接参数失败:', e));
   }
-
-  async function persistSettings() {
-    const s = buildSettingsFromUi();
-    if (!s) return;
-    try {
-      await saveSettings(s);
-    } catch (e) {
-      console.error('保存设置失败:', e);
-    }
-  }
-
-  // 主题编辑器窗口(label=theme-editor)只渲染 ThemeEditor,不跑串口逻辑
-  const isThemeEditorWindow = getCurrentWebview().label === 'theme-editor';
-
-  // "记录发送"开关变化时即时同步后端 state，让 writer 线程立刻按新值决定是否 emit tx-line。
-  // 否则只有断开连接时 persistSettings 才同步，拨开关后日志区仍会显示 Tx。
-  // 主题编辑器窗口不跑:它不经 applySettings 回填 store(logSendContent/showLineIndex 停在
-  // 默认值),却会在 ThemeEditor.onMount 写 cachedSettings——effect 一比对就把用户保存的
-  // 值当成"开关变了"回写后端,主窗口开关显示关、Tx 却开始回显。
-  $effect(() => {
-    if (isThemeEditorWindow) return;
-    const v = logSendContent.value;
-    const base = cachedSettings.value;
-    if (!base) return;
-    // 仅更新 log_send 字段并同步后端内存 state + 落盘
-    if (base.ui.log_send === v) return;
-    base.ui.log_send = v;
-    saveSettings(base).catch((e) => console.error('同步记录发送开关失败:', e));
-  });
-
-  // 行号开关:即时同步后端内存 state + 落盘(开关切换立即持久化,不丢设置)
-  $effect(() => {
-    if (isThemeEditorWindow) return;
-    const v = showLineIndex.value;
-    const base = cachedSettings.value;
-    if (!base) return;
-    if (base.ui.show_line_index === v) return;
-    base.ui.show_line_index = v;
-    saveSettings(base).catch((e) => console.error('同步行号开关失败:', e));
-  });
 
   let connectionMode = $state<{ mode: string | null }>({ mode: null });
   let showModeNotification = $state<{ value: boolean }>({ value: false });
@@ -243,8 +251,11 @@
       })
       .catch((e) => console.error('查询待接管失败:', e));
 
-    // 持久化设置:main.ts 在挂载前已发起加载并回填 store(首帧就是按它画的),单飞,这里只是兜底
-    loadSettingsOnce();
+    // 持久化设置:main.ts 在挂载前已发起加载并回填 store(首帧就是按它画的),单飞,这里只是兜底。
+    // 设置到位后记下开关快照,之后只回写相对它的改动(预取超时、设置晚到的情况也能接上)
+    loadSettingsOnce().then(() => {
+      if (!lastPersistedToggles && cachedSettings.value) lastPersistedToggles = ownedToggles();
+    });
 
     // 指令联想:订阅手册索引缓存 / 发送历史的变化广播,并载入初值
     const cleanupCommandIndex = initCommandIndex();
@@ -269,15 +280,22 @@
         windowPort.value = null;
       }
       // 连接成功时回填端口/波特率下拉框——MCP connect 走后端,顶部的 connectionParams
-      // 不会自动更新,这里同步避免"连了 COM2 但下拉框还显 COM1"。
+      // 不会自动更新,这里同步避免"连了 COM2 但下拉框还显 COM1";并记为下次启动的默认值。
       if (s.connected) {
         if (s.port) connectionParams.port = s.port;
         if (s.baud_rate) connectionParams.baudRate = s.baud_rate;
+        if (s.port) persistConnectionDefaults(s.port, s.baud_rate ?? connectionParams.baudRate);
       }
-      // 断开时把当前 UI 设置落盘;文件发送进度也随连接作废(中途断开的那次不会再有结果)
+      // 断开时文件发送进度随连接作废(中途断开的那次不会再有结果)
       if (!s.connected) {
-        persistSettings();
         fileSendProgress.value = 0;
+        // 正在跑的序列随连接一起没了。后端被动断开时也会发 sequence-done{aborted},
+        // 这里不等它:窗口不该有"未连接却还在运行"的状态,停止按钮此时也已无处可停。
+        if (scriptRunning.value) {
+          scriptRunning.value = false;
+          scriptCurrentRow.value = -1;
+          scriptRunState.finished = 'aborted';
+        }
       }
     });
     const unlistenSeqDone = onSequenceDone((d) => {
@@ -348,19 +366,17 @@
     document.addEventListener('mouseup', handleMouseUp);
     window.addEventListener('resize', handleResize);
 
-    // 任一窗口/agent 保存了设置 → 刷新本窗口的快照。只换 cachedSettings 和两个带"即时回写
-    // effect"的开关(log_send / show_line_index,不同步它们 effect 会把本窗口旧值写回去,
-    // 两个窗口来回覆盖);其余镜像到 store 的显示项仍由本窗口自己的状态决定。
     const unlistenGuard = onCloseGuard((g) => {
       closeGuard = { open: true, ports: g.ports };
     });
 
+    // 任一窗口/主题编辑器/agent 保存了设置 → 本窗口跟上所有共享项(主题、字体、编码、预设波特率、
+    // 三个全局开关),只有端口/波特率下拉、HEX 显示、回车换行这些"本窗口自己的"不动。
     const unlistenSettings = onSettingsChanged(() => {
       getSettings()
         .then((s) => {
-          cachedSettings.value = s;
-          logSendContent.value = s.ui.log_send;
-          showLineIndex.value = s.ui.show_line_index ?? false;
+          applySharedSettings(s);
+          syncGlobalToggles(s);
         })
         .catch((e) => console.error('刷新设置快照失败:', e));
     });

@@ -3,11 +3,11 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { saveSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
+  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
   import { Github, Eye, EyeOff, Plug, Loader2 } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
-  import type { Settings } from '$lib/types';
+  import type { Settings, SettingsPatch } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
 
@@ -84,19 +84,40 @@
   let indexRefreshMsg = $state<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   let historyCleared = $state(false);
   const canRefreshIndex = $derived(editKbBaseUrl.trim().length > 0 && editKbApiKey.trim().length > 0 && !indexRefreshing);
-  // 有无未应用改动:对比"当前编辑副本快照"与"上次加载/应用时的快照"。只比编辑副本本身,
-  // 不依赖 cachedSettings 的字段完整性(避免后端版本差异导致 JSON 永远不等、应用按钮常亮)。
-  function editsSnapshot(): string {
-    return JSON.stringify({
-      editFontSize, editLineHeight, editDirLabel, editFontLatin, editFontCJK, editTextEncoding,
-      editBackgroundMode, editShowSuggestTab, editShowMcpTab, editQcFontSize, editQcInputHeight, editQcRowGap, editQcFontFamily,
-      editBaudRates, editTheme, editCustom,
-      editMcpAutoStart, editMcpPort,
-      editKbBaseUrl, editKbApiKey, editDisabledDocIds, editKbAutoRefresh, editSuggestEnabled,
-    });
+  // 编辑副本的结构化快照:脏检测(与上次加载/应用时的快照比)和构建补丁(只提交变了的字段)共用。
+  // 只比编辑副本本身,不依赖 cachedSettings 的字段完整性(避免后端版本差异导致 JSON 永远不等、应用按钮常亮)。
+  type EditValues = {
+    fontSize: number; lineHeight: number; dirLabel: 'short' | 'full'; fontLatin: string; fontCJK: string;
+    textEncoding: 'ascii' | 'utf8' | 'gbk';
+    backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean;
+    qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
+    baudRates: number[]; theme: string; custom: Record<string, string>;
+    mcpAutoStart: boolean; mcpPort: number;
+    kbBaseUrl: string; kbApiKey: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
+  };
+  function currentEdits(): EditValues {
+    // 波特率:内置默认 3 项保留 + 用户自定义(去重、排序)
+    const userAdded = editBaudRates.filter((b) => !isDefault(b));
+    const baudRates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
+    return {
+      fontSize: editFontSize, lineHeight: editLineHeight, dirLabel: editDirLabel, fontLatin: editFontLatin, fontCJK: editFontCJK,
+      textEncoding: editTextEncoding,
+      backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
+      qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
+      baudRates, theme: editTheme, custom: { ...editCustom },
+      mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
+      kbBaseUrl: editKbBaseUrl.trim(), kbApiKey: editKbApiKey.trim(), disabledDocIds: [...editDisabledDocIds],
+      kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
+    };
   }
-  let lastApplied = $state('');
-  const hasUnsavedChanges = $derived(editsSnapshot() !== lastApplied);
+  function editsSnapshot(): string {
+    return JSON.stringify(currentEdits());
+  }
+  // 上次加载/应用时的编辑值:脏检测基准,也是补丁的比对基准
+  let lastAppliedEdits = $state<EditValues | null>(null);
+  const hasUnsavedChanges = $derived(lastAppliedEdits !== null && editsSnapshot() !== JSON.stringify(lastAppliedEdits));
+  // 保存失败的原因(值无效、写盘失败),显示在按钮栏;下次应用/保存或重开对话框时清掉
+  let saveError = $state<string | null>(null);
 
   export function show(section: Section = 'about', extMod: 'suggest' | 'mcp' | 'quick' | null = null) {
     editBaudRates = [...presetBaudRates.value];
@@ -132,8 +153,9 @@
     showApiKey = false;
     indexRefreshMsg = null;
     historyCleared = false;
-    // 记录"加载态快照",作为脏检测基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
-    lastApplied = editsSnapshot();
+    saveError = null;
+    // 记录"加载态快照",作为脏检测与补丁的基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
+    lastAppliedEdits = currentEdits();
     activeSection = section;
     // 外部触发可带子模块:指令查询面板的齿轮按钮 → 直接进指令联想子页
     extModule = extMod;
@@ -200,7 +222,8 @@
 
   function addBaud() {
     const n = Number(newBaud);
-    if (!n || n <= 0) return;
+    // 后端是 u32 列表,小数/非数字保存时整份被拒,这里就挡掉
+    if (!Number.isInteger(n) || n <= 0) return;
     if (editBaudRates.includes(n)) {
       newBaud = '';
       return;
@@ -215,33 +238,68 @@
     editBaudRates = editBaudRates.filter((b) => b !== n);
   }
 
-  /** 从编辑副本构建待保存的 Settings(基于 cachedSettings 透传未编辑字段)。应用/保存/脏检测共用。 */
-  function buildNextSettings(): Settings | null {
-    const base = cachedSettings.value;
-    if (!base) return null;
-    // 波特率:内置默认 3 项保留 + 用户自定义(去重、排序)
-    const userAdded = editBaudRates.filter((b) => !isDefault(b));
-    const rates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
-    return {
-      ...base,
-      ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, qc_font_size: editQcFontSize, qc_input_height: editQcInputHeight, qc_row_gap: editQcRowGap, qc_font_family: editQcFontFamily, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode, show_suggest_tab: editShowSuggestTab, show_mcp_tab: editShowMcpTab },
-      presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
-      mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
-      command_index: {
-        base_url: editKbBaseUrl.trim(),
-        api_key: editKbApiKey.trim(),
-        disabled_doc_ids: [...editDisabledDocIds],
-        auto_refresh: editKbAutoRefresh,
-        suggest_enabled: editSuggestEnabled,
-      },
-    };
+  /** 只把"相对上次加载/应用变了"的编辑项装进补丁。整份提交会把别处(另一窗口、agent、
+   *  主题编辑器)在本对话框打开期间改过的字段用这里的旧副本冲回去;只交差异就互不干扰。 */
+  function buildPatch(): SettingsPatch {
+    const cur = currentEdits();
+    const base = lastAppliedEdits;
+    const changed = (k: keyof EditValues) => !base || JSON.stringify(cur[k]) !== JSON.stringify(base[k]);
+    const patch: SettingsPatch = {};
+    const ui: NonNullable<SettingsPatch['ui']> = {};
+    if (changed('fontSize')) ui.log_font_size = cur.fontSize;
+    if (changed('lineHeight')) ui.log_line_height = cur.lineHeight;
+    if (changed('dirLabel')) ui.log_dir_label = cur.dirLabel;
+    if (changed('fontLatin')) ui.log_font_latin = cur.fontLatin;
+    if (changed('fontCJK')) ui.log_font_cjk = cur.fontCJK;
+    if (changed('textEncoding')) ui.text_encoding = cur.textEncoding === 'utf8' ? 'Utf8' : cur.textEncoding === 'gbk' ? 'Gbk' : 'Ascii';
+    if (changed('backgroundMode')) ui.background_mode = cur.backgroundMode;
+    if (changed('showSuggestTab')) ui.show_suggest_tab = cur.showSuggestTab;
+    if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
+    if (changed('qcFontSize')) ui.qc_font_size = cur.qcFontSize;
+    if (changed('qcInputHeight')) ui.qc_input_height = cur.qcInputHeight;
+    if (changed('qcRowGap')) ui.qc_row_gap = cur.qcRowGap;
+    if (changed('qcFontFamily')) ui.qc_font_family = cur.qcFontFamily;
+    if (Object.keys(ui).length) patch.ui = ui;
+    const presets: NonNullable<SettingsPatch['presets']> = {};
+    if (changed('baudRates')) presets.baud_rates = cur.baudRates;
+    if (changed('theme')) presets.theme = cur.theme;
+    if (changed('custom')) presets.custom_theme = cur.custom;
+    if (Object.keys(presets).length) patch.presets = presets;
+    const mcp: NonNullable<SettingsPatch['mcp']> = {};
+    if (changed('mcpAutoStart')) mcp.auto_start = cur.mcpAutoStart;
+    if (changed('mcpPort')) mcp.port = cur.mcpPort;
+    if (Object.keys(mcp).length) patch.mcp = mcp;
+    const ci: NonNullable<SettingsPatch['command_index']> = {};
+    if (changed('kbBaseUrl')) ci.base_url = cur.kbBaseUrl;
+    if (changed('kbApiKey')) ci.api_key = cur.kbApiKey;
+    if (changed('disabledDocIds')) ci.disabled_doc_ids = cur.disabledDocIds;
+    if (changed('kbAutoRefresh')) ci.auto_refresh = cur.kbAutoRefresh;
+    if (changed('suggestEnabled')) ci.suggest_enabled = cur.suggestEnabled;
+    if (Object.keys(ci).length) patch.command_index = ci;
+    return patch;
   }
 
-  /** 应用:落盘 + 同步预览 store + 更新 cachedSettings,但不关窗。供"应用"按钮和"保存"共用。 */
-  async function applyEdits() {
-    const next = buildNextSettings();
-    if (!next) return;
-    // 预览值落盘到 store(主题/字体/编码/波特率),与落盘 settings 同步
+  /** 应用:落盘 + 同步预览 store + 更新 cachedSettings,但不关窗。供"应用"按钮和"保存"共用。
+   *  返回是否成功:失败(端口留空/越界、写盘出错)时 store 不动、原因显示在按钮栏,"保存"不关窗——
+   *  原先失败只进 console,对话框照常关掉、界面按新值显示,重启后全部回到旧值。 */
+  async function applyEdits(): Promise<boolean> {
+    saveError = null;
+    // 数字输入框清空会绑成 null,越界的端口后端也会拒;先在这里给出能看懂的原因
+    if (!Number.isInteger(editMcpPort) || editMcpPort < 1024 || editMcpPort > 65535) {
+      saveError = 'MCP 端口须为 1024–65535 的整数';
+      return false;
+    }
+    const patch = buildPatch();
+    if (Object.keys(patch).length === 0) return true;
+    let next: Settings;
+    try {
+      next = await patchSettings(patch);
+    } catch (e) {
+      console.error('保存设置失败:', e);
+      saveError = `保存失败:${e}`;
+      return false;
+    }
+    // 落盘成功再把预览值同步进 store(主题/字体/编码/波特率),与 settings 一致
     presetBaudRates.value = next.presets.baud_rates;
     theme.value = editTheme;
     customTheme.value = { ...editCustom };
@@ -251,14 +309,15 @@
     logFontLatin.value = editFontLatin;
     logFontCJK.value = editFontCJK;
     textEncoding.value = editTextEncoding;
-    try {
-      await saveSettings(next);
-      cachedSettings.value = next;
-      // 应用完成:把脏检测基准刷新到当前,应用按钮重新置灰
-      lastApplied = editsSnapshot();
-    } catch (e) {
-      console.error('保存设置失败:', e);
-    }
+    cachedSettings.value = next;
+    // 已应用的值就是新的"打开前原值":之后再取消/Esc 只撤销这之后的预览,不能把已落盘的 4 项翻回去
+    origDirLabel = editDirLabel;
+    origFontLatin = editFontLatin;
+    origFontCJK = editFontCJK;
+    origTextEncoding = editTextEncoding;
+    // 应用完成:把脏检测/补丁基准刷新到当前,应用按钮重新置灰
+    lastAppliedEdits = currentEdits();
+    return true;
   }
 
   /** 应用:保存但不关窗,便于继续调其他设置项。 */
@@ -266,10 +325,9 @@
     await applyEdits();
   }
 
-  /** 保存:应用 + 关窗。 */
+  /** 保存:应用 + 关窗;保存失败留在对话框里让用户看到原因。 */
   async function handleSave() {
-    await applyEdits();
-    open = false;
+    if (await applyEdits()) open = false;
   }
 
   // 一键复制 MCP 连接指令到剪贴板
@@ -895,8 +953,13 @@
         </div>
       </div>
 
-      <!-- 底部按钮:取消(撤销+关) | 应用(保存不关,无改动时置灰) | 保存(应用+关) -->
-      <div class="flex justify-end gap-2 px-5 pb-3 border-t border-[var(--border)] pt-2">
+      <!-- 底部按钮:取消(撤销+关) | 应用(保存不关,无改动时置灰) | 保存(应用+关);保存失败原因显示在左侧 -->
+      <div class="flex items-center gap-2 px-5 pb-3 border-t border-[var(--border)] pt-2">
+        {#if saveError}
+          <span class="flex-1 min-w-0 truncate text-[12px]" style="color: var(--error);" title={saveError}>{saveError}</span>
+        {:else}
+          <span class="flex-1"></span>
+        {/if}
         <button class="btn btn-ghost" style="padding: 4px 12px;" onclick={handleCancel}>取消</button>
         <button
           class="btn btn-secondary"

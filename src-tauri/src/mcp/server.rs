@@ -91,8 +91,12 @@ impl ServerHandler for NeoserialHandler {
             Tool::new(
                 CONNECT,
                 "连接串口。参数: port(如 COM3), baud_rate, data_bits(Five|Six|Seven|Eight), \
-                 parity(None|Odd|Even), stop_bits(1|2), flow_control(None|Software|Hardware)。\
-                 多连接:同一 port 已连接报错,不同 port 各自连接。返回 { ok, mode } 或 { ok:false, error }。",
+                 parity(None|Odd|Even), stop_bits(1|2), flow_control(None|Software|Hardware);\
+                 枚举值不认识直接报错,不会静默改用默认值。\
+                 同一 port 已被 GUI 窗口或前次 connect 连着时复用该连接、不重开串口:返回 reused:true、\
+                 实际 baud 与 owner(gui|agent);请求的 baud_rate 与已有连接不同则报错(不会静默沿用旧波特率),\
+                 要改波特率须先 disconnect。不同 port 各自连接。\
+                 返回 { ok, mode, reused, baud, owner } 或 { ok:false, error }。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -132,8 +136,8 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 SEND,
-                "发送数据到串口(不读响应)。参数: port, text, ending(Cr|Lf|Crlf|None,默认 Crlf), \
-                 is_hex(默认 false)。返回 { ok, sent } 或 { ok:false, error }。",
+                "发送数据到串口(不读响应)。参数: port, text, ending(Cr|Lf|Crlf|None,默认 Crlf,大小写不敏感,\
+                 其他写法报错), is_hex(默认 false)。返回 { ok, sent } 或 { ok:false, error }。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {

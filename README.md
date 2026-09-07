@@ -36,7 +36,7 @@ npm run tauri build  # 发布构建（生成 NSIS 安装包）
 | 工具 | 能力 |
 |------|------|
 | `list_ports` | 列可用串口 |
-| `connect` / `disconnect` | 连接/断开（连接复用，不报冲突） |
+| `connect` / `disconnect` | 连接/断开（已连的口复用不重开，返回 `reused` 与实际 `baud`；波特率不一致报错） |
 | `get_status` | 查连接状态 + rx 序号 |
 | `send` | 发数据（不读） |
 | `send_and_read` | 发后阻塞读响应（静默间隙超时） |
@@ -105,7 +105,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 
 - **读线程**: overlapped read（20ms 超时）→ `LineAssembler` 按 `\r\n` / `\n` / `\r` 切行 → 构造 `LogLine` → 批量 `emit_to`（攒够 16 行或超过 5ms）+ push per-conn `RxHistory`。超时时 flush 不换行的残尾。
 - **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，逐条 `write_all`（overlapped write，等待上限按 长度/波特率 推算，短写循环补写，零进展的超时重试至累计 3s 才判设备卡住，不合并积压命令）+ `emit_to` tx-line/tx-update。文件发送用 `FileChunk`（带 `FileSendTracker`，写线程每块写完累加实际写出字节；`send_file` 据此报进度并等最后一块写完才返回——"100%" 指驱动已收下全部字节，不是塞满了队列；某块写失败后同一文件余下的块直接丢弃）；手动发送/脚本序列/MCP 用 `SendSilent`（发起方已乐观回显，避免被写阻塞拖慢节奏）。
-- **存盘线程**: `FileLogger` 独立线程 + `BufWriter`，全局单份（多连接收发进同一文件）。
+- **存盘线程**: `FileLogger` 独立线程 + `BufWriter`，全局单份（多连接收发进同一文件）。开始/停止/写盘失败都广播 `logging-changed`，各窗口据此同步按钮与路径（窗口挂载时 `get_logging_status` 拉一次）；停止记录与退出应用都等存盘线程把缓冲写完再返回，写失败会摘掉 logger 并把原因显示在按钮上。
 - **监控线程**: 等待读/写线程都退出后清理状态并通知归属窗口断开。
 
 ### 连接模式
@@ -139,7 +139,8 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 | 日志文件 | `%APPDATA%\neoserial\logs\` | 默认存盘目录 |
 | MCP registry | `%APPDATA%\neoserial\mcp-registry.json` | 实例 MCP 端口 + 已连 COM 列表（供 agent 发现，心跳 5s） |
 
-- 配置损坏自动备份为 `.bad` 并回退默认值
+- 配置损坏自动备份为 `.bad` 并回退默认值；写入先落临时文件再改名，断电不留半个 JSON
+- 设置写回走 `patch_settings`（以后端内存态为底深合并）：主界面开关改了就回写本窗口改动的字段（防抖 200ms），连接成功时记 `last_port`/串口参数，设置页/主题编辑器只提交改过的项——多窗口、agent、主题编辑器并存时互不覆盖。主题/字体/编码/预设波特率与时间戳/行号/记录发送三个全局开关跨窗口同步；端口下拉、HEX 显示、回车换行各窗口独立
 - 时间戳固定 UTC+8
 
 ## 功能
@@ -157,7 +158,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 - ASCII / HEX 显示切换
 - 时间戳（HH:MM:SS.mmm）
 - 方向标签（Tx/Rx 或 发送/接收，可切换）
-- 错误关键词高亮（默认 ERROR/FAIL/+CME ERROR/+CMS ERROR，可自定义）
+- 错误关键词高亮（默认 ERROR/FAIL/+CME ERROR/+CMS ERROR，`settings.json` 的 `error_keywords` 可自定义；reader 每秒重取一次，改了不必重连）
 - 暂停/继续、清空、字号行高可调
 
 ### 日志记录
@@ -197,7 +198,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（156 passed）
+cargo test           # Rust 单元测试（196 passed）
 npm run check        # Svelte/TypeScript 类型检查
 ```
 

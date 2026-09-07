@@ -74,7 +74,7 @@ fn emit_rx_update(app_handle: &tauri::AppHandle, window_label: &Arc<RwLock<Strin
 /// 把 LineAssembler 中不换行的残尾（如 shell 的 "> " 提示符）补打为一行。
 /// 残尾没有换行符，正常切行永远等不到，需在设备输出间歇（读超时）时主动取出。
 /// 复用 flush_lines：统一处理前端 emit + 文件日志。
-fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>, line_index: &Arc<AtomicU64>) {
+fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHandle, pending_lines: &mut Vec<LogLine>, rx_history: &RxHistory, window_label: &Arc<RwLock<String>>, line_index: &Arc<AtomicU64>, error_keywords: &[String]) {
     let Some(tail) = assembler.flush() else {
         return;
     };
@@ -83,10 +83,29 @@ fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHand
     }
     let ts = now_local_ts();
     let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-    let line = LogLine::new(ts, Dir::Rx, tail, &[], idx);
+    let line = LogLine::new(ts, Dir::Rx, tail, error_keywords, idx);
     pending_lines.push(line);
     flush_lines(app_handle, pending_lines, rx_history, window_label);
 }
+
+/// 从设置取错误关键词(Rx 行含任一关键词即 is_error,前端标红)。剔除空白项。
+/// reader 线程按 ERROR_KEYWORDS_REFRESH 周期重取,设置页改了关键词几秒内生效,不必重连。
+fn load_error_keywords(app_handle: &tauri::AppHandle) -> Vec<String> {
+    app_handle
+        .try_state::<AppState>()
+        .and_then(|st| {
+            st.settings.lock().ok().map(|s| {
+                s.error_keywords
+                    .iter()
+                    .map(|k| k.trim().to_string())
+                    .filter(|k| !k.is_empty())
+                    .collect()
+            })
+        })
+        .unwrap_or_default()
+}
+
+const ERROR_KEYWORDS_REFRESH: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// 启动串口读取线程。
 pub fn spawn_reader(
@@ -109,8 +128,15 @@ pub fn spawn_reader(
         // rx-update 节流:≥100ms 一个(高波特率下每次 read 都发会冲垮 IPC),
         // 压下的记 pending,读超时(空闲)/线程退出前补发,字节终值不丢。
         let mut rx_update = crate::connection::EventThrottle::new(std::time::Duration::from_millis(100));
+        // 错误关键词快照:每行都锁一次 settings 太重,按周期重取(循环每 ≤20ms 转一圈)
+        let mut error_keywords = load_error_keywords(&app_handle);
+        let mut keywords_refreshed = Instant::now();
 
         while running.load(std::sync::atomic::Ordering::SeqCst) {
+            if keywords_refreshed.elapsed() >= ERROR_KEYWORDS_REFRESH {
+                error_keywords = load_error_keywords(&app_handle);
+                keywords_refreshed = Instant::now();
+            }
             match port.read(&mut buf) {
                 Ok(n) if n > 0 => {
                     rx_bytes.fetch_add(n as u64, std::sync::atomic::Ordering::SeqCst);
@@ -121,7 +147,7 @@ pub fn spawn_reader(
                     for raw in lines {
                         let ts = now_local_ts();
                         let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                        let line = LogLine::new(ts, Dir::Rx, raw, &[], idx);
+                        let line = LogLine::new(ts, Dir::Rx, raw, &error_keywords, idx);
                         pending_lines.push(line);
                     }
 
@@ -148,7 +174,7 @@ pub fn spawn_reader(
                     // 把不换行的残尾（如 shell 的 "> " 提示符）也补打出来，
                     // 避免残留行滞留到下一批、带上下一个时间戳。
                     flush_lines(&app_handle, &mut pending_lines, &rx_history, &window_label);
-                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history, &window_label, &line_index);
+                    flush_pending_tail(&mut assembler, &app_handle, &mut pending_lines, &rx_history, &window_label, &line_index, &error_keywords);
                     if rx_update.take_pending() {
                         emit_rx_update(&app_handle, &window_label, &port_name, &rx_bytes);
                     }

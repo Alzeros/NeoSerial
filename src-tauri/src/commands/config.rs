@@ -31,12 +31,12 @@ pub async fn save_settings(
 
 /// save_settings 的同步实现(在阻塞线程池执行)。
 ///
-/// 前端回传的是**整份**Settings,基于它启动时(或上次保存时)缓存的快照。后端自己改过的
-/// 字段(目前是首次收托盘时写的 ui.tray_hint_shown)前端拿不到,若照单全收,下一次任何
-/// 前端保存(断开触发的 persistSettings、拨开关、设置页保存)都会把它冲回旧值——
+/// 回传的是**整份**Settings,基于调用方(MCP agent)手里的快照。后端自己改过的
+/// 字段(目前是首次收托盘时写的 ui.tray_hint_shown)调用方拿不到,若照单全收会被冲回旧值——
 /// 下次收托盘又弹"仍在后台运行"的通知。这类"只归后端写"的字段以内存态为准,见
 /// [`Settings::merge_backend_owned`]。锁内落盘与 save_commands_impl 一致:先改内存再写盘
 /// 会在写失败时内存/磁盘不一致,先写盘再改内存又要两次取锁给后端写入留竞态窗口。
+/// GUI 窗口不再走这条整份覆盖的路,改用 patch_settings 只写自己改的字段。
 fn save_settings_impl(
     state: &AppState,
     mut settings: crate::config::settings::Settings,
@@ -46,6 +46,39 @@ fn save_settings_impl(
     settings.save().map_err(|e| e.to_string())?;
     *s = settings;
     Ok(())
+}
+
+/// 局部更新设置:patch 是 Settings 的任意子集(嵌套对象按键深合并,数组/标量整体替换),
+/// 以后端内存态为底,落盘并广播 settings-changed,返回合并后的完整 Settings 供调用方刷新快照。
+/// 各窗口/主题编辑器只回写自己改动的字段,持旧快照也不会把别处刚保存的字段冲回去。
+/// 值无效(类型不对、端口越界)→ Err,内存与磁盘都不动。
+#[tauri::command]
+pub async fn patch_settings(
+    app_handle: tauri::AppHandle,
+    patch: serde_json::Value,
+) -> Result<crate::config::settings::Settings, String> {
+    let handle = app_handle.clone();
+    let next = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+        patch_settings_impl(&state, &patch)
+    })
+    .await
+    .map_err(|e| format!("保存设置任务执行异常: {}", e))??;
+    // 后台运行开关即时生效:托盘图标随之出现/消失
+    crate::tray::sync_visibility(&app_handle);
+    let _ = app_handle.emit("settings-changed", ());
+    Ok(next)
+}
+
+fn patch_settings_impl(
+    state: &AppState,
+    patch: &serde_json::Value,
+) -> Result<crate::config::settings::Settings, String> {
+    let mut s = state.settings.lock().map_err(|e| e.to_string())?;
+    let next = s.apply_patch(patch)?;
+    next.save().map_err(|e| e.to_string())?;
+    *s = next.clone();
+    Ok(next)
 }
 
 #[tauri::command]

@@ -14,8 +14,7 @@
     parseThemeFile,
     normalizeCustomTheme,
   } from '$lib/customTheme';
-  import { getSettings, saveSettings, saveFileDialog, openFileDialog, exportThemeFile, importThemeFile } from '$lib/tauri';
-  import type { Settings } from '$lib/types';
+  import { getSettings, patchSettings, saveFileDialog, openFileDialog, exportThemeFile, importThemeFile } from '$lib/tauri';
 
   const appWindow = getCurrentWindow();
 
@@ -96,18 +95,10 @@
   async function handleSave() {
     customTheme.value = { ...editCustom };
     theme.value = 'custom';
-    // 基于 cachedSettings 落盘；若编辑器窗口加载设置失败则现取一次
-    let base = cachedSettings.value;
-    if (!base) {
-      base = await getSettings();
-      cachedSettings.value = base;
-    }
-    const next: Settings = {
-      ...base,
-      presets: { ...base.presets, theme: 'custom', custom_theme: { ...editCustom } },
-    };
+    // 只写主题两项:这个窗口不订阅 settings-changed,手里的 cachedSettings 是开窗时的快照,
+    // 拿它整份回写会把主窗口这期间改的"后台运行"/MCP 端口/"记录发送"等全部冲回旧值。
     try {
-      await saveSettings(next);
+      const next = await patchSettings({ presets: { theme: 'custom', custom_theme: { ...editCustom } } });
       cachedSettings.value = next;
       // 广播给其他窗口(main + win-*)重新应用主题
       await emit('theme-changed', {});

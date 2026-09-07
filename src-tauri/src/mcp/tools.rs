@@ -67,7 +67,14 @@ fn default_stop_bits() -> u8 { 1 }
 #[derive(Serialize)]
 pub struct ConnectResp {
     pub ok: bool,
+    /// 新建连接的 I/O 模式(overlapped / independent / shared);复用已有连接时为 "reused"
     pub mode: Option<String>,
+    /// true = 该 port 已被 GUI 或前次 MCP 连着,本次没有重开串口,参数以已有连接为准
+    pub reused: bool,
+    /// 连接实际的波特率(复用时是已有连接的,可能与本次请求不同——不同时会直接报错,见 connect)
+    pub baud: u32,
+    /// 复用时:已有连接归谁——"gui"(某个窗口正连着,人在看同一份数据)或 "agent"(前次 MCP 建的,无窗口)
+    pub owner: Option<String>,
 }
 
 // ============ disconnect ============
@@ -133,11 +140,21 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
 /// 不报冲突、不重建。agent 与人共享同一连接:agent 发命令的事件显示在 GUI 窗口
 /// (用该连接的 window_label),GUI 能看到;agent 读同一份 rx_history。
 /// 这符合 CLAUDE.md "NeoSerial 持有串口,agent 不直接占端口"——MCP 操作已有连接。
+/// 复用不重开串口,请求参数不会生效:返回 reused:true 与实际 baud;请求的 baud_rate 与
+/// 已有连接不同则报错——静默复用会让 agent 以为端口跑在它要的波特率上,收到乱码去怀疑设备。
 ///
 /// **僵尸检测**:若 port 已存在但 running=false(reader/writer 已退出,如拔线),
 /// 说明是 monitoring 线程还没来得及清理的僵尸 handle,remove 后重建,避免 agent
 /// 操作死连接。
 pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, ErrorResp> {
+    // 参数先校验:不认识的取值直接报错,不静默退化(见 parse_data_bits 等)
+    let data_bits = parse_data_bits(&req.data_bits).map_err(ErrorResp::new)?;
+    let parity = parse_parity(&req.parity).map_err(ErrorResp::new)?;
+    let stop_bits = parse_stop_bits(req.stop_bits).map_err(ErrorResp::new)?;
+    let flow_control = parse_flow_control(&req.flow_control).map_err(ErrorResp::new)?;
+    if req.baud_rate == 0 {
+        return Err(ErrorResp::new("baud_rate 必须大于 0"));
+    }
     // check→占位 持锁(原子),阻塞的 spawn 放锁外——否则打开一个坏端口期间,
     // 全局 connections 锁被独占,其它已连端口的 send/disconnect/get_status 全被挡住。
     let guard = {
@@ -147,10 +164,30 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
             if !existing.running.load(std::sync::atomic::Ordering::SeqCst) {
                 conns.remove(&req.port);
             } else {
-                // 复用:port 已连且仍存活 → 直接返回 ok(不重建)。GUI 连的 agent 能操作,反之亦然。
+                // 复用:port 已连且仍存活 → 不重建。GUI 连的 agent 能操作,反之亦然。
+                let owner = if existing.window_label.read().map(|l| crate::connection::is_detached_label(&l)).unwrap_or(true) {
+                    "agent"
+                } else {
+                    "gui"
+                };
+                if existing.baud != req.baud_rate {
+                    return Err(ErrorResp::new(format!(
+                        "端口 {} 已由 {} 以 {} 打开,与请求的 {} 不一致。要沿用该连接请按 {} 重新 connect;\
+                         要改波特率须先 disconnect(会断开{}的连接)再 connect",
+                        req.port,
+                        if owner == "gui" { "GUI 窗口" } else { "agent" },
+                        existing.baud,
+                        req.baud_rate,
+                        existing.baud,
+                        if owner == "gui" { "用户" } else { "该" },
+                    )));
+                }
                 return Ok(ConnectResp {
                     ok: true,
-                    mode: Some("independent".to_string()),
+                    mode: Some("reused".to_string()),
+                    reused: true,
+                    baud: existing.baud,
+                    owner: Some(owner.to_string()),
                 });
             }
         }
@@ -163,14 +200,10 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     let params = SerialParams {
         port: req.port.clone(),
         baud_rate: req.baud_rate,
-        data_bits: parse_data_bits(&req.data_bits),
-        parity: parse_parity(&req.parity),
-        stop_bits: if req.stop_bits == 2 {
-            crate::config::settings::StopBits::Two
-        } else {
-            crate::config::settings::StopBits::One
-        },
-        flow_control: parse_flow_control(&req.flow_control),
+        data_bits,
+        parity,
+        stop_bits,
+        flow_control,
     };
     // MCP 先连(GUI 没连)的连接:window_label = mcp-{port}。
     // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
@@ -209,32 +242,56 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     // 通知所有 GUI 窗口刷新"待接管"chip 列表:agent 新连了端口,可能需要 GUI 接管。
     // 用全局 emit:chip 是全局连接视图,所有窗口都要看到变化。
     let _ = shared.app_handle.emit("mcp-connections-changed", ());
-    Ok(ConnectResp { ok: true, mode: Some(mode) })
+    Ok(ConnectResp { ok: true, mode: Some(mode), reused: false, baud: req.baud_rate, owner: None })
 }
 
-fn parse_data_bits(s: &str) -> crate::config::settings::DataBits {
+// 枚举型字串参数:大小写不敏感,不认识的值直接报错。rmcp 不按 schema 校验入参,旧实现对
+// 不认识的值静默退化成默认值(如 ending:"CRLF" → 无行尾),AT 命令没有回车永远不执行,
+// agent 只会看到超时然后去怀疑设备——报错反而是对它最有用的信息。
+
+fn parse_data_bits(s: &str) -> Result<crate::config::settings::DataBits, String> {
     use crate::config::settings::DataBits;
-    match s {
-        "Five" => DataBits::Five,
-        "Six" => DataBits::Six,
-        "Seven" => DataBits::Seven,
-        _ => DataBits::Eight,
+    match s.trim().to_ascii_lowercase().as_str() {
+        "five" | "5" => Ok(DataBits::Five),
+        "six" | "6" => Ok(DataBits::Six),
+        "seven" | "7" => Ok(DataBits::Seven),
+        "eight" | "8" => Ok(DataBits::Eight),
+        _ => Err(format!("data_bits 取值须为 Five|Six|Seven|Eight,收到 \"{}\"", s)),
     }
 }
-fn parse_parity(s: &str) -> crate::config::settings::Parity {
+fn parse_parity(s: &str) -> Result<crate::config::settings::Parity, String> {
     use crate::config::settings::Parity;
-    match s {
-        "Odd" => Parity::Odd,
-        "Even" => Parity::Even,
-        _ => Parity::None,
+    match s.trim().to_ascii_lowercase().as_str() {
+        "none" => Ok(Parity::None),
+        "odd" => Ok(Parity::Odd),
+        "even" => Ok(Parity::Even),
+        _ => Err(format!("parity 取值须为 None|Odd|Even,收到 \"{}\"", s)),
     }
 }
-fn parse_flow_control(s: &str) -> crate::config::settings::FlowControl {
+fn parse_stop_bits(n: u8) -> Result<crate::config::settings::StopBits, String> {
+    use crate::config::settings::StopBits;
+    match n {
+        1 => Ok(StopBits::One),
+        2 => Ok(StopBits::Two),
+        _ => Err(format!("stop_bits 取值须为 1|2,收到 {}", n)),
+    }
+}
+fn parse_flow_control(s: &str) -> Result<crate::config::settings::FlowControl, String> {
     use crate::config::settings::FlowControl;
-    match s {
-        "Software" => FlowControl::Software,
-        "Hardware" => FlowControl::Hardware,
-        _ => FlowControl::None,
+    match s.trim().to_ascii_lowercase().as_str() {
+        "none" => Ok(FlowControl::None),
+        "software" => Ok(FlowControl::Software),
+        "hardware" => Ok(FlowControl::Hardware),
+        _ => Err(format!("flow_control 取值须为 None|Software|Hardware,收到 \"{}\"", s)),
+    }
+}
+fn parse_line_ending(s: &str) -> Result<LineEnding, String> {
+    match s.trim().to_ascii_lowercase().as_str() {
+        "cr" => Ok(LineEnding::Cr),
+        "lf" => Ok(LineEnding::Lf),
+        "crlf" => Ok(LineEnding::Crlf),
+        "none" => Ok(LineEnding::None),
+        _ => Err(format!("ending 取值须为 Cr|Lf|Crlf|None,收到 \"{}\"", s)),
     }
 }
 
@@ -328,12 +385,7 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
     } else {
         ascii_to_bytes(text)
     };
-    let le = match ending.as_deref().unwrap_or("Crlf") {
-        "Cr" => LineEnding::Cr,
-        "Lf" => LineEnding::Lf,
-        "Crlf" => LineEnding::Crlf,
-        _ => LineEnding::None,
-    };
+    let le = parse_line_ending(ending.as_deref().unwrap_or("Crlf"))?;
     le.append_bytes(&mut data);
     Ok(data)
 }
@@ -637,47 +689,11 @@ pub struct StartLoggingResp {
 }
 
 /// 开始存盘(全局,所有连接的收发都进同一文件)。传 path 新建/覆盖,不传用上次路径续写。
+/// 与 GUI 命令共用 start_logging_impl:默认目录创建、写失败回调、logging-changed 广播一处实现。
 pub fn start_logging(shared: &McpShared, req: StartLoggingReq) -> Result<StartLoggingResp, ErrorResp> {
-    use crate::logging::file_logger::FileLogger;
-    use crate::util::time_fmt::now_local_compact;
-    let state = shared.app_handle.try_state::<crate::state::AppState>()
-        .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
-    let (actual_path, append) = match req.path {
-        Some(p) => (p, false),
-        None => {
-            let last = state.last_log_path.lock().ok().and_then(|g| g.clone());
-            match last {
-                Some(p) => (p, true),
-                None => {
-                    let filename = format!("{}.log", now_local_compact());
-                    let appdata = std::env::var("APPDATA")
-                        .map(std::path::PathBuf::from)
-                        .unwrap_or_else(|_| std::path::PathBuf::from("."));
-                    let p = appdata.join("neoserial").join("logs").join(filename)
-                        .to_string_lossy().to_string();
-                    (p, false)
-                }
-            }
-        }
-    };
-    let (error_tx, _error_rx) = crossbeam_channel::unbounded();
-    let logger = FileLogger::start(
-        std::path::PathBuf::from(&actual_path), error_tx, append,
-    ).map_err(|e| ErrorResp::new(format!("启动日志失败: {}", e)))?;
-    {
-        let mut last = state.last_log_path.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-        *last = Some(actual_path.clone());
-    }
-    let sender = logger.line_sender();
-    {
-        let mut fl = state.file_logger.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-        *fl = Some(logger);
-    }
-    {
-        let mut ss = state.line_sender.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-        *ss = Some(sender);
-    }
-    Ok(StartLoggingResp { ok: true, path: actual_path })
+    let path = crate::commands::logging::start_logging_impl(&shared.app_handle, req.path)
+        .map_err(ErrorResp::new)?;
+    Ok(StartLoggingResp { ok: true, path })
 }
 
 #[derive(Serialize)]
@@ -685,17 +701,9 @@ pub struct StopLoggingResp {
     pub ok: bool,
 }
 
-/// 停止存盘。
+/// 停止存盘(等缓冲写完再返回)。
 pub fn stop_logging(shared: &McpShared) -> Result<StopLoggingResp, ErrorResp> {
-    let state = shared.app_handle.try_state::<crate::state::AppState>()
-        .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
-    if let Ok(mut ss) = state.line_sender.lock() {
-        *ss = None;
-    }
-    let mut fl = state.file_logger.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
-    if let Some(logger) = fl.take() {
-        logger.stop();
-    }
+    crate::commands::logging::stop_logging_impl(&shared.app_handle).map_err(ErrorResp::new)?;
     Ok(StopLoggingResp { ok: true })
 }
 
@@ -869,6 +877,32 @@ mod tests {
     fn test_parse_send_empty_text_still_adds_ending() {
         let d = parse_send_data("", &Some("Crlf".into()), &None).unwrap();
         assert_eq!(d, b"\r\n");
+    }
+
+    /// ending 大小写不敏感("CRLF"/"crlf" 是 LLM 最常见的写法),但不认识的值必须报错,
+    /// 不能像旧实现那样静默变成"无行尾"——那会让 AT 命令永远不执行而 agent 毫无线索。
+    #[test]
+    fn test_parse_send_ending_case_insensitive_but_strict() {
+        assert_eq!(parse_send_data("AT", &Some("CRLF".into()), &None).unwrap(), b"AT\r\n");
+        assert_eq!(parse_send_data("AT", &Some("cr".into()), &None).unwrap(), b"AT\r");
+        assert_eq!(parse_send_data("AT", &Some("NONE".into()), &None).unwrap(), b"AT");
+        let err = parse_send_data("AT", &Some("\\r\\n".into()), &None).unwrap_err();
+        assert!(err.contains("ending") && err.contains("Cr|Lf|Crlf|None"), "{}", err);
+    }
+
+    /// connect 的枚举参数同样:接受大小写变体与 data_bits 的数字写法,拒绝其他一切。
+    #[test]
+    fn test_connect_enum_params_strict() {
+        use crate::config::settings::{DataBits, FlowControl, Parity, StopBits};
+        assert_eq!(parse_data_bits("eight").unwrap(), DataBits::Eight);
+        assert_eq!(parse_data_bits("7").unwrap(), DataBits::Seven);
+        assert!(parse_data_bits("9").unwrap_err().contains("Five|Six|Seven|Eight"));
+        assert_eq!(parse_parity("none").unwrap(), Parity::None);
+        assert!(parse_parity("N").is_err());
+        assert_eq!(parse_stop_bits(2).unwrap(), StopBits::Two);
+        assert!(parse_stop_bits(3).unwrap_err().contains("1|2"));
+        assert_eq!(parse_flow_control("Hardware").unwrap(), FlowControl::Hardware);
+        assert!(parse_flow_control("RTS/CTS").unwrap_err().contains("None|Software|Hardware"));
     }
 
     /// connect 的 schema 把 data_bits/parity/stop_bits/flow_control 标为可选带默认值,

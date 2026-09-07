@@ -19,7 +19,7 @@
     appendLogLine,
     windowPort,
   } from '$lib/stores';
-  import { openFileDialog, saveFileDialog, sendFile, sendHistoryPush, startLogging, stopLogging } from '$lib/tauri';
+  import { openFileDialog, saveFileDialog, sendFile, sendHistoryPush, startLogging, stopLogging, getLoggingStatus, onLoggingChanged, type LoggingStatus } from '$lib/tauri';
   import { onMount, tick } from 'svelte';
   import SendSuggest from '$components/SendSuggest.svelte';
 
@@ -29,9 +29,14 @@
       if (!fileSendBusy) return;
       fileSendProgress.value = p.total > 0 ? Math.round((p.sent / p.total) * 100) : 0;
     });
+    // 文件日志是进程级单份,这里的按钮/路径只是它的视图:挂载时拉一次(后台模式重开窗口、
+    // agent 经 MCP 开的记录都能对上),之后跟着广播走(别的窗口开/停、写盘失败)。
+    const unlistenLogging = onLoggingChanged(applyLoggingStatus);
+    getLoggingStatus().then(applyLoggingStatus).catch((e) => console.error('查询日志状态失败:', e));
 
     return () => {
       unlisten.then((f) => f());
+      unlistenLogging.then((f) => f());
     };
   });
 
@@ -128,6 +133,25 @@
     }
   }
 
+  // 该路径是否已启动过记录（区分首次新建 vs 停止后续写）。后端有 last_log_path 就说明记过。
+  let logFileStarted = $state(false);
+  // 存盘线程写失败的原因(磁盘满、U 盘掉了)。后端已停掉记录,这里把原因挂在按钮上
+  let loggingError = $state<string | null>(null);
+
+  /** 把后端广播/查询到的全局日志状态镜像到本窗口。
+   *  记录中:路径就是正在写的文件。停止后的广播不改本窗口已有的路径——用户可能刚选了新文件
+   *  还没点开始(换路径时先 stop,那条广播可能晚于新路径赋值到达);只在本窗口还没有路径时
+   *  (挂载首查)显示上次路径,好让"继续记录"可用。 */
+  function applyLoggingStatus(s: LoggingStatus) {
+    loggingActive.value = s.active;
+    if (s.path && (s.active || !loggingPath.value)) {
+      loggingPath.value = s.path;
+      logFileStarted = true;
+    }
+    if (s.active) loggingError = null;
+    if (s.error) loggingError = s.error;
+  }
+
   // 点路径框：选/换日志文件路径（仅设路径，不自动开始记录）
   async function handleSelectLogPath() {
     try {
@@ -137,17 +161,17 @@
         [{ name: '日志文件', extensions: ['log'] }, { name: '文本文件', extensions: ['txt'] }]
       );
       if (!selectedPath) return;
+      // 记录中换路径:先停掉,否则后端还在往旧文件写,界面却显示新路径 + "开始记录"
+      if (loggingActive.value) await stopLogging();
       // 仅记录路径，等用户点"开始记录"再启动；标记该文件尚未记录过
       loggingPath.value = selectedPath;
       loggingActive.value = false;
       logFileStarted = false;
+      loggingError = null;
     } catch (e) {
       console.error('选择日志路径失败:', e);
     }
   }
-
-  // 该路径是否已启动过记录（区分首次新建 vs 停止后续写）
-  let logFileStarted = $state(false);
 
   // 点"开始记录"按钮：
   // - 无路径 → 弹对话框选路径（选完不自动开始）
@@ -162,11 +186,14 @@
       const path = logFileStarted
         ? await startLogging()                 // 续写：不传 path，后端用 last_log_path append
         : await startLogging(loggingPath.value); // 首次：传 path 新建覆盖
+      // 后端会广播 logging-changed,这里先同步一份,不等事件
       loggingPath.value = path;
       loggingActive.value = true;
       logFileStarted = true;
+      loggingError = null;
     } catch (e) {
       console.error('启动日志失败:', e);
+      loggingError = String(e);
     }
   }
 
@@ -312,8 +339,14 @@
         {#if loggingActive.value}
           <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStopLogging}>停止</button>
         {:else}
-          <button class="btn btn-secondary min-w-[96px] h-10" onclick={handleStartLogging}>
-            {logFileStarted ? '继续记录' : '开始记录'}
+          <!-- 写盘失败(磁盘满、U 盘掉了):后端已停掉记录,按钮标红、原因放 title;再点一次照常重新开始 -->
+          <button
+            class="btn btn-secondary min-w-[96px] h-10"
+            style={loggingError ? 'background: var(--danger-overlay); color: var(--error); border-color: var(--error);' : ''}
+            title={loggingError ? `记录已停止：${loggingError}` : ''}
+            onclick={handleStartLogging}
+          >
+            {#if loggingError}记录失败{:else if logFileStarted}继续记录{:else}开始记录{/if}
           </button>
         {/if}
       </div>

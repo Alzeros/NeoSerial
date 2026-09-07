@@ -33,9 +33,8 @@ impl LogLine {
     pub fn new(ts: String, dir: Dir, raw: Vec<u8>, error_keywords: &[String], line_index: u64) -> Self {
         let ascii = bytes_to_ascii(&raw);
         let is_error = match dir {
-            // 关键词为空时早退:生产路径全部传 &[],旧实现每行仍做
-            // from_utf8_lossy + to_lowercase(两次分配+全字节扫描),纯浪费;
-            // 结果不变(空集合 any() 恒 false)。
+            // 只有 Rx 行参与判定:reader 传设置里的 error_keywords,Tx 路径传 &[](自己发的
+            // 命令永不标红)。关键词为空时早退,省掉 from_utf8_lossy + to_lowercase 两次分配。
             Dir::Rx if !error_keywords.is_empty() => {
                 // 用 UTF-8 lossy 解码做错误关键词匹配（中文关键词也能命中），
                 // 只在此处局部计算，不存储。

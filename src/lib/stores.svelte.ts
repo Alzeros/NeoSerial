@@ -257,7 +257,15 @@ export const cachedSettings = $state<{ value: Settings | null }>({ value: null }
  *  启动预取(startup.ts)在挂载前调,首帧就按用户配置画。
  *  主题编辑器窗口不走这里:它自己加载设置并强制切到 custom 主题。 */
 export function applySettings(s: Settings) {
-  cachedSettings.value = s;
+  applySharedSettings(s);
+  // 三个影响后端全局行为的开关(文件日志格式是全局的):启动时直接回填;之后别的窗口改了
+  // 由 App.svelte 按"是否与本窗口上次回写的值不同"决定要不要跟(见 syncGlobalToggles)。
+  showTimestamp.value = s.ui.show_timestamp;
+  showLineIndex.value = s.ui.show_line_index ?? false;
+  logSendContent.value = s.ui.log_send;
+  // 以下是"本窗口自己的"项:端口/波特率下拉、HEX 显示、回车换行。只在启动时回填一次,
+  // 之后各窗口各自维护、各自回写为下次启动的默认值——别的窗口改了不同步过来
+  // (A 窗口切到 HEX 显示,B 窗口看的是另一个模组,不该跟着变)。
   connectionParams.port = s.last_port || connectionParams.port;
   connectionParams.baudRate = s.serial_defaults.baud_rate;
   connectionParams.dataBits = s.serial_defaults.data_bits;
@@ -266,12 +274,17 @@ export function applySettings(s: Settings) {
   connectionParams.stopBits = s.serial_defaults.stop_bits === 'Two' ? 2 : 1;
   connectionParams.flowControl = s.serial_defaults.flow_control;
   lineEnding.value = s.ui.line_ending;
-  showTimestamp.value = s.ui.show_timestamp;
-  showLineIndex.value = s.ui.show_line_index ?? false;
   autoScroll.value = s.ui.auto_scroll;
   displayMode.value = s.ui.display_mode === 'Hex' ? 'hex' : 'ascii';
+}
+
+/** 回填所有窗口共享的设置项:主题、日志字体、编码、方向标签、预设波特率(都是设置页/主题
+ *  编辑器改的,哪个窗口改都该一起变)。启动时经 applySettings 调;别的窗口/主题编辑器/agent
+ *  保存后(settings-changed)也调它,让本窗口跟上——原先只刷 cachedSettings 不刷 store,
+ *  A 改了主题 B 不变,B 再一保存就把 A 的改动冲回去。 */
+export function applySharedSettings(s: Settings) {
+  cachedSettings.value = s;
   textEncoding.value = (s.ui?.text_encoding || 'Ascii') === 'Utf8' ? 'utf8' : (s.ui?.text_encoding || 'Ascii') === 'Gbk' ? 'gbk' : 'ascii';
-  logSendContent.value = s.ui.log_send;
   // 日志区字体：兜底默认 14px / 1.6
   const fs = s.ui?.log_font_size ?? 14;
   const lh = s.ui?.log_line_height ?? 1.6;

@@ -145,7 +145,7 @@
 
   import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, loadSequenceAuto, saveSequenceAuto, sequenceRun, sequenceStop, send, onSequenceChanged } from '$lib/tauri';
   import { connected, windowPort } from '$lib/stores';
-  import { loadSequenceOnce } from '$lib/startup';
+  import { takeSequencePreload } from '$lib/startup';
   import { getCurrentWebview } from '@tauri-apps/api/webview';
   import { onMount } from 'svelte';
 
@@ -191,8 +191,16 @@
   }
 
   async function handleStop() {
+    // 连接已断(windowPort 清空):序列随连接一起没了,只复位本地状态。绝不能把 null 传给后端——
+    // 后端 resolve_port(None) 在恰好一个连接时会解析成那个连接,停掉的是别的窗口的序列。
+    if (!windowPort.value) {
+      scriptRunning.value = false;
+      scriptCurrentRow.value = -1;
+      scriptRunState.finished = 'aborted';
+      return;
+    }
     try {
-      await sequenceStop(windowPort.value!);
+      await sequenceStop(windowPort.value);
     } catch (e) {
       console.error('停止失败:', e);
     }
@@ -239,8 +247,8 @@
   // "A reload → A 保存 → 广播 → B reload → B 保存 → 广播 → A reload …"每 800ms 一轮。
   let lastPersistedJson: string | null = null;
 
-  // 多窗口同步 reload:重新从磁盘载入,尽量停在当前模块/页签(越界才回 0)。
-  // 启动首次加载不走这里——main.ts 挂载前经 loadSequenceOnce 预取,见下方 onMount。
+  // 从磁盘重新载入,尽量停在当前模块/页签(越界才回 0)。用于多窗口同步 reload 和
+  // 收起再展开右栏后的重新挂载;首次挂载不走这里——main.ts 挂载前已预取,见下方 onMount。
   async function autoLoad() {
     try {
       const modules = await loadSequenceAuto();
@@ -288,12 +296,19 @@
   // → 跳过(等自己保存,最后保存的赢;改动频率低,冲突概率极小)。
   const myLabel = getCurrentWebview().label;
   onMount(() => {
-    // 启动首次加载:main.ts 挂载前已经发起并(通常)完成,首帧画的就是 sequence.json 的内容;
+    // 首次挂载:main.ts 挂载前已经发起预取并(通常)完成,首帧画的就是 sequence.json 的内容;
     // 这里只接过"与磁盘一致"的基准快照(没有文件时为 null,预置内容随后被自动保存写盘)并放开自动保存。
-    loadSequenceOnce().then((persisted) => {
-      lastPersistedJson = persisted;
-      autoSaveLoaded = true;
-    });
+    // 收起右栏再展开是重新挂载,预取快照已经取过一次(返回 null):收起期间下面的监听已注销,
+    // 其他窗口的改动没收到,必须现读磁盘,不能拿内存里的旧内容当基准,否则一编辑就把对方的改动覆盖掉。
+    const preloaded = takeSequencePreload();
+    if (preloaded) {
+      preloaded.then((persisted) => {
+        lastPersistedJson = persisted;
+        autoSaveLoaded = true;
+      });
+    } else {
+      autoLoad().then(() => { autoSaveLoaded = true; });
+    }
     const unlisten = onSequenceChanged((e) => {
       if (e.source === myLabel) return; // 自己触发的跳过
       if (autoSaveTimer) return;        // 自己有未保存改动,跳过避免丢失
