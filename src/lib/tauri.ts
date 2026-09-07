@@ -219,6 +219,11 @@ export async function commandIndexLoad(): Promise<CommandIndexCache> {
   return await invoke<CommandIndexCache>('command_index_load');
 }
 
+/** 连通性测试:用传入的地址/Key 请求手册列表接口探活,不落盘。返回一句话(如"连通正常 · 3 本手册")或失败原因。 */
+export async function commandIndexTestConnection(baseUrl: string, apiKey: string): Promise<string> {
+  return await invoke<string>('command_index_test_connection', { baseUrl, apiKey });
+}
+
 /** 输入框手动发送成功后记一条历史;后端去重挪前、上限 500,变化时广播 send-history-changed。返回最新全量列表。 */
 export async function sendHistoryPush(text: string): Promise<string[]> {
   return await invoke<string[]>('send_history_push', { text });

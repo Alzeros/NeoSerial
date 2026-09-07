@@ -3,9 +3,9 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { saveSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, sendHistoryClear } from '$lib/tauri';
+  import { saveSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
-  import { Github, Eye, EyeOff } from 'lucide-svelte';
+  import { Github, Eye, EyeOff, Plug, Loader2 } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
@@ -73,6 +73,8 @@
   let editDisabledDocIds = $state<number[]>([]);
   let showApiKey = $state(false);
   let indexRefreshing = $state(false);
+  // 连通性测试中(地址行按钮);与刷新独立,测试结果也写进 indexRefreshMsg 复用状态行展示
+  let indexTesting = $state(false);
   // 刷新结果:ok 全部成功 / warn 部分手册失败沿用旧缓存 / error 整体失败
   let indexRefreshMsg = $state<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   let historyCleared = $state(false);
@@ -258,6 +260,21 @@
     }
   }
 
+  /** 地址行"测试"按钮:轻量探活(只请求手册列表接口),结果写进状态行复用展示,不落盘。 */
+  async function handleTestConnection() {
+    if (!canRefreshIndex || indexTesting) return;
+    indexTesting = true;
+    indexRefreshMsg = null;
+    try {
+      const msg = await commandIndexTestConnection(editKbBaseUrl, editKbApiKey);
+      indexRefreshMsg = { kind: 'ok', text: msg };
+    } catch (e) {
+      indexRefreshMsg = { kind: 'error', text: `连通失败:${e}` };
+    } finally {
+      indexTesting = false;
+    }
+  }
+
   // 勾选 = 不在排除名单
   function toggleDoc(id: number, checked: boolean) {
     editDisabledDocIds = checked ? editDisabledDocIds.filter((d) => d !== id) : [...editDisabledDocIds, id];
@@ -305,22 +322,22 @@
     style="background: rgba(0,0,0,0.35);"
   >
     <div
-      class="rounded-lg shadow-xl w-[560px] border flex flex-col"
+      class="rounded-lg shadow-xl w-[600px] border flex flex-col"
       style="background: var(--background-elevated); border-color: var(--border);"
       onclick={(e) => e.stopPropagation()}
     >
       <!-- 标题 + 关闭按钮 -->
-      <div class="flex items-center justify-between px-6 py-4 border-b border-[var(--border)]">
+      <div class="flex items-center justify-between px-5 py-2 border-b border-[var(--border)]">
         <div class="text-[15px] font-semibold text-[var(--foreground)]">设置</div>
         <button
-          class="flex items-center justify-center w-7 h-7 -mr-2 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+          class="flex items-center justify-center w-6 h-6 -mr-1.5 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
           onclick={handleCancel}
           title="关闭 (Esc)"
-        ><X size={16} /></button>
+        ><X size={15} /></button>
       </div>
 
       <!-- 左右分栏：左导航 + 右内容（固定高度，内容多时右栏独立滚动） -->
-      <div class="flex" style="height: 340px;">
+      <div class="flex" style="height: 400px;">
         <!-- 左侧导航 -->
         <nav class="w-[120px] flex-shrink-0 border-r border-[var(--border)] py-2">
           {#each sections as s}
@@ -631,6 +648,15 @@
                 <div class="flex items-center gap-3 mb-3">
                   <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
                   <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
+                  <!-- 测试连通性:与下方 API Key 行的显示/隐藏按钮同尺寸对齐;探活结果写进状态行 -->
+                  <button
+                    type="button"
+                    class="btn btn-ghost shrink-0"
+                    style="padding: 4px 8px;"
+                    disabled={!canRefreshIndex || indexTesting}
+                    title={canRefreshIndex ? '测试与知识库服务器的连通性' : '填写地址和 API Key 后可测试'}
+                    onclick={handleTestConnection}
+                  >{#if indexTesting}<Loader2 size={14} class="animate-spin" />{:else}<Plug size={14} />{/if}</button>
                 </div>
                 <div class="flex items-center gap-3 mb-3">
                   <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
@@ -669,7 +695,8 @@
 
                 {#if commandIndex.documents.length}
                   <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">参与联想的手册</div>
-                  <div class="flex flex-col gap-1.5 mb-4">
+                  <!-- 内联滚动框:手册多到三四十本时不撑开整个设置页,固定高度内滚动 -->
+                  <div class="flex flex-col gap-1.5 mb-4 overflow-y-auto px-1 py-1" style="max-height: 200px; border: 1px solid var(--border); border-radius: var(--radius);">
                     {#each commandIndex.documents as d (d.id)}
                       {@const ready = d.cmd_status === 'done'}
                       <label class="flex items-center gap-2 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
@@ -750,9 +777,9 @@
       </div>
 
       <!-- 底部按钮 -->
-      <div class="flex justify-end gap-2 px-4 pb-4 border-t border-[var(--border)] pt-3">
-        <button class="btn btn-ghost" style="padding: 6px 14px;" onclick={handleCancel}>取消</button>
-        <button class="btn btn-primary" style="padding: 6px 14px;" onclick={handleSave}>保存</button>
+      <div class="flex justify-end gap-2 px-5 pb-3 border-t border-[var(--border)] pt-2">
+        <button class="btn btn-ghost" style="padding: 4px 12px;" onclick={handleCancel}>取消</button>
+        <button class="btn btn-primary" style="padding: 4px 12px;" onclick={handleSave}>保存</button>
       </div>
     </div>
   </div>

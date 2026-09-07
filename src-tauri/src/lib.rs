@@ -14,7 +14,7 @@ use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, save_commands, export_theme_file, import_theme_file};
 use commands::logging::{start_logging, stop_logging, is_logging};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
-use commands::command_index::{command_index_refresh, command_index_load, send_history_push, send_history_load, send_history_clear};
+use commands::command_index::{command_index_refresh, command_index_load, command_index_test_connection, send_history_push, send_history_load, send_history_clear};
 use commands::mcp_log::get_mcp_call_log;
 
 use state::AppState;
@@ -316,6 +316,7 @@ pub fn run() {
             import_theme_file,
             command_index_refresh,
             command_index_load,
+            command_index_test_connection,
             send_history_push,
             send_history_load,
             send_history_clear,

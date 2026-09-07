@@ -252,6 +252,25 @@ pub async fn command_index_load() -> Result<CommandIndexCache, String> {
         .map_err(|e| format!("读取缓存任务执行异常: {}", e))
 }
 
+/// 设置页"地址"行的连通性测试:用编辑框里的地址/Key(不必先保存),只请求手册列表接口探活,
+/// 不落盘不广播。返回一句话给前端在状态行显示。比刷新轻(不逐本拉指令),地址/Key 填错时快速反馈。
+#[tauri::command]
+pub async fn command_index_test_connection(base_url: String, api_key: String) -> Result<String, String> {
+    ensure_crypto_provider();
+    let base = normalize_base_url(&base_url);
+    let key = api_key.trim().to_string();
+    if base.is_empty() || key.is_empty() {
+        return Err("请先填写地址和 API Key".into());
+    }
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(10))
+        .build()
+        .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
+    let docs: Vec<ManualDocument> =
+        get_json(&client, &format!("{}/api/v1/commands/documents", base), &key).await?;
+    Ok(format!("连通正常 · {} 本手册", docs.len()))
+}
+
 /// setup 时调一次:配了地址和 Key 且 auto_refresh 开 → 后台刷新,失败只记日志。
 /// 进程级只跑一次,不按窗口跑(多窗口各跑一遍会撞 REFRESHING 也浪费配额)。
 pub fn spawn_auto_refresh(handle: &tauri::AppHandle, cfg: &CommandIndexSettings) {
