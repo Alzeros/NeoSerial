@@ -60,8 +60,13 @@
   // 各模块的侧栏 tab 显隐(每模块独立设置项)。默认开(保现状)
   let editShowSuggestTab = $state(true);
   let editShowMcpTab = $state(true);
+  // 快捷指令编辑区密度编辑副本(字号 + 输入框高度 + 行间距 + 字体族)
+  let editQcFontSize = $state(13);
+  let editQcInputHeight = $state(28);
+  let editQcRowGap = $state(4);
+  let editQcFontFamily = $state<string>('default');
   // 扩展页子导航:null=模块列表(文件夹视图),'suggest'/'mcp'=进入该模块设置子页
-  let extModule = $state<'suggest' | 'mcp' | null>(null);
+  let extModule = $state<'suggest' | 'mcp' | 'quick' | null>(null);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -84,7 +89,7 @@
   function editsSnapshot(): string {
     return JSON.stringify({
       editFontSize, editLineHeight, editDirLabel, editFontLatin, editFontCJK, editTextEncoding,
-      editBackgroundMode, editShowSuggestTab, editShowMcpTab,
+      editBackgroundMode, editShowSuggestTab, editShowMcpTab, editQcFontSize, editQcInputHeight, editQcRowGap, editQcFontFamily,
       editBaudRates, editTheme, editCustom,
       editMcpAutoStart, editMcpPort,
       editKbBaseUrl, editKbApiKey, editDisabledDocIds, editKbAutoRefresh, editSuggestEnabled,
@@ -93,7 +98,7 @@
   let lastApplied = $state('');
   const hasUnsavedChanges = $derived(editsSnapshot() !== lastApplied);
 
-  export function show(section: Section = 'about') {
+  export function show(section: Section = 'about', extMod: 'suggest' | 'mcp' | 'quick' | null = null) {
     editBaudRates = [...presetBaudRates.value];
     editTheme = theme.value;
     editCustom = { ...customTheme.value };
@@ -113,6 +118,10 @@
     editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
     editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
     editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
+    editQcFontSize = cachedSettings.value?.ui?.qc_font_size ?? 13;
+    editQcInputHeight = cachedSettings.value?.ui?.qc_input_height ?? 28;
+    editQcRowGap = cachedSettings.value?.ui?.qc_row_gap ?? 4;
+    editQcFontFamily = cachedSettings.value?.ui?.qc_font_family ?? 'default';
     mcpCopied = false;
     const ci = cachedSettings.value?.command_index;
     editSuggestEnabled = ci?.suggest_enabled ?? true;
@@ -126,6 +135,8 @@
     // 记录"加载态快照",作为脏检测基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
     lastApplied = editsSnapshot();
     activeSection = section;
+    // 外部触发可带子模块:指令查询面板的齿轮按钮 → 直接进指令联想子页
+    extModule = extMod;
     // 拉取 MCP 运行状态(显示实际端口)
     getMcpStatus().then((s) => (mcpStatus = s)).catch(() => {});
     open = true;
@@ -213,7 +224,7 @@
     const rates = [...new Set([...DEFAULT_BAUD_RATES, ...userAdded])].sort((a, b) => a - b);
     return {
       ...base,
-      ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode, show_suggest_tab: editShowSuggestTab, show_mcp_tab: editShowMcpTab },
+      ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, qc_font_size: editQcFontSize, qc_input_height: editQcInputHeight, qc_row_gap: editQcRowGap, qc_font_family: editQcFontFamily, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode, show_suggest_tab: editShowSuggestTab, show_mcp_tab: editShowMcpTab },
       presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
       mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
       command_index: {
@@ -630,10 +641,19 @@
             </div>
           {:else if activeSection === 'extensions'}
             {#if extModule === null}
-              <!-- 文件夹视图:两个扩展模块,各自独立开关。点进入该模块的设置子页 -->
+              <!-- 文件夹视图:三个模块。快捷指令常驻开启(无开关),指令联想/MCP 各自独立开关 -->
               <div class="text-[12px] text-[var(--muted-foreground)] mb-4 leading-relaxed">
-                扩展功能按模块独立管理。点开进入各自设置:启用开关 + 详细配置 + 该模块侧栏 tab 的显隐。
+                扩展功能按模块独立管理。点开进入各自设置:快捷指令常驻开启,只调密度;指令联想与 MCP 可独立开关。
               </div>
+              <button
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
+                style="border: 1px solid var(--border);"
+                onclick={() => (extModule = 'quick')}
+              >
+                <span class="text-[14px] font-medium text-[var(--foreground)]">快捷指令</span>
+                <span class="ml-2 text-[12px]" style="color: var(--primary);">常驻</span>
+                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
+              </button>
               <button
                 class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
                 style="border: 1px solid var(--border);"
@@ -652,6 +672,74 @@
                 <span class="ml-2 text-[12px]" style="color: {editMcpAutoStart ? 'var(--primary)' : 'var(--muted-foreground)'};">{editMcpAutoStart ? '已启用' : '未启用'}</span>
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
+            {:else if extModule === 'quick'}
+              <!-- 快捷指令子页:常驻开启(无开关),只放编辑区密度 -->
+              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>
+                <span>‹</span><span>返回扩展</span>
+              </button>
+              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">快捷指令</div>
+              <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
+                侧栏快捷指令编辑区的密度:字号与输入框高度。常驻开启,不提供关闭。
+              </div>
+
+              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">编辑区密度</div>
+              <div class="flex items-center gap-3 mb-4">
+                <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">字号</span>
+                <input
+                  type="range" min="11" max="18" step="1"
+                  class="flex-1 accent-[var(--primary)]"
+                  value={editQcFontSize}
+                  oninput={(e) => (editQcFontSize = Number((e.target as HTMLInputElement).value))}
+                />
+                <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editQcFontSize}px</span>
+              </div>
+              <div class="flex items-center gap-3 mb-4">
+                <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">输入框高度</span>
+                <input
+                  type="range" min="22" max="40" step="1"
+                  class="flex-1 accent-[var(--primary)]"
+                  value={editQcInputHeight}
+                  oninput={(e) => (editQcInputHeight = Number((e.target as HTMLInputElement).value))}
+                />
+                <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editQcInputHeight}px</span>
+              </div>
+              <div class="flex items-center gap-3 mb-4">
+                <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">行间距</span>
+                <input
+                  type="range" min="0" max="10" step="1"
+                  class="flex-1 accent-[var(--primary)]"
+                  value={editQcRowGap}
+                  oninput={(e) => (editQcRowGap = Number((e.target as HTMLInputElement).value))}
+                />
+                <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editQcRowGap}px</span>
+              </div>
+              <div class="flex items-center gap-3 mb-4">
+                <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">字体</span>
+                <select
+                  class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                  value={editQcFontFamily}
+                  onchange={(e) => (editQcFontFamily = (e.target as HTMLSelectElement).value)}
+                >
+                  {#each logFontLatinPresets as p}
+                    <option value={p.value}>{p.label}</option>
+                  {/each}
+                </select>
+              </div>
+
+              <!-- 预览:两行样例,即时反映字号/高度/行间距/字体(只在此页生效,不联动主页) -->
+              <div class="mt-2">
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-2">预览</div>
+                <div style="font-size: {editQcFontSize}px;{editQcFontFamily !== 'default' ? ` font-family: ${editQcFontFamily};` : ''}">
+                  {#each ['AT+CSQ?', 'AT+CGDCONT?'] as sample}
+                    <div style="padding: {editQcRowGap}px 0;">
+                      <div
+                        class="rounded border border-[var(--border)] bg-[var(--background-input)] px-2 flex items-center text-[var(--foreground)]"
+                        style="height: {editQcInputHeight}px;"
+                      >{sample}</div>
+                    </div>
+                  {/each}
+                </div>
+              </div>
             {:else if extModule === 'suggest'}
               <!-- 指令联想子页 -->
               <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>

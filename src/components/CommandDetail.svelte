@@ -1,7 +1,8 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { tick, onMount } from 'svelte';
+  import { Settings as SettingsIcon } from 'lucide-svelte';
   import { commandIndex } from '$lib/commandIndex.svelte';
-  import { cachedSettings, requestSuggestFill } from '$lib/stores';
+  import { cachedSettings, requestSuggestFill, settingsRequest } from '$lib/stores';
   import {
     buildManualEntries,
     displayName,
@@ -75,26 +76,31 @@
   }
 
   // 切到本 tab 时自动聚焦搜索框(便于直接开搜)。
-  // 调用方(ScriptSequencer 切 view)触发 mount,这里 onMount 聚焦一次。
-  import { onMount } from 'svelte';
   onMount(() => {
     searchEl?.focus();
   });
 </script>
 
 <div class="flex flex-col h-full min-h-0">
-  <!-- 搜索框:模糊搜 command/name/summary,与输入框联想的精确前缀分开 -->
-  <div class="p-2 shrink-0" style="border-bottom: 1px solid var(--border);">
+  <!-- 搜索框 + 跳设置齿轮:模糊搜 command/name/summary;齿轮直接跳设置→扩展→指令联想子页 -->
+  <div class="flex items-center gap-2 p-2 shrink-0" style="border-bottom: 1px solid var(--border);">
     <input
       bind:this={searchEl}
       type="text"
-      class="w-full"
+      class="flex-1 min-w-0"
       style="height: 32px; padding: 4px 10px; font-size: 13px; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius); color: var(--foreground);"
       placeholder="搜索指令或功能(如 mqtt、信号、CSQ)…"
       spellcheck="false"
       bind:value={searchQuery}
       onkeydown={handleSearchKey}
     />
+    <button
+      type="button"
+      class="shrink-0 flex items-center justify-center rounded transition-colors hover:bg-[var(--border-subtle)] cursor-pointer"
+      style="width: 32px; height: 32px; color: var(--muted-foreground);"
+      title="指令联想设置(知识库地址/刷新/手册勾选)"
+      onclick={() => { settingsRequest.section = 'extensions'; settingsRequest.extModule = 'suggest'; }}
+    ><SettingsIcon size={16} /></button>
   </div>
 
   <!-- 结果列表 + 详情:上下堆叠(避免左右分栏在窄面板里挤压),各自独立滚动 -->

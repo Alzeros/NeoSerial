@@ -101,8 +101,10 @@
   $effect(() => {
     const section = settingsRequest.section;
     if (section) {
-      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'extensions');
+      const extMod = settingsRequest.extModule;
+      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'extensions', extMod);
       settingsRequest.section = null;
+      settingsRequest.extModule = null;
     }
   });
 </script>

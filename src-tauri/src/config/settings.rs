@@ -100,6 +100,18 @@ pub struct UiSettings {
     /// 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值
     #[serde(default = "default_log_font_cjk")]
     pub log_font_cjk: String,
+    /// 快捷指令编辑区字号(px),作用于命令/延时输入框,默认 13
+    #[serde(default = "default_qc_font_size")]
+    pub qc_font_size: u32,
+    /// 快捷指令编辑区输入框高度(px),默认 28
+    #[serde(default = "default_qc_input_height")]
+    pub qc_input_height: u32,
+    /// 快捷指令编辑区行间距(px),表格单元格上下 padding,默认 4
+    #[serde(default = "default_qc_row_gap")]
+    pub qc_row_gap: u32,
+    /// 快捷指令编辑区字体族:'default'=继承应用默认,或 CSS font-family 值
+    #[serde(default = "default_qc_font_family")]
+    pub qc_font_family: String,
     /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
     #[serde(default = "default_text_encoding")]
     pub text_encoding: TextEncoding,
@@ -154,6 +166,22 @@ fn default_log_font_latin() -> String {
 }
 
 fn default_log_font_cjk() -> String {
+    "default".into()
+}
+
+fn default_qc_font_size() -> u32 {
+    13
+}
+
+fn default_qc_input_height() -> u32 {
+    28
+}
+
+fn default_qc_row_gap() -> u32 {
+    4
+}
+
+fn default_qc_font_family() -> String {
     "default".into()
 }
 
@@ -311,6 +339,10 @@ impl Settings {
                 log_dir_label: default_log_dir_label(),
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
+                qc_font_size: default_qc_font_size(),
+                qc_input_height: default_qc_input_height(),
+                qc_row_gap: default_qc_row_gap(),
+                qc_font_family: default_qc_font_family(),
                 text_encoding: default_text_encoding(),
                 background_mode: default_background_mode(),
                 show_suggest_tab: default_show_suggest_tab(),
@@ -437,6 +469,10 @@ impl LegacySettings {
                 log_dir_label: def.ui.log_dir_label,
                 log_font_latin: default_log_font_latin(),
                 log_font_cjk: default_log_font_cjk(),
+                qc_font_size: default_qc_font_size(),
+                qc_input_height: default_qc_input_height(),
+                qc_row_gap: default_qc_row_gap(),
+                qc_font_family: default_qc_font_family(),
                 text_encoding: default_text_encoding(),
                 background_mode: default_background_mode(),
                 show_suggest_tab: default_show_suggest_tab(),
@@ -609,6 +645,22 @@ mod tests {
         v["ui"].as_object_mut().unwrap().remove("background_mode");
         let s: Settings = serde_json::from_value(v).unwrap();
         assert_eq!(s.ui.background_mode, default_background_mode());
+    }
+
+    /// 旧配置没有 qc 密度键 → 各取默认(13/28/4/default),不是 u32 默认的 0。
+    #[test]
+    fn test_missing_qc_density_takes_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        let ui = v["ui"].as_object_mut().unwrap();
+        ui.remove("qc_font_size");
+        ui.remove("qc_input_height");
+        ui.remove("qc_row_gap");
+        ui.remove("qc_font_family");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert_eq!(s.ui.qc_font_size, 13);
+        assert_eq!(s.ui.qc_input_height, 28);
+        assert_eq!(s.ui.qc_row_gap, 4);
+        assert_eq!(s.ui.qc_font_family, "default");
     }
 
     /// mark_tray_hint_shown:首次返回 true(该提示),之后一直 false,且标记落在字段上。

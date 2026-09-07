@@ -760,8 +760,13 @@ input[type="text"],
 }
 
 .script-list tr {
-  flex-shrink: 0;        /* 行不被压成 0 高 */
-  min-height: 36px;     /* 行最小高度，防止被压缩成一条线 */
+  flex-shrink: 0;        /* 行不被压成 0 高;行高由 td 行间距 + 输入框高度决定(密度设置) */
+}
+
+/* 行间距(密度):td 上下 padding,默认 4px。覆盖 Tailwind py-1 */
+.script-list td {
+  padding-top: var(--qc-row-gap, 4px);
+  padding-bottom: var(--qc-row-gap, 4px);
 }
 
 /* 动态列表项内的文本输入同样套省略号三件套（已在上方 input 规则覆盖） */
@@ -782,11 +787,13 @@ input[type="text"],
   -moz-appearance: textfield;
 }
 
-/* 脚本表格内文本/数字输入框及注释按钮统一高度/padding，避免 number 框偏高 */
+/* 脚本表格内文本/数字输入框及注释按钮:字号/高度/字体跟随密度(挂在 .script-list 根的 CSS 变量) */
 .script-list td input:not([type="checkbox"]):not([type="radio"]),
 .script-list td button:not([data-add-row]):not([data-row-toggle]) {
   padding: 2px 3px;
-  height: 24px;
+  height: var(--qc-input-height, 28px);
+  font-size: var(--qc-font-size, 13px);
+  font-family: var(--qc-font-family, inherit);
   box-sizing: border-box;
 }
 

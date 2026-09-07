@@ -128,6 +128,14 @@ export interface Settings {
     log_font_latin: string;
     /** 日志区中文字体族：'default'=跟随英文，或 CSS font-family 值 */
     log_font_cjk: string;
+    /** 快捷指令编辑区字号(px),作用于命令/延时输入框 */
+    qc_font_size: number;
+    /** 快捷指令编辑区输入框高度(px) */
+    qc_input_height: number;
+    /** 快捷指令编辑区行间距(px),表格单元格上下 padding */
+    qc_row_gap: number;
+    /** 快捷指令编辑区字体族:'default'=继承应用默认,或 CSS font-family 值 */
+    qc_font_family: string;
     text_encoding: 'Ascii' | 'Utf8' | 'Gbk';
     /** 后台运行(托盘常驻):关窗口连接不断、关最后一个窗口应用仍在;
      *  关 = 无托盘,关窗口断开自己连的,关最后一个窗口即退出 */

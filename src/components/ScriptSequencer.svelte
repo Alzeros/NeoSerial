@@ -39,6 +39,12 @@
     if (!showMcpTab && scriptView === 'mcp') scriptView = 'scripts';
   });
 
+  // 快捷指令编辑区密度(字号 + 输入框高度 + 行间距 + 字体族),只作用于快捷指令表格,不外溢其他 UI
+  const qcFontSize = $derived(cachedSettings.value?.ui?.qc_font_size ?? 13);
+  const qcInputHeight = $derived(cachedSettings.value?.ui?.qc_input_height ?? 28);
+  const qcRowGap = $derived(cachedSettings.value?.ui?.qc_row_gap ?? 4);
+  const qcFontFamily = $derived(cachedSettings.value?.ui?.qc_font_family ?? 'default');
+
   // 顺序调整模式：开启后行可拖拽排序
   let orderMode = $state<{ value: boolean }>({ value: false });
 
@@ -621,7 +627,7 @@
   </div>
 
   <!-- 命令序列表格（独立滚动，不撑开外部布局） -->
-  <div class="script-list">
+  <div class="script-list" style="--qc-font-size: {qcFontSize}px; --qc-input-height: {qcInputHeight}px; --qc-row-gap: {qcRowGap}px;{qcFontFamily !== 'default' ? ` --qc-font-family: ${qcFontFamily};` : ''}">
     <table class="w-full text-[13px] table-fixed">
       <thead class="sticky top-0" style="background: var(--background-elevated);">
         <tr class="text-[var(--muted-foreground)]">
