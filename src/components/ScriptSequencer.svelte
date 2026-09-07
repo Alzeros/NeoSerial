@@ -533,18 +533,18 @@
 }} />
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
-  <!-- 顶部视图切换:快捷指令 / 指令参考(复用同一面板,不另开侧栏) -->
-  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-1.5" style="background: var(--background);">
+  <!-- 顶部视图切换:快捷指令 / 指令参考。用文字下划线风格(轻),与下方页签的实心块(重)拉开层级。 -->
+  <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     <button
-      class="rounded px-3 py-1 text-[13px] font-medium transition-colors cursor-pointer {scriptView === 'scripts'
-        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-        : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+      class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'scripts'
+        ? 'text-[var(--foreground)] border-[var(--primary)]'
+        : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
       onclick={() => (scriptView = 'scripts')}
     >快捷指令</button>
     <button
-      class="rounded px-3 py-1 text-[13px] font-medium transition-colors cursor-pointer {scriptView === 'reference'
-        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-        : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+      class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'reference'
+        ? 'text-[var(--foreground)] border-[var(--primary)]'
+        : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
       onclick={() => (scriptView = 'reference')}
     >指令参考</button>
   </div>
