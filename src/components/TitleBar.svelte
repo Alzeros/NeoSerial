@@ -101,7 +101,7 @@
   $effect(() => {
     const section = settingsRequest.section;
     if (section) {
-      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'mcp');
+      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'extensions');
       settingsRequest.section = null;
     }
   });

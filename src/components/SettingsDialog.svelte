@@ -14,14 +14,13 @@
   let open = $state(false);
 
   // 左侧导航：当前激活的设置项
-  type Section = 'about' | 'general' | 'appearance' | 'suggest' | 'mcp';
+  type Section = 'about' | 'general' | 'appearance' | 'extensions';
   let activeSection = $state<Section>('about');
   const sections: { key: Section; label: string }[] = [
     { key: 'about', label: '关于' },
     { key: 'general', label: '通用' },
     { key: 'appearance', label: '外观' },
-    { key: 'suggest', label: '指令联想' },
-    { key: 'mcp', label: 'MCP 服务' },
+    { key: 'extensions', label: '扩展' },
   ];
   // 应用版本号（打开关于页时懒加载）
   let version = $state<{ value: string }>({ value: '' });
@@ -58,6 +57,11 @@
   let editMcpPort = $state(34594);
   // "后台运行"编辑副本（从 cachedSettings 拷贝;兜底值与后端 default_background_mode 一致=关）
   let editBackgroundMode = $state(false);
+  // 各模块的侧栏 tab 显隐(每模块独立设置项)。默认开(保现状)
+  let editShowSuggestTab = $state(true);
+  let editShowMcpTab = $state(true);
+  // 扩展页子导航:null=模块列表(文件夹视图),'suggest'/'mcp'=进入该模块设置子页
+  let extModule = $state<'suggest' | 'mcp' | null>(null);
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);
@@ -92,6 +96,8 @@
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
     editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
+    editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
+    editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? true;
     mcpCopied = false;
     const ci = cachedSettings.value?.command_index;
     editSuggestEnabled = ci?.suggest_enabled ?? true;
@@ -201,7 +207,7 @@
     if (base) {
       const next: Settings = {
         ...base,
-        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode },
+        ui: { ...base.ui, log_font_size: editFontSize, log_line_height: editLineHeight, log_dir_label: editDirLabel, log_font_latin: editFontLatin, log_font_cjk: editFontCJK, text_encoding: editTextEncoding === 'utf8' ? 'Utf8' : editTextEncoding === 'gbk' ? 'Gbk' : 'Ascii', background_mode: editBackgroundMode, show_suggest_tab: editShowSuggestTab, show_mcp_tab: editShowMcpTab },
         presets: { baud_rates: rates, theme: editTheme, custom_theme: { ...editCustom } },
         mcp: { auto_start: editMcpAutoStart, port: editMcpPort },
         command_index: {
@@ -517,6 +523,7 @@
                 关闭：不显示托盘图标。关闭窗口会断开该窗口自己建立的连接（agent 建立的交还 agent）；关掉最后一个窗口即退出应用、停止 MCP 服务（若 agent 仍连着，会先确认）。
               {/if}
             </div>
+
             <div class="mt-4 flex items-center gap-3">
               <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => exitApp()}>退出 NeoSerial</button>
               <span class="text-[12px] text-[var(--muted-foreground)]">断开所有连接并停止 MCP 服务（与托盘菜单"退出"相同）。</span>
@@ -573,128 +580,170 @@
                 </div>
               {/if}
             </div>
-          {:else if activeSection === 'suggest'}
-            <!-- 指令联想:总开关 + 知识库接入 + 手册勾选 + 发送历史 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              发送输入框输入时弹出候选指令:来自知识库手册索引(带语法/参数/示例)与发送历史。↑↓ 选,Tab/回车填入,Esc 收起。
-            </div>
-            <label class="switch mb-4">
-              <input type="checkbox" bind:checked={editSuggestEnabled} />
-              <span class="switch-track"></span>
-              <span class="switch-label">启用输入联想</span>
-            </label>
-
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">知识库服务器</div>
-            <div class="flex items-center gap-3 mb-3">
-              <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
-              <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
-            </div>
-            <div class="flex items-center gap-3 mb-3">
-              <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
-              <input type="text" class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}" style="padding: 6px 10px;" bind:value={editKbApiKey} placeholder="kb_…" spellcheck="false" autocomplete="off" />
-              <button type="button" class="btn btn-ghost shrink-0" style="padding: 4px 8px;" title={showApiKey ? '隐藏' : '显示'} onclick={() => (showApiKey = !showApiKey)}>
-                {#if showApiKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
-              </button>
-            </div>
-            <div class="flex items-center gap-3 mb-3">
-              <label class="flex items-center gap-2 cursor-pointer select-none">
-                <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editKbAutoRefresh} />
-                <span class="text-[13px] text-[var(--foreground)]">启动时自动刷新</span>
-              </label>
-              <button
-                class="btn btn-secondary ml-auto"
-                style="padding: 6px 14px;"
-                disabled={!canRefreshIndex}
-                title={canRefreshIndex || indexRefreshing ? '' : '填写地址和 API Key 后可刷新'}
-                onclick={handleRefreshIndex}
-              >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
-            </div>
-            <div
-              class="text-[12px] mb-4 px-3 py-2 rounded"
-              style="background: var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
-            >
-              {#if indexRefreshMsg}
-                {indexRefreshMsg.text}
-              {:else if !editKbBaseUrl.trim() || !editKbApiKey.trim()}
-                填写地址和 API Key 后可刷新;未配置时联想只用发送历史。
-              {:else if commandIndex.fetchedAt}
-                上次更新 {formatFetchedAt(commandIndex.fetchedAt)} · {commandIndex.documents.filter((d) => d.cmd_status === 'done').length} 本手册 · {commandIndex.commands.length} 条指令
-              {:else}
-                尚未拉取过,点"刷新指令库"。
-              {/if}
-            </div>
-
-            {#if commandIndex.documents.length}
-              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">参与联想的手册</div>
-              <div class="flex flex-col gap-1.5 mb-4">
-                {#each commandIndex.documents as d (d.id)}
-                  {@const ready = d.cmd_status === 'done'}
-                  <label class="flex items-center gap-2 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
-                    <input
-                      type="checkbox"
-                      class="h-4 w-4 rounded accent-[var(--primary)]"
-                      disabled={!ready}
-                      checked={ready && !editDisabledDocIds.includes(d.id)}
-                      onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
-                    />
-                    <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
-                    <span class="text-[12px] text-[var(--muted-foreground)] shrink-0">
-                      {#if ready}({d.cmd_count} 条指令){:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
-                    </span>
-                  </label>
-                {/each}
+          {:else if activeSection === 'extensions'}
+            {#if extModule === null}
+              <!-- 文件夹视图:两个扩展模块,各自独立开关。点进入该模块的设置子页 -->
+              <div class="text-[12px] text-[var(--muted-foreground)] mb-4 leading-relaxed">
+                扩展功能按模块独立管理。点开进入各自设置:启用开关 + 详细配置 + 该模块侧栏 tab 的显隐。
               </div>
-            {/if}
+              <button
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
+                style="border: 1px solid var(--border);"
+                onclick={() => (extModule = 'suggest')}
+              >
+                <span class="text-[14px] font-medium text-[var(--foreground)]">指令联想</span>
+                <span class="ml-2 text-[12px]" style="color: {editSuggestEnabled ? 'var(--primary)' : 'var(--muted-foreground)'};">{editSuggestEnabled ? '已启用' : '未启用'}</span>
+                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
+              </button>
+              <button
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)]"
+                style="border: 1px solid var(--border);"
+                onclick={() => (extModule = 'mcp')}
+              >
+                <span class="text-[14px] font-medium text-[var(--foreground)]">MCP 服务</span>
+                <span class="ml-2 text-[12px]" style="color: {editMcpAutoStart ? 'var(--primary)' : 'var(--muted-foreground)'};">{editMcpAutoStart ? '已启用' : '未启用'}</span>
+                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
+              </button>
+            {:else if extModule === 'suggest'}
+              <!-- 指令联想子页 -->
+              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>
+                <span>‹</span><span>返回扩展</span>
+              </button>
+              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
+              <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                发送输入框输入时弹出候选指令:来自知识库手册索引(带语法/参数/示例)与发送历史。↑↓ 选,Tab/回车填入,Esc 收起。
+              </div>
+              <label class="switch mb-4">
+                <input type="checkbox" bind:checked={editSuggestEnabled} />
+                <span class="switch-track"></span>
+                <span class="switch-label">启用输入联想</span>
+              </label>
 
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">发送历史</div>
-            <div class="flex items-center gap-3">
-              <span class="text-[12px] text-[var(--muted-foreground)]">已记录 {commandIndex.history.length} 条(上限 500,最近发送优先联想)</span>
-              <button class="btn btn-secondary ml-auto" style="padding: 6px 14px;" disabled={commandIndex.history.length === 0} onclick={handleClearHistory}>{historyCleared ? '已清空' : '清空'}</button>
-            </div>
-          {:else if activeSection === 'mcp'}
-            <!-- MCP 服务：自动启动 + 端口 + 连接指令 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              内嵌 MCP server，支持 Claude Code 等 agent 经由 NeoSerial 操作串口。
-            </div>
-
-            <div class="space-y-3 mb-4">
-              <!-- 自动启动 + 端口并排，紧凑 -->
-              <div class="flex items-center gap-4">
-                <label class="flex items-center gap-2 cursor-pointer select-none">
-                  <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editMcpAutoStart} />
-                  <span class="text-[13px] text-[var(--foreground)]">启动时自动开启</span>
+              {#if editSuggestEnabled}
+                <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
+                <label class="switch mb-4">
+                  <input type="checkbox" bind:checked={editShowSuggestTab} />
+                  <span class="switch-track"></span>
+                  <span class="switch-label">显示"指令参考"tab</span>
                 </label>
-                <label class="flex items-center gap-2">
+                <!-- 启用后才展开:知识库接入 + 手册勾选 + 发送历史 -->
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">知识库服务器</div>
+                <div class="flex items-center gap-3 mb-3">
+                  <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
+                  <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
+                </div>
+                <div class="flex items-center gap-3 mb-3">
+                  <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
+                  <input type="text" class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}" style="padding: 6px 10px;" bind:value={editKbApiKey} placeholder="kb_…" spellcheck="false" autocomplete="off" />
+                  <button type="button" class="btn btn-ghost shrink-0" style="padding: 4px 8px;" title={showApiKey ? '隐藏' : '显示'} onclick={() => (showApiKey = !showApiKey)}>
+                    {#if showApiKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
+                  </button>
+                </div>
+                <div class="flex items-center gap-3 mb-3">
+                  <label class="flex items-center gap-2 cursor-pointer select-none">
+                    <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editKbAutoRefresh} />
+                    <span class="text-[13px] text-[var(--foreground)]">启动时自动刷新</span>
+                  </label>
+                  <button
+                    class="btn btn-secondary ml-auto"
+                    style="padding: 6px 14px;"
+                    disabled={!canRefreshIndex}
+                    title={canRefreshIndex || indexRefreshing ? '' : '填写地址和 API Key 后可刷新'}
+                    onclick={handleRefreshIndex}
+                  >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
+                </div>
+                <div
+                  class="text-[12px] mb-4 px-3 py-2 rounded"
+                  style="background: var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
+                >
+                  {#if indexRefreshMsg}
+                    {indexRefreshMsg.text}
+                  {:else if !editKbBaseUrl.trim() || !editKbApiKey.trim()}
+                    填写地址和 API Key 后可刷新;未配置时联想只用发送历史。
+                  {:else if commandIndex.fetchedAt}
+                    上次更新 {formatFetchedAt(commandIndex.fetchedAt)} · {commandIndex.documents.filter((d) => d.cmd_status === 'done').length} 本手册 · {commandIndex.commands.length} 条指令
+                  {:else}
+                    尚未拉取过,点"刷新指令库"。
+                  {/if}
+                </div>
+
+                {#if commandIndex.documents.length}
+                  <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">参与联想的手册</div>
+                  <div class="flex flex-col gap-1.5 mb-4">
+                    {#each commandIndex.documents as d (d.id)}
+                      {@const ready = d.cmd_status === 'done'}
+                      <label class="flex items-center gap-2 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
+                        <input
+                          type="checkbox"
+                          class="h-4 w-4 rounded accent-[var(--primary)]"
+                          disabled={!ready}
+                          checked={ready && !editDisabledDocIds.includes(d.id)}
+                          onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
+                        />
+                        <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
+                        <span class="text-[12px] text-[var(--muted-foreground)] shrink-0">
+                          {#if ready}({d.cmd_count} 条指令){:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
+                        </span>
+                      </label>
+                    {/each}
+                  </div>
+                {/if}
+
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">发送历史</div>
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="text-[12px] text-[var(--muted-foreground)]">已记录 {commandIndex.history.length} 条(上限 500,最近发送优先联想)</span>
+                  <button class="btn btn-secondary ml-auto" style="padding: 6px 14px;" disabled={commandIndex.history.length === 0} onclick={handleClearHistory}>{historyCleared ? '已清空' : '清空'}</button>
+                </div>
+              {/if}
+            {:else if extModule === 'mcp'}
+              <!-- MCP 服务子页 -->
+              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>
+                <span>‹</span><span>返回扩展</span>
+              </button>
+              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
+              <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                内嵌 MCP server，支持 Claude Code 等 agent 经由 NeoSerial 操作串口。
+              </div>
+              <label class="switch mb-4">
+                <input type="checkbox" bind:checked={editMcpAutoStart} />
+                <span class="switch-track"></span>
+                <span class="switch-label">启用 MCP 服务（启动时自动开启）</span>
+              </label>
+
+              {#if editMcpAutoStart}
+                <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
+                <label class="switch mb-4">
+                  <input type="checkbox" bind:checked={editShowMcpTab} />
+                  <span class="switch-track"></span>
+                  <span class="switch-label">显示"MCP 日志"tab</span>
+                </label>
+                <div class="flex items-center gap-3 mb-3">
                   <span class="text-[13px] text-[var(--foreground)]">端口</span>
                   <input type="number" class="w-20 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
-                </label>
-              </div>
-            </div>
-
-            {#if mcpStatus.running && mcpStatus.port}
-              <!-- 运行中：复制连接命令 -->
-              <div class="mb-1.5 text-[13px] font-medium text-[var(--foreground)]">连接 MCP 客户端</div>
-              <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
-                端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。Claude Code 中粘贴执行，或在终端运行：
-              </div>
-              <div class="flex items-center gap-2">
-                <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
-                  claude mcp add --transport http neoserial http://localhost:{mcpStatus.port}/mcp
-                </code>
-                <button
-                  class="shrink-0 px-2.5 py-1.5 rounded text-[12px] font-medium transition-colors {mcpCopied
-                    ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                    : 'bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--border)]'}"
-                  onclick={copyMcpCommand}
-                  title="复制到剪贴板"
-                >{mcpCopied ? '已复制' : '复制'}</button>
-              </div>
-            {:else}
-              <div class="text-[12px] text-[var(--muted-foreground)] px-3 py-2 rounded bg-[var(--border-subtle)]">
-                MCP 未运行{!editMcpAutoStart ? '（已关闭自动启动）' : `（端口 ${editMcpPort} 被占，改端口后重启）`}
-              </div>
+                </div>
+                {#if mcpStatus.running && mcpStatus.port}
+                  <div class="mb-1.5 text-[13px] font-medium text-[var(--foreground)]">连接 MCP 客户端</div>
+                  <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
+                    端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。Claude Code 中粘贴执行，或在终端运行：
+                  </div>
+                  <div class="flex items-center gap-2 mb-4">
+                    <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
+                      claude mcp add --transport http neoserial http://localhost:{mcpStatus.port}/mcp
+                    </code>
+                    <button
+                      class="shrink-0 px-2.5 py-1.5 rounded text-[12px] font-medium transition-colors {mcpCopied
+                        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+                        : 'bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--border)]'}"
+                      onclick={copyMcpCommand}
+                      title="复制到剪贴板"
+                    >{mcpCopied ? '已复制' : '复制'}</button>
+                  </div>
+                {:else}
+                  <div class="text-[12px] text-[var(--muted-foreground)] px-3 py-2 rounded bg-[var(--border-subtle)] mb-4">
+                    MCP 未运行（端口 {editMcpPort} 被占或尚未启动，保存后重启生效）
+                  </div>
+                {/if}
+              {/if}
             {/if}
           {/if}
         </div>

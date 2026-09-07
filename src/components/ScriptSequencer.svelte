@@ -6,6 +6,7 @@
     activeScriptPage,
     addScriptPage,
     addScriptRow,
+    cachedSettings,
     currentModulePages,
     reorderScriptRow,
     removeScriptPage,
@@ -21,6 +22,22 @@
 
   // 面板顶部视图切换:快捷指令(脚本序列) / 指令参考(单条指令的语法/参数/示例,来自输入框联想) / MCP 日志(agent 实际操作记录)
   let scriptView = $state<'scripts' | 'reference' | 'mcp'>('scripts');
+
+  // tab 显隐 = 功能启用 AND 该模块 tab 开关。功能关时 tab 不显示但开关值保留(不改值,
+  // 只控制是否生效);功能重开按原值生效。避免"关功能把 tab 值清掉、重开要重设"。
+  const showSuggestTab = $derived(
+    (cachedSettings.value?.command_index?.suggest_enabled ?? true) &&
+    (cachedSettings.value?.ui?.show_suggest_tab ?? true),
+  );
+  const showMcpTab = $derived(
+    (cachedSettings.value?.mcp?.auto_start ?? true) &&
+    (cachedSettings.value?.ui?.show_mcp_tab ?? true),
+  );
+  // 功能/tab 关掉、当前正停在该 tab 时,弹回"快捷指令"
+  $effect(() => {
+    if (!showSuggestTab && scriptView === 'reference') scriptView = 'scripts';
+    if (!showMcpTab && scriptView === 'mcp') scriptView = 'scripts';
+  });
 
   // 顺序调整模式：开启后行可拖拽排序
   let orderMode = $state<{ value: boolean }>({ value: false });
@@ -542,18 +559,22 @@
         : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
       onclick={() => (scriptView = 'scripts')}
     >快捷指令</button>
-    <button
-      class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'reference'
-        ? 'text-[var(--foreground)] border-[var(--primary)]'
-        : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
-      onclick={() => (scriptView = 'reference')}
-    >指令参考</button>
-    <button
-      class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'mcp'
-        ? 'text-[var(--foreground)] border-[var(--primary)]'
-        : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
-      onclick={() => (scriptView = 'mcp')}
-    >MCP 日志</button>
+    {#if showSuggestTab}
+      <button
+        class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'reference'
+          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
+        onclick={() => (scriptView = 'reference')}
+      >指令参考</button>
+    {/if}
+    {#if showMcpTab}
+      <button
+        class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'mcp'
+          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
+        onclick={() => (scriptView = 'mcp')}
+      >MCP 日志</button>
+    {/if}
   </div>
 
   {#if scriptView === 'scripts'}

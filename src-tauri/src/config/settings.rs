@@ -108,6 +108,12 @@ pub struct UiSettings {
     /// (agent 的交还 agent),关最后一个窗口即退出。改后即时生效。
     #[serde(default = "default_background_mode")]
     pub background_mode: bool,
+    /// 侧栏"指令参考"tab 是否显示(指令联想模块的展现项)。各模块独立,关掉只藏该 tab。
+    #[serde(default = "default_show_suggest_tab")]
+    pub show_suggest_tab: bool,
+    /// 侧栏"MCP 日志"tab 是否显示(MCP 模块的展现项)。
+    #[serde(default = "default_show_mcp_tab")]
+    pub show_mcp_tab: bool,
     /// 首次收进后台的系统通知是否已发过(只提示一次)。后端写,见 merge_backend_owned。
     #[serde(default)]
     pub tray_hint_shown: bool,
@@ -115,6 +121,14 @@ pub struct UiSettings {
 
 fn default_text_encoding() -> TextEncoding {
     TextEncoding::Ascii
+}
+
+fn default_show_suggest_tab() -> bool {
+    true
+}
+
+fn default_show_mcp_tab() -> bool {
+    true
 }
 
 /// 后台运行的默认值,单独收在这里便于一处改。默认关:新用户拿到的是和其他串口工具
@@ -299,6 +313,8 @@ impl Settings {
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
                 background_mode: default_background_mode(),
+                show_suggest_tab: default_show_suggest_tab(),
+                show_mcp_tab: default_show_mcp_tab(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup::default_group()],
@@ -423,6 +439,8 @@ impl LegacySettings {
                 log_font_cjk: default_log_font_cjk(),
                 text_encoding: default_text_encoding(),
                 background_mode: default_background_mode(),
+                show_suggest_tab: default_show_suggest_tab(),
+                show_mcp_tab: default_show_mcp_tab(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup {
