@@ -383,3 +383,27 @@ export function onCloseGuard(cb: (guard: CloseGuard) => void) {
 export async function resolveLastClose(action: 'exit' | 'background'): Promise<void> {
   await invoke('resolve_last_close', { action });
 }
+
+// ============ MCP 工具调用记录(侧栏"MCP 日志"tab,实时显示 agent 的实际操作) ============
+export interface McpCallRecord {
+  /** RFC 3339 本地时间 */
+  ts: string;
+  tool: string;
+  /** 入参 JSON(截断到 ~500 字符) */
+  args: string;
+  ok: boolean;
+  /** 失败原因,成功为空 */
+  error: string;
+  /** 耗时(ms) */
+  duration_ms: number;
+}
+
+/** 开 tab 时拉一次历史(环形上限 200,最旧在前)。 */
+export async function getMcpCallLog(): Promise<McpCallRecord[]> {
+  return await invoke<McpCallRecord[]>('get_mcp_call_log');
+}
+
+/** 每次工具调用后后端 emit,前端实时 append。 */
+export function onMcpCall(cb: (rec: McpCallRecord) => void) {
+  return getCurrentWebview().listen<McpCallRecord>('mcp-call', (e) => cb(e.payload));
+}

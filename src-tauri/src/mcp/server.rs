@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
+use tauri::Emitter;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, JsonObject, ListToolsResult,
     PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
@@ -317,6 +318,9 @@ impl ServerHandler for NeoserialHandler {
             .unwrap_or(Value::Null);
         let shared = self.shared.clone();
         async move {
+            // 调用记录:Drop 守卫兜底所有退出路径(含 arg 解析失败的早返回 / panic),
+            // 正常流在底部 set 真实 ok+error。守卫 drop 时写环形 + emit 给前端。
+            let mut recorder = CallRecorder::new(shared.clone(), name.to_string(), &args);
             let resp: Value = match name.as_ref() {
                 LIST_PORTS => {
                     // available_ports 在 Windows 走 SetupAPI 枚举(可卡几十~几百 ms),
@@ -530,8 +534,66 @@ impl ServerHandler for NeoserialHandler {
                 }
                 _ => serde_json::json!({ "ok": false, "error": format!("未知工具: {}", name) }),
             };
+            // 正常流(到此处)记真实 ok/error;早返回的 arg 解析失败由守卫兜底记录。
+            recorder.set_result(
+                resp.get("ok").and_then(|v| v.as_bool()).unwrap_or(false),
+                resp.get("error")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string(),
+            );
             Ok(content_text(resp).into())
         }
+    }
+}
+
+/// call_tool 的调用记录守卫:无论从哪条路径退出(正常返回 / arg 解析早返回 / panic),
+/// drop 时都把这条调用写进环形并 emit 给前端。早返回路径未 set_result → 兜底记 ok=false。
+struct CallRecorder {
+    shared: Arc<McpShared>,
+    tool: String,
+    args: String,
+    start: std::time::Instant,
+    /// None = 未走到底部(早返回/异常);Some = 正常返回的真实结果
+    result: Option<(bool, String)>,
+}
+
+impl CallRecorder {
+    fn new(shared: Arc<McpShared>, tool: String, args: &Value) -> Self {
+        use crate::mcp::call_log::{truncate, ARGS_MAX};
+        Self {
+            shared,
+            tool,
+            args: truncate(&args.to_string(), ARGS_MAX),
+            start: std::time::Instant::now(),
+            result: None,
+        }
+    }
+
+    fn set_result(&mut self, ok: bool, error: String) {
+        self.result = Some((ok, error));
+    }
+}
+
+impl Drop for CallRecorder {
+    fn drop(&mut self) {
+        use crate::mcp::call_log::McpCallRecord;
+        let (ok, error) = self
+            .result
+            .take()
+            .unwrap_or_else(|| (false, "早返回(参数解析失败?)".to_string()));
+        let rec = McpCallRecord {
+            ts: chrono::Local::now().to_rfc3339(),
+            tool: self.tool.clone(),
+            args: self.args.clone(),
+            ok,
+            error,
+            duration_ms: self.start.elapsed().as_millis() as u64,
+        };
+        if let Ok(mut log) = self.shared.call_log.lock() {
+            log.push(rec.clone());
+        }
+        let _ = self.shared.app_handle.emit("mcp-call", rec);
     }
 }
 

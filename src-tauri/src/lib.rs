@@ -15,6 +15,7 @@ use commands::config::{get_settings, save_settings, save_commands, export_theme_
 use commands::logging::{start_logging, stop_logging, is_logging};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
 use commands::command_index::{command_index_refresh, command_index_load, send_history_push, send_history_load, send_history_clear};
+use commands::mcp_log::get_mcp_call_log;
 
 use state::AppState;
 
@@ -93,6 +94,7 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
         connections: state.connections.clone(),
         connecting: state.connecting.clone(),
         registry: registry.clone(),
+        call_log: state.call_log.clone(),
     });
     // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
     let shared_clone = mcp_shared.clone();
@@ -317,6 +319,7 @@ pub fn run() {
             send_history_push,
             send_history_load,
             send_history_clear,
+            get_mcp_call_log,
 
         ])
         .build(tauri::generate_context!())

@@ -4,3 +4,4 @@ pub mod config;
 pub mod logging;
 pub mod sequence;
 pub mod command_index;
+pub mod mcp_log;

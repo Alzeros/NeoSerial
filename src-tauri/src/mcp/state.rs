@@ -2,6 +2,7 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::connection::ConnectionHandle;
+use crate::mcp::call_log::McpCallLog;
 use crate::mcp::registry::RegistryHandle;
 
 /// MCP handler 与 Tauri command 共享的状态。
@@ -18,4 +19,7 @@ pub struct McpShared {
     pub connecting: crate::connection::ConnectingSet,
     /// registry 句柄,供 connect/disconnect 工具更新 connections 快照。None 时跳过更新。
     pub registry: Option<RegistryHandle>,
+    /// MCP 工具调用记录(环形),与 AppState.call_log 同一 Arc:call_tool 写,前端命令读。
+    pub call_log: Arc<Mutex<McpCallLog>>,
 }
+

@@ -1,5 +1,6 @@
 <script lang="ts">
   import CommandDetail from '$components/CommandDetail.svelte';
+  import McpCallLog from '$components/McpCallLog.svelte';
   import {
     activeScriptModule,
     activeScriptPage,
@@ -18,8 +19,8 @@
     switchScriptModule,
   } from '$lib/stores';
 
-  // 面板顶部视图切换:快捷指令(脚本序列) / 指令参考(单条指令的语法/参数/示例,来自输入框联想)
-  let scriptView = $state<'scripts' | 'reference'>('scripts');
+  // 面板顶部视图切换:快捷指令(脚本序列) / 指令参考(单条指令的语法/参数/示例,来自输入框联想) / MCP 日志(agent 实际操作记录)
+  let scriptView = $state<'scripts' | 'reference' | 'mcp'>('scripts');
 
   // 顺序调整模式：开启后行可拖拽排序
   let orderMode = $state<{ value: boolean }>({ value: false });
@@ -547,6 +548,12 @@
         : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
       onclick={() => (scriptView = 'reference')}
     >指令参考</button>
+    <button
+      class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'mcp'
+        ? 'text-[var(--foreground)] border-[var(--primary)]'
+        : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
+      onclick={() => (scriptView = 'mcp')}
+    >MCP 日志</button>
   </div>
 
   {#if scriptView === 'scripts'}
@@ -819,8 +826,10 @@
       {/if}
     </div>
   </div>
-  {:else}
+  {:else if scriptView === 'reference'}
     <CommandDetail />
+  {:else}
+    <McpCallLog />
   {/if}
 </div>
 

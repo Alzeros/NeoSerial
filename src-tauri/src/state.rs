@@ -6,6 +6,7 @@ use tauri::AppHandle;
 
 use crate::connection::ConnectionHandle;
 use crate::logging::file_logger::FileLogger;
+use crate::mcp::call_log::McpCallLog;
 use crate::mcp::registry::RegistryHandle;
 
 /// 应用全局状态。
@@ -32,6 +33,9 @@ pub struct AppState {
     pub mcp_port: Mutex<Option<u16>>,
     /// MCP registry 句柄,进程退出时调 unregister 注销。
     pub registry: Option<RegistryHandle>,
+    /// MCP 工具调用记录(环形,上限 200)。与 McpShared.call_log 同一 Arc:
+    /// call_tool 写,前端 get_mcp_call_log 读。
+    pub call_log: Arc<Mutex<McpCallLog>>,
     /// 开窗时若带 port,把 {窗口label→(port,baud)} 记进此 pending,
     /// 新窗口 onMount 调 take_pending_takeover 取走后自动 connect 接管。
     /// 用 pending 而非 emit 事件:窗口 JS 加载有先后,事件可能早于监听注册丢失。
@@ -52,6 +56,7 @@ impl AppState {
             send_history: Mutex::new(crate::config::send_history::SendHistory::load()),
             mcp_port: Mutex::new(None),
             registry: None,
+            call_log: Arc::new(Mutex::new(McpCallLog::new())),
             pending_takeover: Mutex::new(std::collections::HashMap::new()),
             handle,
         }
