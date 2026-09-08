@@ -107,6 +107,8 @@ export interface CommandIndexSettings {
   suggest_max_manual: number;
   /** 历史候选上限(只管输入时的联想;空输入按 ↑ 翻历史不受此限) */
   suggest_max_history: number;
+  /** 发送历史留存条数上限(send-history.json);与 suggest_max_history 不同,那个只管显示几条 */
+  history_limit: number;
 }
 
 /** 递归可选:patchSettings 的入参是 Settings 的任意子集(嵌套对象按键合并,数组整体替换)。 */
@@ -259,6 +261,8 @@ export interface ManualDocument {
   cmd_count: number;
   category_id: number;
   updated_at: string;
+  /** 所属自定义分组名列表(知识库 Web 端归的组)。无分组/旧缓存 → []，设置页据此退回平铺 */
+  group_names: string[];
 }
 
 export interface CommandParameter {

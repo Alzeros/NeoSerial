@@ -418,8 +418,36 @@ pub fn spawn_auto_refresh(handle: &tauri::AppHandle, cfg: &CommandIndexSettings)
 
 // ============ 发送历史 ============
 
-/// 输入框手动发送成功后调:记一条(去重挪前、上限 500)、落盘、广播给所有窗口。返回最新全量列表。
-/// 已在最前的重复发送不落盘不广播。落盘失败只返错,内存里已记下的那条保留(历史以内存为准)。
+/// 发送历史的条数上限(设置项)。先取完设置再去锁 history:两把锁不重叠,免得
+/// 与别处"持 history 锁再读设置"的写法凑成死锁。取不到设置时用默认值。
+fn history_limit(state: &AppState) -> usize {
+    state
+        .settings
+        .lock()
+        .map(|s| s.command_index.history_limit as usize)
+        .unwrap_or(crate::config::send_history::SEND_HISTORY_DEFAULT_MAX)
+}
+
+/// 上限被调小后裁掉多余的最旧记录:落盘并广播,不然设置里写着 100、列表还留着 400 条。
+/// 三条保存路径(GUI patch_settings / GUI save_settings / MCP save_settings)都会调它。
+pub fn enforce_history_limit(app_handle: &tauri::AppHandle, state: &AppState) {
+    let limit = history_limit(state);
+    let items = {
+        let Ok(mut h) = state.send_history.lock() else { return };
+        if !h.trim_to(limit) {
+            return;
+        }
+        if let Err(e) = h.save() {
+            log::warn!("裁剪发送历史后写盘失败: {}", e);
+        }
+        h.items().to_vec()
+    };
+    let _ = app_handle.emit("send-history-changed", SendHistoryChanged { items });
+}
+
+/// 输入框手动发送成功后调:记一条(去重挪前、按设置的上限截尾)、落盘、广播给所有窗口。
+/// 返回最新全量列表。已在最前的重复发送不落盘不广播。
+/// 落盘失败只返错,内存里已记下的那条保留(历史以内存为准)。
 #[tauri::command]
 pub async fn send_history_push(
     app_handle: tauri::AppHandle,
@@ -429,8 +457,9 @@ pub async fn send_history_push(
     let (changed, items) = tauri::async_runtime::spawn_blocking(
         move || -> Result<(bool, Vec<String>), String> {
             let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+            let limit = history_limit(&state);
             let mut h = state.send_history.lock().map_err(|e| e.to_string())?;
-            let changed = h.push(&text);
+            let changed = h.push(&text, limit);
             if changed {
                 h.save().map_err(|e| format!("写入发送历史失败: {}", e))?;
             }

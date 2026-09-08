@@ -252,7 +252,7 @@ export async function commandIndexTestConnection(baseUrl: string, apiKey: string
   return await invoke<string>('command_index_test_connection', { baseUrl, apiKey });
 }
 
-/** 输入框手动发送成功后记一条历史;后端去重挪前、上限 500,变化时广播 send-history-changed。返回最新全量列表。 */
+/** 输入框手动发送成功后记一条历史;后端去重挪前、按设置的留存上限截尾,变化时广播 send-history-changed。返回最新全量列表。 */
 export async function sendHistoryPush(text: string): Promise<string[]> {
   return await invoke<string[]>('send_history_push', { text });
 }

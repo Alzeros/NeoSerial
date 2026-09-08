@@ -16,7 +16,7 @@ import {
 import type { ManualCommand, ManualDocument } from '../src/lib/types.ts';
 
 const doc = (id: number, title: string, cmd_status = 'done'): ManualDocument => ({
-  id, title, filename: '', status: 'done', cmd_status, cmd_count: 0, category_id: 0, updated_at: '',
+  id, title, filename: '', status: 'done', cmd_status, cmd_count: 0, category_id: 0, updated_at: '', group_names: [],
 });
 const cmd = (id: number, document_id: number, command: string, extra: Partial<ManualCommand> = {}): ManualCommand => ({
   id, document_id, command, name: '', syntax: '', parameters: [], example: '', page_no: null, summary: '', ...extra,

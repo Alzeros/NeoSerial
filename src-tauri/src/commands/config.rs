@@ -17,7 +17,10 @@ pub async fn save_settings(
     let handle = app_handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
         let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
-        save_settings_impl(&state, settings)
+        save_settings_impl(&state, settings)?;
+        // 发送历史上限调小了就当场裁掉多余的(自带落盘与广播)
+        crate::commands::command_index::enforce_history_limit(&handle, &state);
+        Ok::<(), String>(())
     })
     .await
     .map_err(|e| format!("保存设置任务执行异常: {}", e))??;
@@ -60,7 +63,10 @@ pub async fn patch_settings(
     let handle = app_handle.clone();
     let next = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
-        patch_settings_impl(&state, &patch)
+        let next = patch_settings_impl(&state, &patch)?;
+        // 发送历史上限调小了就当场裁掉多余的(自带落盘与广播)
+        crate::commands::command_index::enforce_history_limit(&handle, &state);
+        Ok::<_, String>(next)
     })
     .await
     .map_err(|e| format!("保存设置任务执行异常: {}", e))??;

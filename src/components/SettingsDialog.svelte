@@ -6,9 +6,10 @@
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
-  import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw } from 'lucide-svelte';
+  import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
-  import type { Settings, SettingsPatch } from '$lib/types';
+  import Collapsible from '$components/ui/Collapsible.svelte';
+  import type { ManualDocument, Settings, SettingsPatch } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
 
@@ -82,6 +83,10 @@
   let editSuggestIgnoreAtPrefix = $state(defaultSuggestLimits.ignoreAtPrefix);
   let editSuggestMaxManual = $state(defaultSuggestLimits.maxManual);
   let editSuggestMaxHistory = $state(defaultSuggestLimits.maxHistory);
+  // 发送历史留存条数上限(与 suggest 的"联想里显示几条"不同,这个管总共留几条)。
+  // 兜底值与后端 send_history::SEND_HISTORY_DEFAULT_MAX 一致
+  const DEFAULT_HISTORY_LIMIT = 200;
+  let editHistoryLimit = $state(DEFAULT_HISTORY_LIMIT);
   let showApiKey = $state(false);
   let indexRefreshing = $state(false);
   // 正在单本刷新的手册 id(null=没有)。后端 REFRESHING 只允许一个写入者,所以一次只转一行
@@ -111,6 +116,7 @@
     mcpAutoStart: boolean; mcpPort: number;
     kbBaseUrl: string; kbApiKey: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
     suggestMinChars: number; suggestIgnoreAtPrefix: boolean; suggestMaxManual: number; suggestMaxHistory: number;
+    historyLimit: number;
   };
   function currentEdits(): EditValues {
     // 波特率:内置默认 3 项保留 + 用户自定义(去重、排序)
@@ -127,6 +133,7 @@
       kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
       suggestMinChars: editSuggestMinChars, suggestIgnoreAtPrefix: editSuggestIgnoreAtPrefix,
       suggestMaxManual: editSuggestMaxManual, suggestMaxHistory: editSuggestMaxHistory,
+      historyLimit: editHistoryLimit,
     };
   }
   function editsSnapshot(): string {
@@ -173,10 +180,18 @@
     editSuggestIgnoreAtPrefix = ci?.suggest_ignore_at_prefix ?? defaultSuggestLimits.ignoreAtPrefix;
     editSuggestMaxManual = ci?.suggest_max_manual ?? defaultSuggestLimits.maxManual;
     editSuggestMaxHistory = ci?.suggest_max_history ?? defaultSuggestLimits.maxHistory;
+    editHistoryLimit = ci?.history_limit ?? DEFAULT_HISTORY_LIMIT;
     showApiKey = false;
     indexRefreshMsg = null;
     historyCleared = false;
     saveError = null;
+    // 指令联想子页的分节折叠:每次开窗重置。知识库没配全 → 展开知识库那节做引导
+    const kbConfigured = editKbBaseUrl.trim().length > 0 && editKbApiKey.trim().length > 0;
+    openKb = !kbConfigured;
+    openManuals = kbConfigured;
+    openBehavior = false;
+    openHistory = false;
+    collapsedGroups = [];
     // 记录"加载态快照",作为脏检测与补丁的基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
     lastAppliedEdits = currentEdits();
     activeSection = section;
@@ -302,6 +317,7 @@
     if (changed('suggestIgnoreAtPrefix')) ci.suggest_ignore_at_prefix = cur.suggestIgnoreAtPrefix;
     if (changed('suggestMaxManual')) ci.suggest_max_manual = cur.suggestMaxManual;
     if (changed('suggestMaxHistory')) ci.suggest_max_history = cur.suggestMaxHistory;
+    if (changed('historyLimit')) ci.history_limit = cur.historyLimit;
     if (Object.keys(ci).length) patch.command_index = ci;
     return patch;
   }
@@ -430,6 +446,76 @@
   // 勾选 = 不在排除名单
   function toggleDoc(id: number, checked: boolean) {
     editDisabledDocIds = checked ? editDisabledDocIds.filter((d) => d !== id) : [...editDisabledDocIds, id];
+  }
+
+  // ===== 手册列表按知识库分组折叠 =====
+  // 分组名来自手册列表接口的 group_names(管理员在知识库 Web 端归的组)。一本手册可属多个分组,
+  // 则在每个分组下各出现一次——勾选绑的是 doc id,两处联动。排除名单存的始终是 doc id,
+  // 分组只是批量勾选的入口:管理员那边调整分组时,已有的排除名单不会跟着漂移。
+  const UNGROUPED = '未分组';
+  /** null = 没有任何手册带分组(含旧缓存无此字段)→ 按原来的平铺渲染,不显示分组头。 */
+  const docGroups = $derived.by((): { name: string; docs: ManualDocument[] }[] | null => {
+    const docs = commandIndex.documents;
+    if (!docs.some((d) => d.group_names.length)) return null;
+    const map = new Map<string, ManualDocument[]>();
+    for (const d of docs) {
+      for (const name of d.group_names.length ? d.group_names : [UNGROUPED]) {
+        const arr = map.get(name);
+        if (arr) arr.push(d);
+        else map.set(name, [d]);
+      }
+    }
+    // 分组顺序按首次出现(即手册列表顺序,与"同名指令主记录取排前面那本"同一个依据),未分组垫底
+    const groups = [...map].map(([name, ds]) => ({ name, docs: ds }));
+    return [...groups.filter((g) => g.name !== UNGROUPED), ...groups.filter((g) => g.name === UNGROUPED)];
+  });
+
+  // ===== 指令联想子页的分节折叠 =====
+  // 子页有 4 节(手册/知识库/联想行为/发送历史),铺开约 800px 而内容区只有 400px。
+  // 默认只展开"参与联想的手册"(最常回来动的那节),其余收起、头部显示当前值摘要;
+  // 知识库还没配置时改为展开知识库那节——第一次进来该被引导去填地址,而不是看一个空手册列表。
+  // 展开状态只在本次开着设置页期间有效,每次 show() 重置(纯视图状态,不进 settings.json)。
+  let openManuals = $state(true);
+  let openKb = $state(false);
+  let openBehavior = $state(false);
+  let openHistory = $state(false);
+
+  const kbSummary = $derived.by(() => {
+    const base = editKbBaseUrl.trim();
+    if (!base || !editKbApiKey.trim()) return '未配置';
+    return base.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+  });
+  const manualSummary = $derived.by(() => {
+    const ready = commandIndex.documents.filter((d) => d.cmd_status === 'done');
+    const on = ready.filter((d) => !editDisabledDocIds.includes(d.id)).length;
+    return `已选 ${on}/${ready.length}`;
+  });
+  const behaviorSummary = $derived(
+    `${editSuggestIgnoreAtPrefix ? '忽略 AT+ · ' : ''}≥${editSuggestMinChars} 字符 · 手册 ${editSuggestMaxManual} / 历史 ${editSuggestMaxHistory}`,
+  );
+  const historySummary = $derived(`已记录 ${commandIndex.history.length} 条 · 上限 ${editHistoryLimit}`);
+
+  // 折叠起来的分组名。只在本次开着设置页期间有效,不落盘(分组是服务端的,记住折叠状态意义不大)
+  let collapsedGroups = $state<string[]>([]);
+  function toggleGroupCollapsed(name: string) {
+    collapsedGroups = collapsedGroups.includes(name)
+      ? collapsedGroups.filter((n) => n !== name)
+      : [...collapsedGroups, name];
+  }
+
+  /** 分组头勾选框的三态依据:该组里可勾选(cmd_status=done)的有几本、已勾了几本。
+   *  提取中/失败的手册本来就点不动,不计入分母。 */
+  function groupCheck(docs: ManualDocument[]): { ready: number; checked: number } {
+    const ready = docs.filter((d) => d.cmd_status === 'done');
+    return { ready: ready.length, checked: ready.filter((d) => !editDisabledDocIds.includes(d.id)).length };
+  }
+
+  /** 分组头勾选:全选该组 / 全不选,只动 cmd_status=done 的那些。 */
+  function toggleGroup(docs: ManualDocument[], checked: boolean) {
+    const ids = docs.filter((d) => d.cmd_status === 'done').map((d) => d.id);
+    editDisabledDocIds = checked
+      ? editDisabledDocIds.filter((id) => !ids.includes(id))
+      : [...new Set([...editDisabledDocIds, ...ids])];
   }
 
   async function handleClearHistory() {
@@ -851,180 +937,254 @@
                 </div>
               </div>
             {:else if extModule === 'suggest'}
-              <!-- 指令联想子页 -->
-              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>
-                <span>‹</span><span>返回扩展</span>
-              </button>
-              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
-              <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                发送输入框输入时弹出候选指令:来自知识库手册索引(带语法/参数/示例)与发送历史。↑↓ 选,Tab/回车填入,Esc 收起。
-              </div>
-              <label class="switch mb-4">
-                <input type="checkbox" bind:checked={editSuggestEnabled} />
-                <span class="switch-track"></span>
-                <span class="switch-label">启用输入联想</span>
-              </label>
-
-              {#if editSuggestEnabled}
-                <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
-                <label class="switch mb-4">
-                  <input type="checkbox" bind:checked={editShowSuggestTab} />
-                  <span class="switch-track"></span>
-                  <span class="switch-label">显示"指令查询"tab</span>
-                </label>
-
-                <!-- 弹出时机与条数:模组指令几乎全以 AT+ 开头,按输入字符数算门槛时
-                     "AT""AT+"就命中整本手册,而它们是打任何指令的必经之路 -->
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">弹出时机</div>
+              <!-- 指令联想子页:分节折叠(默认只展开一节),按自然流排布,超出由外层内容区滚动 -->
+              <div>
+                <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
+                  <span>‹</span><span>返回扩展</span>
+                </button>
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                  发送输入框输入时弹出候选指令:来自知识库手册索引(带语法/参数/示例)与发送历史。↑↓ 选,Tab/回车填入,Esc 收起。
+                </div>
                 <label class="switch mb-3">
-                  <input type="checkbox" bind:checked={editSuggestIgnoreAtPrefix} />
+                  <input type="checkbox" bind:checked={editSuggestEnabled} />
                   <span class="switch-track"></span>
-                  <span class="switch-label">算长度时忽略 AT+ 前缀</span>
+                  <span class="switch-label">启用输入联想</span>
                 </label>
-                <div class="flex items-center gap-3 mb-2">
-                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">最少输入</span>
-                  <input
-                    type="range" min="1" max="6" step="1"
-                    class="flex-1 accent-[var(--primary)]"
-                    value={editSuggestMinChars}
-                    oninput={(e) => (editSuggestMinChars = Number((e.target as HTMLInputElement).value))}
-                  />
-                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMinChars} 字符</span>
-                </div>
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-                  {#if editSuggestIgnoreAtPrefix}
-                    {@const sample = 'AT+' + 'MIPLCREATE'.slice(0, editSuggestMinChars)}
-                    去掉 AT/AT+/AT&amp; 前缀后够 {editSuggestMinChars} 个字符才弹:<code>{sample}</code> 弹,
-                    <code>{sample.slice(0, -1)}</code> 不弹。
-                  {:else}
-                    按输入的字符数算:输满 {editSuggestMinChars} 个字符就弹(<code>AT</code>、<code>AT+</code> 也算)。
-                  {/if}
-                </div>
 
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">候选条数上限</div>
-                <div class="flex items-center gap-3 mb-3">
-                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">手册指令</span>
-                  <input
-                    type="range" min="1" max="50" step="1"
-                    class="flex-1 accent-[var(--primary)]"
-                    value={editSuggestMaxManual}
-                    oninput={(e) => (editSuggestMaxManual = Number((e.target as HTMLInputElement).value))}
-                  />
-                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMaxManual} 条</span>
-                </div>
-                <div class="flex items-center gap-3 mb-2">
-                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">发送历史</span>
-                  <input
-                    type="range" min="0" max="30" step="1"
-                    class="flex-1 accent-[var(--primary)]"
-                    value={editSuggestMaxHistory}
-                    oninput={(e) => (editSuggestMaxHistory = Number((e.target as HTMLInputElement).value))}
-                  />
-                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMaxHistory} 条</span>
-                </div>
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-                  两类各自限量,历史再多也挤不掉手册卡片;被挡住的条数会显示在弹层顶部。
-                  历史上限设 0 = 联想里不出历史;空输入按 ↑ 翻历史不受此限。
-                </div>
-
-                <!-- 启用后才展开:知识库接入 + 手册勾选 + 发送历史 -->
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">知识库服务器</div>
-                <div class="flex items-center gap-3 mb-3">
-                  <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
-                  <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
-                  <!-- 测试连通性:与下方 API Key 行的显示/隐藏按钮同尺寸对齐;探活结果写进状态行 -->
-                  <button
-                    type="button"
-                    class="btn btn-ghost shrink-0"
-                    style="padding: 4px 8px;"
-                    disabled={!canRefreshIndex || indexTesting}
-                    title={canRefreshIndex ? '测试与知识库服务器的连通性' : '填写地址和 API Key 后可测试'}
-                    onclick={handleTestConnection}
-                  >{#if indexTesting}<Loader2 size={14} class="animate-spin" />{:else}<Plug size={14} />{/if}</button>
-                </div>
-                <div class="flex items-center gap-3 mb-3">
-                  <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
-                  <input type="text" class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}" style="padding: 6px 10px;" bind:value={editKbApiKey} placeholder="kb_…" spellcheck="false" autocomplete="off" />
-                  <button type="button" class="btn btn-ghost shrink-0" style="padding: 4px 8px;" title={showApiKey ? '隐藏' : '显示'} onclick={() => (showApiKey = !showApiKey)}>
-                    {#if showApiKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
-                  </button>
-                </div>
-                <div class="flex items-center gap-3 mb-3">
-                  <label class="flex items-center gap-2 cursor-pointer select-none">
-                    <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editKbAutoRefresh} />
-                    <span class="text-[13px] text-[var(--foreground)]">启动时自动刷新</span>
+                {#if editSuggestEnabled}
+                  <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
+                  <label class="switch mb-3">
+                    <input type="checkbox" bind:checked={editShowSuggestTab} />
+                    <span class="switch-track"></span>
+                    <span class="switch-label">显示"指令查询"tab</span>
                   </label>
-                  <button
-                    class="btn btn-secondary ml-auto"
-                    style="padding: 6px 14px;"
-                    disabled={!canRefreshIndex}
-                    title={canRefreshIndex || indexRefreshing ? '' : '填写地址和 API Key 后可刷新'}
-                    onclick={handleRefreshIndex}
-                  >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
-                </div>
-                <div
-                  class="text-[12px] mb-4 px-3 py-2 rounded"
-                  style="background: var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
-                >
-                  {#if indexRefreshMsg}
-                    {indexRefreshMsg.text}
-                  {:else if !editKbBaseUrl.trim() || !editKbApiKey.trim()}
-                    填写地址和 API Key 后可刷新;未配置时联想只用发送历史。
-                  {:else if commandIndex.fetchedAt}
-                    上次更新 {formatFetchedAt(commandIndex.fetchedAt)} · {commandIndex.documents.filter((d) => d.cmd_status === 'done').length} 本手册 · {commandIndex.commands.length} 条指令
-                  {:else}
-                    尚未拉取过,点"刷新指令库"。
-                  {/if}
-                </div>
 
-                {#if commandIndex.documents.length}
-                  <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">参与联想的手册</div>
-                  <!-- 内联滚动框:手册多到三四十本时不撑开整个设置页,固定高度内滚动 -->
-                  <div class="flex flex-col gap-1.5 mb-4 overflow-y-auto px-1 py-1" style="max-height: 200px; border: 1px solid var(--border); border-radius: var(--radius);">
-                    {#each commandIndex.documents as d (d.id)}
-                      {@const ready = d.cmd_status === 'done'}
-                      {@const cached = cachedCmdCounts.get(d.id) ?? 0}
-                      {@const stale = ready && cached !== d.cmd_count}
-                      <!-- 行不能整个是 <label>:点末尾的刷新按钮会被 label 转成"点了 checkbox",
-                           连带切换勾选(与 CustomSelect 那处同一个 label 激活行为)。label 只包勾选+标题。 -->
-                      <div class="flex items-center gap-2">
-                        <label class="flex items-center gap-2 min-w-0 flex-1 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
-                          <input
-                            type="checkbox"
-                            class="h-4 w-4 rounded accent-[var(--primary)] shrink-0"
-                            disabled={!ready}
-                            checked={ready && !editDisabledDocIds.includes(d.id)}
-                            onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
-                          />
-                          <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
-                          <!-- 条数显示本地缓存的数;与服务器报的不一致时补出"服务器 N",提示这本该刷新 -->
-                          <span class="text-[12px] shrink-0" style="color: {stale ? 'var(--warning)' : 'var(--muted-foreground)'};">
-                            {#if ready}
-                              ({cached} 条指令{#if stale} · 服务器 {d.cmd_count}{/if})
-                            {:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
-                          </span>
-                        </label>
+                  <!-- 刷新状态行常驻(不进折叠节):单本刷新的按钮在"参与联想的手册"里,
+                       结果消息若留在知识库那节,那节一折叠就等于点了刷新没有任何反馈。 -->
+                  <div
+                    class="text-[12px] mb-2 px-3 py-2 rounded"
+                    style="background: var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
+                  >
+                    {#if indexRefreshMsg}
+                      {indexRefreshMsg.text}
+                    {:else if !editKbBaseUrl.trim() || !editKbApiKey.trim()}
+                      填写地址和 API Key 后可刷新;未配置时联想只用发送历史。
+                    {:else if commandIndex.fetchedAt}
+                      上次更新 {formatFetchedAt(commandIndex.fetchedAt)} · {commandIndex.documents.filter((d) => d.cmd_status === 'done').length} 本手册 · {commandIndex.commands.length} 条指令
+                    {:else}
+                      尚未拉取过,点"刷新指令库"。
+                    {/if}
+                  </div>
+
+                  <!-- 手册行:平铺与分组两种排布共用,故抽成 snippet(同一本手册属多个分组时会渲染多次,
+                       勾选绑 doc id 所以联动) -->
+                  {#snippet docRow(d: ManualDocument)}
+                    {@const ready = d.cmd_status === 'done'}
+                    {@const cached = cachedCmdCounts.get(d.id) ?? 0}
+                    {@const stale = ready && cached !== d.cmd_count}
+                    <!-- 行不能整个是 <label>:点末尾的刷新按钮会被 label 转成"点了 checkbox",
+                         连带切换勾选(与 CustomSelect 那处同一个 label 激活行为)。label 只包勾选+标题。 -->
+                    <div class="flex items-center gap-2">
+                      <label class="flex items-center gap-2 min-w-0 flex-1 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
+                        <input
+                          type="checkbox"
+                          class="h-4 w-4 rounded accent-[var(--primary)] shrink-0"
+                          disabled={!ready}
+                          checked={ready && !editDisabledDocIds.includes(d.id)}
+                          onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
+                        />
+                        <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
+                        <!-- 条数显示本地缓存的数;与服务器报的不一致时补出"服务器 N",提示这本该刷新 -->
+                        <span class="text-[12px] shrink-0" style="color: {stale ? 'var(--warning)' : 'var(--muted-foreground)'};">
+                          {#if ready}
+                            ({cached} 条指令{#if stale} · 服务器 {d.cmd_count}{/if})
+                          {:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
+                        </span>
+                      </label>
+                      <button
+                        type="button"
+                        class="btn btn-ghost shrink-0"
+                        style="padding: 2px 6px;"
+                        disabled={!canRefreshIndex || indexRefreshing || indexRefreshingDocId !== null}
+                        title={canRefreshIndex ? `只刷新《${d.title}》,其余手册沿用缓存` : '填写地址和 API Key 后可刷新'}
+                        onclick={() => handleRefreshDoc(d.id)}
+                      >
+                        {#if indexRefreshingDocId === d.id}<Loader2 size={13} class="animate-spin" />{:else}<RefreshCw size={13} />{/if}
+                      </button>
+                    </div>
+                  {/snippet}
+
+                  <!-- 分节折叠:四节全铺开约 800px,而内容区只有 400px。默认只展开一节,
+                       收起的节头部显示当前值摘要;仍然可以整页上下滚,只是不必一次面对全部设置项。 -->
+                  <div>
+                    <Collapsible title="知识库服务器" summary={kbSummary} bind:open={openKb}>
+                      <div class="flex items-center gap-3 mb-3">
+                        <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
+                        <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
+                        <!-- 测试连通性:与下方 API Key 行的显示/隐藏按钮同尺寸对齐;探活结果写进状态行 -->
                         <button
                           type="button"
                           class="btn btn-ghost shrink-0"
-                          style="padding: 2px 6px;"
-                          disabled={!canRefreshIndex || indexRefreshing || indexRefreshingDocId !== null}
-                          title={canRefreshIndex ? `只刷新《${d.title}》,其余手册沿用缓存` : '填写地址和 API Key 后可刷新'}
-                          onclick={() => handleRefreshDoc(d.id)}
-                        >
-                          {#if indexRefreshingDocId === d.id}<Loader2 size={13} class="animate-spin" />{:else}<RefreshCw size={13} />{/if}
+                          style="padding: 4px 8px;"
+                          disabled={!canRefreshIndex || indexTesting}
+                          title={canRefreshIndex ? '测试与知识库服务器的连通性' : '填写地址和 API Key 后可测试'}
+                          onclick={handleTestConnection}
+                        >{#if indexTesting}<Loader2 size={14} class="animate-spin" />{:else}<Plug size={14} />{/if}</button>
+                      </div>
+                      <div class="flex items-center gap-3 mb-3">
+                        <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
+                        <input type="text" class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}" style="padding: 6px 10px;" bind:value={editKbApiKey} placeholder="kb_…" spellcheck="false" autocomplete="off" />
+                        <button type="button" class="btn btn-ghost shrink-0" style="padding: 4px 8px;" title={showApiKey ? '隐藏' : '显示'} onclick={() => (showApiKey = !showApiKey)}>
+                          {#if showApiKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
                         </button>
                       </div>
-                    {/each}
+                      <div class="flex items-center gap-3">
+                        <label class="flex items-center gap-2 cursor-pointer select-none">
+                          <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]" bind:checked={editKbAutoRefresh} />
+                          <span class="text-[13px] text-[var(--foreground)]">启动时自动刷新</span>
+                        </label>
+                        <button
+                          class="btn btn-secondary ml-auto"
+                          style="padding: 6px 14px;"
+                          disabled={!canRefreshIndex}
+                          title={canRefreshIndex || indexRefreshing ? '' : '填写地址和 API Key 后可刷新'}
+                          onclick={handleRefreshIndex}
+                        >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
+                      </div>
+                    </Collapsible>
+
+                    {#if commandIndex.documents.length}
+                      <Collapsible title="参与联想的手册" summary={manualSummary} bind:open={openManuals}>
+                        <!-- 内联滚动框:手册多到三四十本时不撑开整个设置页,固定高度内滚动 -->
+                        <div
+                          class="flex flex-col gap-1.5 overflow-y-auto px-1 py-1"
+                          style="max-height: 200px; border: 1px solid var(--border); border-radius: var(--radius);"
+                        >
+                          {#if docGroups}
+                            {#each docGroups as g (g.name)}
+                              {@const st = groupCheck(g.docs)}
+                              {@const collapsed = collapsedGroups.includes(g.name)}
+                              <!-- 分组头同样不做成 <label>:点折叠按钮会连带切换该组勾选 -->
+                              <div class="flex items-center gap-2">
+                                <input
+                                  type="checkbox"
+                                  class="h-4 w-4 rounded accent-[var(--primary)] shrink-0"
+                                  disabled={st.ready === 0}
+                                  checked={st.ready > 0 && st.checked === st.ready}
+                                  indeterminate={st.checked > 0 && st.checked < st.ready}
+                                  title={st.ready === 0 ? '该分组没有已提取的手册' : '全选 / 全不选该分组'}
+                                  onchange={(e) => toggleGroup(g.docs, (e.target as HTMLInputElement).checked)}
+                                />
+                                <button
+                                  type="button"
+                                  class="flex items-center gap-1 min-w-0 flex-1 text-left"
+                                  style="color: var(--muted-foreground);"
+                                  title={collapsed ? '展开' : '折叠'}
+                                  onclick={() => toggleGroupCollapsed(g.name)}
+                                >
+                                  {#if collapsed}<ChevronRight size={13} />{:else}<ChevronDown size={13} />{/if}
+                                  <span class="text-[13px] font-medium truncate" style="color: var(--foreground);">{g.name}</span>
+                                  <span class="text-[12px] shrink-0">
+                                    {st.ready === 0 ? '无已提取手册' : `${st.checked}/${st.ready}`}
+                                  </span>
+                                </button>
+                              </div>
+                              {#if !collapsed}
+                                <!-- 组内手册缩进 + 左侧竖线,与分组头区分 -->
+                                <div class="flex flex-col gap-1.5 ml-1.5 pl-2" style="border-left: 1px solid var(--border-subtle);">
+                                  {#each g.docs as d (d.id)}
+                                    {@render docRow(d)}
+                                  {/each}
+                                </div>
+                              {/if}
+                            {/each}
+                          {:else}
+                            {#each commandIndex.documents as d (d.id)}
+                              {@render docRow(d)}
+                            {/each}
+                          {/if}
+                        </div>
+                      </Collapsible>
+                    {/if}
+
+                    <Collapsible title="联想行为" summary={behaviorSummary} bind:open={openBehavior}>
+                      <!-- 弹出时机:模组指令几乎全以 AT+ 开头,按输入字符数算门槛时
+                           "AT""AT+"就命中整本手册,而它们是打任何指令的必经之路 -->
+                      <label class="switch mb-3">
+                        <input type="checkbox" bind:checked={editSuggestIgnoreAtPrefix} />
+                        <span class="switch-track"></span>
+                        <span class="switch-label">算长度时忽略 AT+ 前缀</span>
+                      </label>
+                      <div class="flex items-center gap-3 mb-2">
+                        <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">最少输入</span>
+                        <input
+                          type="range" min="1" max="6" step="1"
+                          class="flex-1 accent-[var(--primary)]"
+                          value={editSuggestMinChars}
+                          oninput={(e) => (editSuggestMinChars = Number((e.target as HTMLInputElement).value))}
+                        />
+                        <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMinChars} 字符</span>
+                      </div>
+                      <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
+                        {#if editSuggestIgnoreAtPrefix}
+                          {@const sample = 'AT+' + 'MIPLCREATE'.slice(0, editSuggestMinChars)}
+                          去掉 AT/AT+/AT&amp; 前缀后够 {editSuggestMinChars} 个字符才弹:<code>{sample}</code> 弹,
+                          <code>{sample.slice(0, -1)}</code> 不弹。
+                        {:else}
+                          按输入的字符数算:输满 {editSuggestMinChars} 个字符就弹(<code>AT</code>、<code>AT+</code> 也算)。
+                        {/if}
+                      </div>
+
+                      <div class="flex items-center gap-3 mb-3">
+                        <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">手册指令</span>
+                        <input
+                          type="range" min="1" max="50" step="1"
+                          class="flex-1 accent-[var(--primary)]"
+                          value={editSuggestMaxManual}
+                          oninput={(e) => (editSuggestMaxManual = Number((e.target as HTMLInputElement).value))}
+                        />
+                        <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMaxManual} 条</span>
+                      </div>
+                      <div class="flex items-center gap-3 mb-2">
+                        <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">发送历史</span>
+                        <input
+                          type="range" min="0" max="30" step="1"
+                          class="flex-1 accent-[var(--primary)]"
+                          value={editSuggestMaxHistory}
+                          oninput={(e) => (editSuggestMaxHistory = Number((e.target as HTMLInputElement).value))}
+                        />
+                        <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMaxHistory} 条</span>
+                      </div>
+                      <div class="text-[12px] text-[var(--muted-foreground)]">
+                        两类各自限量,历史再多也挤不掉手册卡片;被挡住的条数会显示在弹层顶部。
+                        历史上限设 0 = 联想里不出历史;空输入按 ↑ 翻历史不受此限。
+                      </div>
+                    </Collapsible>
+
+                    <Collapsible title="发送历史" summary={historySummary} bind:open={openHistory}>
+                      <div class="flex items-center gap-3 mb-2">
+                        <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">留存上限</span>
+                        <input
+                          type="range" min="50" max="1000" step="50"
+                          class="flex-1 accent-[var(--primary)]"
+                          value={editHistoryLimit}
+                          oninput={(e) => (editHistoryLimit = Number((e.target as HTMLInputElement).value))}
+                        />
+                        <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editHistoryLimit} 条</span>
+                      </div>
+                      <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                        输入框手动发过的内容留这么多条(超出的挤掉最旧的),存在 <code>send-history.json</code>。
+                        调小后保存,多出来的旧记录当场就裁掉。<b>不是</b>联想里显示几条——那个在"联想行为"里。
+                      </div>
+                      <div class="flex items-center gap-3">
+                        <span class="text-[12px] text-[var(--muted-foreground)]">已记录 {commandIndex.history.length} 条</span>
+                        <button class="btn btn-secondary ml-auto" style="padding: 6px 14px;" disabled={commandIndex.history.length === 0} onclick={handleClearHistory}>{historyCleared ? '已清空' : '清空'}</button>
+                      </div>
+                    </Collapsible>
                   </div>
                 {/if}
-
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">发送历史</div>
-                <div class="flex items-center gap-3 mb-4">
-                  <span class="text-[12px] text-[var(--muted-foreground)]">已记录 {commandIndex.history.length} 条(上限 500,最近发送优先联想)</span>
-                  <button class="btn btn-secondary ml-auto" style="padding: 6px 14px;" disabled={commandIndex.history.length === 0} onclick={handleClearHistory}>{historyCleared ? '已清空' : '清空'}</button>
-                </div>
-              {/if}
+              </div>
             {:else if extModule === 'mcp'}
               <!-- MCP 服务子页 -->
               <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>

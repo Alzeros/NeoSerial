@@ -842,6 +842,8 @@ pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSet
     // 后台运行开关即时生效(sync_visibility 自己会取 settings 锁,先放锁);
     // 并让所有窗口刷新 settings 快照,免得窗口下次整份回写时把 agent 改的字段冲掉
     crate::tray::sync_visibility(&shared.app_handle);
+    // 发送历史上限被 agent 调小了也当场裁掉多余的(自带落盘与广播),与 GUI 两条保存路径一致
+    crate::commands::command_index::enforce_history_limit(&shared.app_handle, &state);
     let _ = shared.app_handle.emit("settings-changed", ());
     Ok(SaveSettingsResp { ok: true })
 }

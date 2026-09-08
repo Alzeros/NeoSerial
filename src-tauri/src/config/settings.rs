@@ -289,6 +289,10 @@ pub struct CommandIndexSettings {
     /// 历史候选上限(只管输入时的联想;空输入按 ↑ 翻历史不受此限)。默认 10
     #[serde(default = "default_suggest_max_history")]
     pub suggest_max_history: u32,
+    /// 发送历史留存条数上限(send-history.json)。调小后多余的最旧记录在保存设置时就被裁掉。
+    /// 注意与 suggest_max_history 的区别:那个管"联想里显示几条",这个管"总共留几条"。
+    #[serde(default = "default_history_limit")]
+    pub history_limit: u32,
 }
 
 fn default_true() -> bool {
@@ -307,6 +311,10 @@ fn default_suggest_max_history() -> u32 {
     10
 }
 
+fn default_history_limit() -> u32 {
+    crate::config::send_history::SEND_HISTORY_DEFAULT_MAX as u32
+}
+
 impl Default for CommandIndexSettings {
     fn default() -> Self {
         CommandIndexSettings {
@@ -319,6 +327,7 @@ impl Default for CommandIndexSettings {
             suggest_ignore_at_prefix: default_true(),
             suggest_max_manual: default_suggest_max_manual(),
             suggest_max_history: default_suggest_max_history(),
+            history_limit: default_history_limit(),
         }
     }
 }
@@ -907,10 +916,12 @@ mod tests {
         ci.remove("suggest_ignore_at_prefix");
         ci.remove("suggest_max_manual");
         ci.remove("suggest_max_history");
+        ci.remove("history_limit");
         let s: Settings = serde_json::from_value(v).unwrap();
         assert_eq!(s.command_index.suggest_min_chars, 2);
         assert!(s.command_index.suggest_ignore_at_prefix);
         assert_eq!(s.command_index.suggest_max_manual, 20);
         assert_eq!(s.command_index.suggest_max_history, 10);
+        assert_eq!(s.command_index.history_limit, 200);
     }
 }

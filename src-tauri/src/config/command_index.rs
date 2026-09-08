@@ -27,6 +27,11 @@ pub struct ManualDocument {
     pub category_id: i64,
     #[serde(default)]
     pub updated_at: String,
+    /// 所属自定义分组名列表(管理员在知识库 Web 端按手册归的组)。无分组 → 空;
+    /// 旧缓存里没这个键也是空,设置页据此退回平铺显示。
+    /// 接口还带归组键 manual_name,我们直接用这里的分组名,不保留。
+    #[serde(default)]
+    pub group_names: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -206,6 +211,7 @@ mod tests {
             cmd_count: 0,
             category_id: 0,
             updated_at: String::new(),
+            group_names: vec![],
         }
     }
 
@@ -259,6 +265,20 @@ mod tests {
         assert_eq!(minimal.name, "");
         assert!(minimal.parameters.is_empty());
         assert_eq!(minimal.page_no, None);
+    }
+
+    /// 手册列表接口(v2)的分组字段能读到;不认识的键(manual_name)忽略;
+    /// 旧缓存/旧接口没有 group_names 时取空表(设置页据此退回平铺)。
+    #[test]
+    fn test_manual_document_parses_group_names() {
+        let json = r#"{"id":27,"title":"HTTP-HTTPS用户手册","filename":"a.pdf","status":"done",
+            "cmd_status":"done","cmd_count":9,"category_id":3,"updated_at":"2026-09-03T09:22:58",
+            "manual_name":"HTTP-HTTPS用户手册","group_names":["网络类手册","常用"]}"#;
+        let d: ManualDocument = serde_json::from_str(json).unwrap();
+        assert_eq!(d.group_names, vec!["网络类手册", "常用"]);
+
+        let old: ManualDocument = serde_json::from_str(r#"{"id":1,"title":"A"}"#).unwrap();
+        assert!(old.group_names.is_empty(), "缺 group_names 取空表,不是解析失败");
     }
 
     #[test]

@@ -1,10 +1,12 @@
-//! 输入框发送历史:最近发送在前、去重、上限 500,落在 %APPDATA%/neoserial/send-history.json。
+//! 输入框发送历史:最近发送在前、去重、条数上限来自设置(command_index.history_limit),
+//! 落在 %APPDATA%/neoserial/send-history.json。
 //! 后端持有(AppState.send_history)并广播变化,多窗口同时 push 不会互相覆盖。
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-pub const SEND_HISTORY_MAX: usize = 500;
+/// 上限的默认值(设置项缺失时用)。改上限见 settings.command_index.history_limit。
+pub const SEND_HISTORY_DEFAULT_MAX: usize = 200;
 
 #[derive(Debug, Default)]
 pub struct SendHistory {
@@ -40,8 +42,9 @@ impl SendHistory {
     }
 
     /// 记一条:去首尾空格,空串不记;已有同文本挪到最前;超上限截掉最旧。
+    /// `max` 是设置里的条数上限,兜底为 1——上限传 0 会把刚记下的这条也截掉。
     /// 返回列表是否有变化(已在最前的重复发送 = 无变化,调用方据此跳过落盘与广播)。
-    pub fn push(&mut self, text: &str) -> bool {
+    pub fn push(&mut self, text: &str, max: usize) -> bool {
         let t = text.trim();
         if t.is_empty() {
             return false;
@@ -51,7 +54,18 @@ impl SendHistory {
         }
         self.items.retain(|s| s != t);
         self.items.insert(0, t.to_string());
-        self.items.truncate(SEND_HISTORY_MAX);
+        self.items.truncate(max.max(1));
+        true
+    }
+
+    /// 上限被调小后裁掉超出的(留最新的)。返回是否真的裁掉了东西,
+    /// 调用方据此决定要不要落盘与广播。
+    pub fn trim_to(&mut self, max: usize) -> bool {
+        let cap = max.max(1);
+        if self.items.len() <= cap {
+            return false;
+        }
+        self.items.truncate(cap);
         true
     }
 
@@ -88,35 +102,60 @@ mod tests {
         dir.join("send-history.json")
     }
 
+    const MAX: usize = SEND_HISTORY_DEFAULT_MAX;
+
     #[test]
     fn test_push_trims_dedups_and_moves_to_front() {
         let mut h = SendHistory::default();
-        assert!(h.push("AT"));
-        assert!(h.push("AT+CSQ"));
-        assert!(h.push("  AT  "), "去空格后与已有项相同,应挪到最前并算作变化");
+        assert!(h.push("AT", MAX));
+        assert!(h.push("AT+CSQ", MAX));
+        assert!(h.push("  AT  ", MAX), "去空格后与已有项相同,应挪到最前并算作变化");
         assert_eq!(h.items(), &["AT".to_string(), "AT+CSQ".to_string()]);
-        assert!(!h.push("AT"), "已在最前的重复发送 = 无变化");
-        assert!(!h.push("   "), "空串不记");
+        assert!(!h.push("AT", MAX), "已在最前的重复发送 = 无变化");
+        assert!(!h.push("   ", MAX), "空串不记");
         assert_eq!(h.items().len(), 2);
     }
 
     #[test]
     fn test_push_caps_at_max_keeping_newest() {
         let mut h = SendHistory::default();
-        for i in 0..(SEND_HISTORY_MAX + 20) {
-            h.push(&format!("AT+X={}", i));
+        for i in 0..(MAX + 20) {
+            h.push(&format!("AT+X={}", i), MAX);
         }
-        assert_eq!(h.items().len(), SEND_HISTORY_MAX);
-        assert_eq!(h.items()[0], format!("AT+X={}", SEND_HISTORY_MAX + 19), "最新在前");
+        assert_eq!(h.items().len(), MAX);
+        assert_eq!(h.items()[0], format!("AT+X={}", MAX + 19), "最新在前");
         assert!(!h.items().contains(&"AT+X=0".to_string()), "最旧的被挤掉");
+
+        // 上限来自设置,可以是任意值;传 0 兜底成 1,不能把刚记下的那条也截掉
+        let mut small = SendHistory::default();
+        for i in 0..5 {
+            small.push(&format!("AT+Y={}", i), 2);
+        }
+        assert_eq!(small.items(), &["AT+Y=4".to_string(), "AT+Y=3".to_string()]);
+        assert!(small.push("AT+Z", 0));
+        assert_eq!(small.items(), &["AT+Z".to_string()]);
+    }
+
+    #[test]
+    fn test_trim_to_only_reports_change_when_it_cuts() {
+        let mut h = SendHistory::default();
+        for i in 0..5 {
+            h.push(&format!("AT+X={}", i), MAX);
+        }
+        assert!(!h.trim_to(5), "正好等于上限,没裁掉东西");
+        assert!(!h.trim_to(9), "上限比现有条数大,不动");
+        assert!(h.trim_to(2), "上限调小,裁掉 3 条");
+        assert_eq!(h.items(), &["AT+X=4".to_string(), "AT+X=3".to_string()], "留最新的");
+        assert!(h.trim_to(0), "上限 0 兜底成 1");
+        assert_eq!(h.items().len(), 1);
     }
 
     #[test]
     fn test_save_load_roundtrip_overwrite_and_clear() {
         let path = temp_path("roundtrip");
         let mut h = SendHistory::default();
-        h.push("AT+CGDCONT=1,\"IP\",\"cmnet\"");
-        h.push("AT+CSQ");
+        h.push("AT+CGDCONT=1,\"IP\",\"cmnet\"", MAX);
+        h.push("AT+CSQ", MAX);
         h.save_to(&path).unwrap();
         assert!(!path.with_extension("json.tmp").exists());
         let loaded = SendHistory::load_from(&path);
@@ -125,7 +164,7 @@ mod tests {
         // 覆盖已有文件 + 残留 .tmp 的生产路径
         fs::write(path.with_extension("json.tmp"), b"stale").unwrap();
         let mut loaded = loaded;
-        loaded.push("AT");
+        loaded.push("AT", MAX);
         loaded.save_to(&path).unwrap();
         assert!(!path.with_extension("json.tmp").exists());
         assert_eq!(SendHistory::load_from(&path).items()[0], "AT");
