@@ -99,6 +99,14 @@ export interface CommandIndexSettings {
   auto_refresh: boolean;
   /** 联想总开关 */
   suggest_enabled: boolean;
+  /** 弹出门槛:输入(去首尾空格)至少这么多字符才给候选 */
+  suggest_min_chars: number;
+  /** 算门槛时忽略 AT / AT+ / AT& 前缀(模组指令几乎全以 AT+ 开头) */
+  suggest_ignore_at_prefix: boolean;
+  /** 手册候选上限 */
+  suggest_max_manual: number;
+  /** 历史候选上限(只管输入时的联想;空输入按 ↑ 翻历史不受此限) */
+  suggest_max_history: number;
 }
 
 /** 递归可选:patchSettings 的入参是 Settings 的任意子集(嵌套对象按键合并,数组整体替换)。 */

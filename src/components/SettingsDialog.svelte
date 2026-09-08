@@ -5,6 +5,7 @@
   import { defaultCustomTheme } from '$lib/customTheme';
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
+  import { defaultSuggestLimits } from '$lib/suggest';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings, SettingsPatch } from '$lib/types';
@@ -76,6 +77,11 @@
   let editKbApiKey = $state('');
   let editKbAutoRefresh = $state(true);
   let editDisabledDocIds = $state<number[]>([]);
+  // 联想行为:弹出门槛(是否忽略 AT 前缀 + 最少字符数)与两类候选各自的上限
+  let editSuggestMinChars = $state(defaultSuggestLimits.minChars);
+  let editSuggestIgnoreAtPrefix = $state(defaultSuggestLimits.ignoreAtPrefix);
+  let editSuggestMaxManual = $state(defaultSuggestLimits.maxManual);
+  let editSuggestMaxHistory = $state(defaultSuggestLimits.maxHistory);
   let showApiKey = $state(false);
   let indexRefreshing = $state(false);
   // 正在单本刷新的手册 id(null=没有)。后端 REFRESHING 只允许一个写入者,所以一次只转一行
@@ -104,6 +110,7 @@
     baudRates: number[]; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
     kbBaseUrl: string; kbApiKey: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
+    suggestMinChars: number; suggestIgnoreAtPrefix: boolean; suggestMaxManual: number; suggestMaxHistory: number;
   };
   function currentEdits(): EditValues {
     // 波特率:内置默认 3 项保留 + 用户自定义(去重、排序)
@@ -118,6 +125,8 @@
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
       kbBaseUrl: editKbBaseUrl.trim(), kbApiKey: editKbApiKey.trim(), disabledDocIds: [...editDisabledDocIds],
       kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
+      suggestMinChars: editSuggestMinChars, suggestIgnoreAtPrefix: editSuggestIgnoreAtPrefix,
+      suggestMaxManual: editSuggestMaxManual, suggestMaxHistory: editSuggestMaxHistory,
     };
   }
   function editsSnapshot(): string {
@@ -160,6 +169,10 @@
     editKbApiKey = ci?.api_key ?? '';
     editKbAutoRefresh = ci?.auto_refresh ?? true;
     editDisabledDocIds = [...(ci?.disabled_doc_ids ?? [])];
+    editSuggestMinChars = ci?.suggest_min_chars ?? defaultSuggestLimits.minChars;
+    editSuggestIgnoreAtPrefix = ci?.suggest_ignore_at_prefix ?? defaultSuggestLimits.ignoreAtPrefix;
+    editSuggestMaxManual = ci?.suggest_max_manual ?? defaultSuggestLimits.maxManual;
+    editSuggestMaxHistory = ci?.suggest_max_history ?? defaultSuggestLimits.maxHistory;
     showApiKey = false;
     indexRefreshMsg = null;
     historyCleared = false;
@@ -285,6 +298,10 @@
     if (changed('disabledDocIds')) ci.disabled_doc_ids = cur.disabledDocIds;
     if (changed('kbAutoRefresh')) ci.auto_refresh = cur.kbAutoRefresh;
     if (changed('suggestEnabled')) ci.suggest_enabled = cur.suggestEnabled;
+    if (changed('suggestMinChars')) ci.suggest_min_chars = cur.suggestMinChars;
+    if (changed('suggestIgnoreAtPrefix')) ci.suggest_ignore_at_prefix = cur.suggestIgnoreAtPrefix;
+    if (changed('suggestMaxManual')) ci.suggest_max_manual = cur.suggestMaxManual;
+    if (changed('suggestMaxHistory')) ci.suggest_max_history = cur.suggestMaxHistory;
     if (Object.keys(ci).length) patch.command_index = ci;
     return patch;
   }
@@ -855,6 +872,61 @@
                   <span class="switch-track"></span>
                   <span class="switch-label">显示"指令查询"tab</span>
                 </label>
+
+                <!-- 弹出时机与条数:模组指令几乎全以 AT+ 开头,按输入字符数算门槛时
+                     "AT""AT+"就命中整本手册,而它们是打任何指令的必经之路 -->
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">弹出时机</div>
+                <label class="switch mb-3">
+                  <input type="checkbox" bind:checked={editSuggestIgnoreAtPrefix} />
+                  <span class="switch-track"></span>
+                  <span class="switch-label">算长度时忽略 AT+ 前缀</span>
+                </label>
+                <div class="flex items-center gap-3 mb-2">
+                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">最少输入</span>
+                  <input
+                    type="range" min="1" max="6" step="1"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editSuggestMinChars}
+                    oninput={(e) => (editSuggestMinChars = Number((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMinChars} 字符</span>
+                </div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
+                  {#if editSuggestIgnoreAtPrefix}
+                    {@const sample = 'AT+' + 'MIPLCREATE'.slice(0, editSuggestMinChars)}
+                    去掉 AT/AT+/AT&amp; 前缀后够 {editSuggestMinChars} 个字符才弹:<code>{sample}</code> 弹,
+                    <code>{sample.slice(0, -1)}</code> 不弹。
+                  {:else}
+                    按输入的字符数算:输满 {editSuggestMinChars} 个字符就弹(<code>AT</code>、<code>AT+</code> 也算)。
+                  {/if}
+                </div>
+
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">候选条数上限</div>
+                <div class="flex items-center gap-3 mb-3">
+                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">手册指令</span>
+                  <input
+                    type="range" min="1" max="50" step="1"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editSuggestMaxManual}
+                    oninput={(e) => (editSuggestMaxManual = Number((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMaxManual} 条</span>
+                </div>
+                <div class="flex items-center gap-3 mb-2">
+                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">发送历史</span>
+                  <input
+                    type="range" min="0" max="30" step="1"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editSuggestMaxHistory}
+                    oninput={(e) => (editSuggestMaxHistory = Number((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editSuggestMaxHistory} 条</span>
+                </div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
+                  两类各自限量,历史再多也挤不掉手册卡片;被挡住的条数会显示在弹层顶部。
+                  历史上限设 0 = 联想里不出历史;空输入按 ↑ 翻历史不受此限。
+                </div>
+
                 <!-- 启用后才展开:知识库接入 + 手册勾选 + 发送历史 -->
                 <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">知识库服务器</div>
                 <div class="flex items-center gap-3 mb-3">

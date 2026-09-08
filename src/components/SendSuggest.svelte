@@ -4,11 +4,13 @@
   import { commandIndex } from '$lib/commandIndex';
   import {
     buildManualEntries,
+    defaultSuggestLimits,
     displayName,
     docTitle,
     matchSuggestions,
     shortTitle,
     type Suggestion,
+    type SuggestLimits,
   } from '$lib/suggest';
 
   let {
@@ -39,14 +41,34 @@
   const disabledDocIds = $derived(cachedSettings.value?.command_index?.disabled_doc_ids ?? []);
   const manualEntries = $derived(buildManualEntries(commandIndex.documents, commandIndex.commands, disabledDocIds));
 
-  const items = $derived.by((): Suggestion[] => {
-    if (!enabled || hexMode) return [];
+  // 联想行为(门槛与两类上限)取自设置,缺字段回落到与后端一致的默认值
+  const limits = $derived.by((): SuggestLimits => {
+    const ci = cachedSettings.value?.command_index;
+    return {
+      minChars: ci?.suggest_min_chars ?? defaultSuggestLimits.minChars,
+      ignoreAtPrefix: ci?.suggest_ignore_at_prefix ?? defaultSuggestLimits.ignoreAtPrefix,
+      maxManual: ci?.suggest_max_manual ?? defaultSuggestLimits.maxManual,
+      maxHistory: ci?.suggest_max_history ?? defaultSuggestLimits.maxHistory,
+    };
+  });
+
+  // 空输入按 ↑ 的纯历史列表上限。这是"显式翻历史",不是联想过滤,不受 maxHistory 限制
+  // (那个设成 5 的话这里就只能翻 5 条,而历史存了 500 条);列表本身可滚。
+  const FORCED_HISTORY_MAX = 50;
+
+  const matched = $derived.by(() => {
+    if (!enabled || hexMode) return { items: [] as Suggestion[], hidden: 0 };
     const q = query.trim();
     if (forcedHistory && q.length === 0) {
-      return commandIndex.history.slice(0, 50).map((text) => ({ kind: 'history' as const, text }));
+      const all = commandIndex.history;
+      return {
+        items: all.slice(0, FORCED_HISTORY_MAX).map((text) => ({ kind: 'history' as const, text })),
+        hidden: Math.max(0, all.length - FORCED_HISTORY_MAX),
+      };
     }
-    return matchSuggestions(q, manualEntries, commandIndex.history);
+    return matchSuggestions(q, manualEntries, commandIndex.history, limits);
   });
+  const items = $derived(matched.items);
 
   // 列表自下而上展示:rank 0(最佳匹配/最近发送的历史)贴着输入框渲染在最下,↑ 从输入框
   // 进入后向上走。内部逻辑(高亮/预览/Tab 兜底)全用 rank 下标,只在渲染这一处反转。
@@ -190,6 +212,14 @@
   >
     <!-- 候选列表:弹层只放列表,详情在右栏 CommandDetail。max-height 放内层使它成为真正的
          滚动容器(外层 overflow:hidden 只管圆角裁剪,不滚);role="listbox" 放这里使 option 行是其直接子元素 -->
+    <!-- 被上限挡掉的条数:列表是反转的(最佳候选贴输入框在最下),被挡掉的都是最差那几条,
+         所以提示放在弹层最上方。它不是候选项(不进 items、键盘选不到、点不了)。 -->
+    {#if matched.hidden > 0}
+      <div
+        class="px-3 py-1 text-[11px] border-b select-none"
+        style="color: var(--muted-foreground); border-color: var(--border-subtle);"
+      >还有 {matched.hidden} 条,继续输入以收窄</div>
+    {/if}
     <div bind:this={listEl} class="overflow-y-auto py-1" role="listbox" tabindex="-1" style="min-width: 0; max-height: 320px;">
       {#each rows as { item, i } (item.kind === 'history' ? 'h:' + item.text : 'm:' + item.entry.key)}
         {@const text = item.kind === 'history' ? item.text : item.entry.key}

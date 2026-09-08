@@ -56,19 +56,53 @@ function prefixHit(upperText: string, upperQuery: string): boolean {
   return !upperQuery.startsWith('AT') && stripAtPrefix(upperText).startsWith(upperQuery);
 }
 
-/** 历史只占前 10 席,多出的排在手册候选之后——常用指令发得越多,不该越难看到它的手册卡。 */
-const HISTORY_FIRST_MAX = 10;
+/** 联想行为(设置 → 指令联想,持久化在 settings.command_index)。 */
+export interface SuggestLimits {
+  /** 输入(去首尾空格)至少这么多字符才给候选 */
+  minChars: number;
+  /** 算门槛时忽略 AT / AT+ / AT& 前缀 */
+  ignoreAtPrefix: boolean;
+  /** 手册候选上限 */
+  maxManual: number;
+  /** 历史候选上限 */
+  maxHistory: number;
+}
 
-/** 匹配 + 排序。query 去首尾空格后不足 2 字符返回空。
- *  ① 历史前缀,最多占前 HISTORY_FIRST_MAX 席(按传入顺序即最近在前;排除与当前输入相同的、与手册指令同名的——后者手册那条有详情)
+/** 与后端 CommandIndexSettings 的 default_suggest_* 一致。 */
+export const defaultSuggestLimits: SuggestLimits = {
+  minChars: 2,
+  ignoreAtPrefix: true,
+  maxManual: 20,
+  maxHistory: 10,
+};
+
+export interface MatchResult {
+  items: Suggestion[];
+  /** 命中了但被上限挡住没显示的条数,>0 时弹层顶部提示"还有 N 条" */
+  hidden: number;
+}
+
+/** 匹配 + 排序。
+ *  门槛:query 去首尾空格(ignoreAtPrefix 时再去掉 AT/AT+/AT& 前缀)后不足 minChars 字符返回空。
+ *  忽略 AT 前缀是默认行为:模组指令几乎全以 AT+ 开头,"AT""AT+"按原样算就是 2、3 个字符,
+ *  却命中整本手册,而它们是打任何一条指令的必经之路。
+ *  ① 历史前缀(按传入顺序即最近在前;排除与当前输入相同的、与手册指令同名的——后者手册那条有详情),取前 maxHistory 条
  *  ② 手册指令前缀;输入不以 AT 开头时也用去前缀的指令体匹配(CSQ→AT+CSQ)
  *  ③ 手册名称包含(含 alsoIn 的名称),大小写无关
- *  ④ ①里超出 10 席的剩余历史,补在手册候选之后
- *  同一条只出现一次,总量截到 limit。 */
-export function matchSuggestions(query: string, entries: ManualEntry[], history: string[], limit = 50): Suggestion[] {
+ *  ②③ 合起来取前 maxManual 条。两类各自限量,历史再多也挤不掉手册卡片。
+ *  同一条只出现一次。 */
+export function matchSuggestions(
+  query: string,
+  entries: ManualEntry[],
+  history: string[],
+  limits: SuggestLimits = defaultSuggestLimits,
+): MatchResult {
+  const empty: MatchResult = { items: [], hidden: 0 };
   const q = query.trim();
   const Q = q.toUpperCase();
-  if (Q.length < 2) return [];
+  const minChars = Math.max(1, Math.floor(limits.minChars));
+  const gauged = limits.ignoreAtPrefix ? stripAtPrefix(Q) : Q;
+  if (gauged.length < minChars) return empty;
   const manualKeys = new Set(entries.map((e) => e.key));
   const historyHits: Suggestion[] = [];
   for (const h of history) {
@@ -91,8 +125,14 @@ export function matchSuggestions(query: string, entries: ManualEntry[], history:
       manualHits.push({ kind: 'manual', entry: e });
     }
   }
-  const out = [...historyHits.slice(0, HISTORY_FIRST_MAX), ...manualHits, ...historyHits.slice(HISTORY_FIRST_MAX)];
-  return out.slice(0, limit);
+  const maxHistory = Math.max(0, Math.floor(limits.maxHistory));
+  const maxManual = Math.max(0, Math.floor(limits.maxManual));
+  const shownHistory = historyHits.slice(0, maxHistory);
+  const shownManual = manualHits.slice(0, maxManual);
+  return {
+    items: [...shownHistory, ...shownManual],
+    hidden: historyHits.length - shownHistory.length + (manualHits.length - shownManual.length),
+  };
 }
 
 /** 模糊搜索(指令查询 tab 用,与输入框联想的精确前缀匹配分开):query 拆空格成多 token,

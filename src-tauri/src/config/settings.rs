@@ -275,10 +275,36 @@ pub struct CommandIndexSettings {
     /// 联想总开关
     #[serde(default = "default_true")]
     pub suggest_enabled: bool,
+    /// 弹出门槛:输入(去首尾空格)至少这么多字符才给候选。默认 2
+    #[serde(default = "default_suggest_min_chars")]
+    pub suggest_min_chars: u32,
+    /// 算门槛时忽略 AT / AT+ / AT& 前缀。默认开:模组指令几乎全以 AT+ 开头,
+    /// 按原样算的话"AT""AT+"这两步就命中整本手册,而它们是打任何指令的必经之路。
+    /// 关掉即回到"按输入的字符数算"。
+    #[serde(default = "default_true")]
+    pub suggest_ignore_at_prefix: bool,
+    /// 手册候选上限。默认 20
+    #[serde(default = "default_suggest_max_manual")]
+    pub suggest_max_manual: u32,
+    /// 历史候选上限(只管输入时的联想;空输入按 ↑ 翻历史不受此限)。默认 10
+    #[serde(default = "default_suggest_max_history")]
+    pub suggest_max_history: u32,
 }
 
 fn default_true() -> bool {
     true
+}
+
+fn default_suggest_min_chars() -> u32 {
+    2
+}
+
+fn default_suggest_max_manual() -> u32 {
+    20
+}
+
+fn default_suggest_max_history() -> u32 {
+    10
 }
 
 impl Default for CommandIndexSettings {
@@ -289,6 +315,10 @@ impl Default for CommandIndexSettings {
             disabled_doc_ids: Vec::new(),
             auto_refresh: default_true(),
             suggest_enabled: default_true(),
+            suggest_min_chars: default_suggest_min_chars(),
+            suggest_ignore_at_prefix: default_true(),
+            suggest_max_manual: default_suggest_max_manual(),
+            suggest_max_history: default_suggest_max_history(),
         }
     }
 }
@@ -866,5 +896,21 @@ mod tests {
         assert_eq!(s.command_index.disabled_doc_ids, vec![3]);
         assert!(s.command_index.auto_refresh, "缺 auto_refresh 键应为 true");
         assert!(s.command_index.suggest_enabled);
+    }
+
+    /// 旧配置没有联想行为四项 → 取默认(2 / 忽略 AT 前缀 / 20 / 10),不是数值默认的 0。
+    #[test]
+    fn test_missing_suggest_behavior_takes_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        let ci = v["command_index"].as_object_mut().unwrap();
+        ci.remove("suggest_min_chars");
+        ci.remove("suggest_ignore_at_prefix");
+        ci.remove("suggest_max_manual");
+        ci.remove("suggest_max_history");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert_eq!(s.command_index.suggest_min_chars, 2);
+        assert!(s.command_index.suggest_ignore_at_prefix);
+        assert_eq!(s.command_index.suggest_max_manual, 20);
+        assert_eq!(s.command_index.suggest_max_history, 10);
     }
 }
