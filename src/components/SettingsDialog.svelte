@@ -583,7 +583,12 @@
               class="block w-full text-left px-4 py-2 text-[13px] transition-colors {activeSection === s.key
                 ? 'bg-[var(--border-subtle)] text-[var(--primary)] font-medium border-l-2 border-[var(--primary)]'
                 : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] border-l-2 border-transparent'}"
-              onclick={() => (activeSection = s.key)}
+              onclick={() => {
+                activeSection = s.key;
+                // 点左侧导航一律回到该页的顶层:扩展页停在上次进过的子页(指令联想/MCP…)时,
+                // 再点"扩展"应该回到模块列表,而不是原地不动
+                extModule = null;
+              }}
             >{s.label}</button>
           {/each}
         </nav>
@@ -942,29 +947,36 @@
                 <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
                   <span>‹</span><span>返回扩展</span>
                 </button>
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                  发送输入框输入时弹出候选指令:来自知识库手册索引(带语法/参数/示例)与发送历史。↑↓ 选,Tab/回车填入,Esc 收起。
+                <!-- 标题与总开关同一行:开关管的是整页,不必再写一遍"启用输入联想"
+                     (label 只包 track,标题不是它的 label;可点区域交给 aria-label/title) -->
+                <div class="flex items-center gap-3 mb-1">
+                  <div class="text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
+                  <label class="switch ml-auto" title={editSuggestEnabled ? '关闭输入联想' : '启用输入联想'}>
+                    <input type="checkbox" aria-label="启用输入联想" bind:checked={editSuggestEnabled} />
+                    <span class="switch-track"></span>
+                  </label>
                 </div>
-                <label class="switch mb-3">
-                  <input type="checkbox" bind:checked={editSuggestEnabled} />
-                  <span class="switch-track"></span>
-                  <span class="switch-label">启用输入联想</span>
-                </label>
+                <div class="text-[12px] text-[var(--muted-foreground)]">
+                  输入时弹出候选:知识库手册索引(带语法/参数/示例)与发送历史。
+                </div>
 
                 {#if editSuggestEnabled}
-                  <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
-                  <label class="switch mb-3">
+                  <!-- tab 显隐是"启用"的从属项,但层级靠"总开关关掉它就不渲染"表达就够了:
+                       缩进 + 淡字反而跟谁都不对齐、比谁都淡,像掉在那儿的注释。
+                       switch-row 让轨道与总开关的轨道右对齐成一列(否则一左一右像两套东西)。 -->
+                  <label class="switch switch-row mt-2">
                     <input type="checkbox" bind:checked={editShowSuggestTab} />
                     <span class="switch-track"></span>
                     <span class="switch-label">显示"指令查询"tab</span>
                   </label>
 
                   <!-- 刷新状态行常驻(不进折叠节):单本刷新的按钮在"参与联想的手册"里,
-                       结果消息若留在知识库那节,那节一折叠就等于点了刷新没有任何反馈。 -->
+                       结果消息若留在知识库那节,那节一折叠就等于点了刷新没有任何反馈。
+                       纯文字不加底色:四节行都没有底色,少一种容器语言更整。
+                       上边框顺带给页顶(标题/开关)收口,不必再套一层 div。 -->
                   <div
-                    class="text-[12px] mb-2 px-3 py-2 rounded"
-                    style="background: var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
+                    class="text-[12px] mt-3 pt-2 mb-2"
+                    style="border-top: 1px solid var(--border-subtle); color: {indexRefreshMsg?.kind === 'error' ? 'var(--error)' : indexRefreshMsg?.kind === 'warn' ? 'var(--warning)' : 'var(--muted-foreground)'};"
                   >
                     {#if indexRefreshMsg}
                       {indexRefreshMsg.text}
@@ -1109,6 +1121,10 @@
                     {/if}
 
                     <Collapsible title="联想行为" summary={behaviorSummary} bind:open={openBehavior}>
+                      <!-- 键盘操作是"弹层怎么用",归在这一节;原先摊在页顶当引言,占三行还抢眼 -->
+                      <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                        ↑ 进列表并选中最佳候选,继续 ↑ 向上翻;Tab / 有高亮时回车 = 填入,Esc 收起;无高亮时回车照旧发送。
+                      </div>
                       <!-- 弹出时机:模组指令几乎全以 AT+ 开头,按输入字符数算门槛时
                            "AT""AT+"就命中整本手册,而它们是打任何指令的必经之路 -->
                       <label class="switch mb-3">

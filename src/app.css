@@ -578,6 +578,23 @@ select option {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+/* 行式开关:标签在左、轨道靠右,与设置页各行"标签左 / 值右"对齐成一列。
+   DOM 顺序仍是 input → track → label(input:checked + .switch-track 靠相邻兄弟选择器),
+   所以换位用 flex order,不动结构。 */
+.switch-row {
+  display: flex;
+  width: 100%;
+}
+
+.switch-row .switch-track {
+  order: 2;
+  margin-left: auto;
+}
+
+.switch-row .switch-label {
+  order: 1;
+}
+
 /* 普通复选框（表格内小方框） */
 input[type="checkbox"]:not(.switch input) {
   accent-color: var(--primary);
