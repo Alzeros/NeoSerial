@@ -173,10 +173,38 @@ test('splitSyntax / exampleLines / shortTitle', () => {
   assert.deepEqual(splitSyntax('  '), []);
 
   assert.deepEqual(exampleLines('AT+MIPLCREATE=1\n+MIPLCREATE: 0\n\nOK\nat+miplopen=0,86400'), [
-    { text: 'AT+MIPLCREATE=1', fillable: true },
-    { text: '+MIPLCREATE: 0', fillable: false },
-    { text: 'OK', fillable: false },
-    { text: 'at+miplopen=0,86400', fillable: true },
+    { text: 'AT+MIPLCREATE=1', fillable: true, prefix: '', fill: 'AT+MIPLCREATE=1' },
+    { text: '+MIPLCREATE: 0', fillable: false, prefix: '', fill: '+MIPLCREATE: 0' },
+    { text: 'OK', fillable: false, prefix: '', fill: 'OK' },
+    { text: 'at+miplopen=0,86400', fillable: true, prefix: '', fill: 'at+miplopen=0,86400' },
+  ]);
+
+  // 带标签/序号的示例行:显示保留原文,填入只取 AT 那段(AT+GSN 手册就是这种写法)
+  assert.deepEqual(
+    exampleLines('Test Command: AT+GSN=?\nExecute Command: AT+GSN\nSet Command: AT+GSN=<snt>'),
+    [
+      { text: 'Test Command: AT+GSN=?', fillable: true, prefix: 'Test Command:', fill: 'AT+GSN=?' },
+      { text: 'Execute Command: AT+GSN', fillable: true, prefix: 'Execute Command:', fill: 'AT+GSN' },
+      { text: 'Set Command: AT+GSN=<snt>', fillable: true, prefix: 'Set Command:', fill: 'AT+GSN=<snt>' },
+    ],
+  );
+  assert.deepEqual(exampleLines('测试指令:AT+CSQ=?\n1. AT+CSQ\n> at+csq'), [
+    { text: '测试指令:AT+CSQ=?', fillable: true, prefix: '测试指令:', fill: 'AT+CSQ=?' },
+    { text: '1. AT+CSQ', fillable: true, prefix: '1.', fill: 'AT+CSQ' },
+    { text: '> at+csq', fillable: true, prefix: '>', fill: 'at+csq' },
+  ]);
+  // 冒号后面不是 AT 的行照旧不可填;指令自带的冒号不受影响
+  assert.deepEqual(exampleLines('Response: +CSQ: 20,99\n说明:该命令用于查询信号'), [
+    { text: 'Response: +CSQ: 20,99', fillable: false, prefix: '', fill: 'Response: +CSQ: 20,99' },
+    { text: '说明:该命令用于查询信号', fillable: false, prefix: '', fill: '说明:该命令用于查询信号' },
+  ]);
+  assert.deepEqual(exampleLines('AT+MHTTPCFG="header",1,"Content-Type: application/json"'), [
+    {
+      text: 'AT+MHTTPCFG="header",1,"Content-Type: application/json"',
+      fillable: true,
+      prefix: '',
+      fill: 'AT+MHTTPCFG="header",1,"Content-Type: application/json"',
+    },
   ]);
 
   assert.equal(shortTitle('LwM2M用户手册'), 'LwM2M');

@@ -181,13 +181,39 @@ export function splitSyntax(syntax: string): string[] {
     .filter(Boolean);
 }
 
-/** 示例按行拆;只有以 AT 开头(大小写无关,去首尾空格)的行可点填入,响应行(如 "+MIPLCREATE: 0")、OK 只展示。 */
-export function exampleLines(example: string): { text: string; fillable: boolean }[] {
+/** 把示例行拆成"前缀标签 + AT 指令";拆不出 AT 指令返回 null(那行只是响应或说明)。
+ *  手册里的示例行常带标签或序号——"Test Command: AT+GSN=?"、"1. AT+CSQ"、"> AT+CSQ"——
+ *  标签不能跟着填进输入框,所以单独拆出来:UI 只把 at 那段做成可点按钮,点什么进去什么。
+ *  响应行 "+MIPLCREATE: 0" 也带冒号,但冒号后面不是 AT,照旧不可填。 */
+function splitFillable(line: string): { prefix: string; at: string } | null {
+  const t = line.trim();
+  if (/^AT/i.test(t)) return { prefix: '', at: t };
+  // 前缀 = 以冒号(中/英文)结尾的标签、列表符号或序号;其后必须紧跟 AT 才算
+  const m = t.match(/^((?:[^:：]{0,40}[:：]|[-*>•]|\d+[.)])\s*)(AT\S.*)$/i);
+  return m ? { prefix: m[1].trim(), at: m[2].trim() } : null;
+}
+
+/** 示例块按行拆:
+ *  - `fillable`:这一行有没有可填入的指令(响应行、OK、纯说明没有)
+ *  - `prefix`:行首标签("Test Command:"、"1."),显示用,不参与填入;没有则为空串
+ *  - `fill`:可点按钮的文本,也正是点下去填进输入框的内容(所见即所得)
+ *  - `text`:整行原文,给 fillable=false 的行显示 */
+export function exampleLines(
+  example: string,
+): { text: string; fillable: boolean; prefix: string; fill: string }[] {
   return example
     .split(/\r?\n/)
     .map((s) => s.trim())
     .filter(Boolean)
-    .map((text) => ({ text, fillable: /^AT/i.test(text) }));
+    .map((text) => {
+      const parts = splitFillable(text);
+      return {
+        text,
+        fillable: parts !== null,
+        prefix: parts?.prefix ?? '',
+        fill: parts?.at ?? text,
+      };
+    });
 }
 
 /** 来源徽标用的短手册名:去掉"用户手册/手册"后缀,超 max 截断。 */

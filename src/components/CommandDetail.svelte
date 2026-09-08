@@ -159,16 +159,24 @@
         {/if}
 
         {#if record.example.trim()}
-          <div class="mt-2 font-medium" style="color: var(--muted-foreground);">示例 <span class="font-normal">(点 AT 行填入输入框)</span></div>
+          <div class="mt-2 font-medium" style="color: var(--muted-foreground);">示例 <span class="font-normal">(点指令填入输入框)</span></div>
           <div class="flex flex-col gap-0.5 items-start">
             {#each exampleLines(record.example) as ex}
               {#if ex.fillable}
-                <button
-                  type="button"
-                  class="suggest-example text-left rounded px-1.5 py-0.5 break-all"
-                  style="font-family: var(--font-mono); background: var(--border-subtle); color: var(--foreground);"
-                  onclick={() => requestSuggestFill(ex.text)}
-                >{ex.text}</button>
+                <!-- 按钮只包会被填入的那段,行首标签("Test Command:")留在按钮外做纯文字:
+                     可点范围 = 填入内容,点什么进去什么 -->
+                <div class="flex items-baseline gap-1 break-all">
+                  {#if ex.prefix}
+                    <span class="pl-1.5 shrink-0" style="font-family: var(--font-mono); color: var(--muted-foreground);">{ex.prefix}</span>
+                  {/if}
+                  <button
+                    type="button"
+                    class="suggest-example text-left rounded px-1.5 py-0.5 break-all"
+                    style="font-family: var(--font-mono); background: var(--border-subtle); color: var(--foreground);"
+                    title="填入输入框"
+                    onclick={() => requestSuggestFill(ex.fill)}
+                  >{ex.fill}</button>
+                </div>
               {:else}
                 <div class="px-1.5 break-all" style="font-family: var(--font-mono); color: var(--muted-foreground);">{ex.text}</div>
               {/if}
