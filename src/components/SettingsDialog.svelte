@@ -874,17 +874,22 @@
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
             {:else if extModule === 'quick'}
-              <!-- 快捷指令子页:常驻开启(无开关),只放编辑区密度 -->
-              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>
+              <!-- 快捷指令子页:常驻开启(无总开关),只有一组密度设置。
+                   与指令联想页同一套页头(标题行 + 一行说明 + 分隔线收口),但项目少,不套折叠。 -->
+              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
                 <span>‹</span><span>返回扩展</span>
               </button>
-              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">快捷指令</div>
-              <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-                侧栏快捷指令编辑区的密度:字号与输入框高度。常驻开启,不提供关闭。
+              <div class="flex items-center gap-3 mb-1">
+                <div class="text-[13px] font-medium text-[var(--foreground)]">快捷指令</div>
+                <!-- 这一页没有开关(常驻开启),用一枚标记占住右侧那列,与另两页的总开关同位置 -->
+                <span class="ml-auto text-[12px]" style="color: var(--primary);">常驻开启</span>
+              </div>
+              <div class="text-[12px] text-[var(--muted-foreground)]">
+                侧栏快捷指令编辑区的密度:字号、输入框高度、行间距与字体。
               </div>
 
-              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">编辑区密度</div>
-              <div class="flex items-center gap-3 mb-4">
+              <!-- 上边框给页头收口,与指令联想页的状态行同法,不必再套一层 div -->
+              <div class="flex items-center gap-3 mt-3 pt-2 mb-4" style="border-top: 1px solid var(--border-subtle);">
                 <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">字号</span>
                 <input
                   type="range" min="11" max="18" step="1"
@@ -928,7 +933,7 @@
               </div>
 
               <!-- 预览:两行样例,即时反映字号/高度/行间距/字体(只在此页生效,不联动主页) -->
-              <div class="mt-2">
+              <div class="mt-3 pt-2" style="border-top: 1px solid var(--border-subtle);">
                 <div class="text-[12px] text-[var(--muted-foreground)] mb-2">预览</div>
                 <div style="font-size: {editQcFontSize}px;{editQcFontFamily !== 'default' ? ` font-family: ${editQcFontFamily};` : ''}">
                   {#each ['AT+CSQ?', 'AT+CGDCONT?'] as sample}
@@ -1202,37 +1207,54 @@
                 {/if}
               </div>
             {:else if extModule === 'mcp'}
-              <!-- MCP 服务子页 -->
-              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-4" onclick={() => (extModule = null)}>
+              <!-- MCP 服务子页:与指令联想页同一套页头(标题行带总开关 + 一行说明 + 从属开关
+                   + 分隔线下的常驻状态行);项目少,不套折叠。 -->
+              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
                 <span>‹</span><span>返回扩展</span>
               </button>
-              <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
-              <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                内嵌 MCP server，支持 Claude Code 等 agent 经由 NeoSerial 操作串口。
+              <div class="flex items-center gap-3 mb-1">
+                <div class="text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
+                <label class="switch ml-auto" title={editMcpAutoStart ? '关闭 MCP 服务' : '启用 MCP 服务'}>
+                  <input type="checkbox" aria-label="启用 MCP 服务" bind:checked={editMcpAutoStart} />
+                  <span class="switch-track"></span>
+                </label>
               </div>
-              <label class="switch mb-4">
-                <input type="checkbox" bind:checked={editMcpAutoStart} />
-                <span class="switch-track"></span>
-                <span class="switch-label">启用 MCP 服务（启动时自动开启）</span>
-              </label>
+              <div class="text-[12px] text-[var(--muted-foreground)]">
+                内嵌 MCP server,Claude Code 等 agent 经由它操作串口。开关与端口改后重启生效。
+              </div>
 
               {#if editMcpAutoStart}
                 <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
-                <label class="switch mb-4">
+                <label class="switch switch-row mt-2">
                   <input type="checkbox" bind:checked={editShowMcpTab} />
                   <span class="switch-track"></span>
                   <span class="switch-label">显示"MCP 日志"tab</span>
                 </label>
-                <div class="flex items-center gap-3 mb-3">
-                  <span class="text-[13px] text-[var(--foreground)]">端口</span>
-                  <input type="number" class="w-20 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-elevated)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
+
+                <!-- 常驻状态行:纯文字 + 上边框收口,位置与指令联想页的"上次更新…"一致。
+                     开着却没跑(端口被占/还没重启)用警示色,那是需要用户注意的状态。 -->
+                <div
+                  class="text-[12px] mt-3 pt-2 mb-3"
+                  style="border-top: 1px solid var(--border-subtle); color: {mcpStatus.running ? 'var(--muted-foreground)' : 'var(--warning)'};"
+                >
+                  {#if mcpStatus.running && mcpStatus.port}
+                    服务运行中 · 端口 {mcpStatus.port}
+                  {:else}
+                    未运行:端口 {editMcpPort} 被占或尚未启动,保存后重启生效。
+                  {/if}
                 </div>
+
+                <div class="flex items-center gap-3 mb-3">
+                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">端口</span>
+                  <input type="number" class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-input)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
+                  <span class="ml-auto text-[12px] text-[var(--muted-foreground)]">被占时自动向上找空闲端口</span>
+                </div>
+
                 {#if mcpStatus.running && mcpStatus.port}
-                  <div class="mb-1.5 text-[13px] font-medium text-[var(--foreground)]">连接 MCP 客户端</div>
                   <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
-                    端口 <span class="text-[var(--foreground)] font-medium">{mcpStatus.port}</span>。Claude Code 中粘贴执行，或在终端运行：
+                    在 Claude Code 里粘贴执行,或在终端运行:
                   </div>
-                  <div class="flex items-center gap-2 mb-4">
+                  <div class="flex items-center gap-2">
                     <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
                       claude mcp add --transport http neoserial http://localhost:{mcpStatus.port}/mcp
                     </code>
@@ -1243,10 +1265,6 @@
                       onclick={copyMcpCommand}
                       title="复制到剪贴板"
                     >{mcpCopied ? '已复制' : '复制'}</button>
-                  </div>
-                {:else}
-                  <div class="text-[12px] text-[var(--muted-foreground)] px-3 py-2 rounded bg-[var(--border-subtle)] mb-4">
-                    MCP 未运行（端口 {editMcpPort} 被占或尚未启动，保存后重启生效）
                   </div>
                 {/if}
               {/if}
