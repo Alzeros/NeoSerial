@@ -1,4 +1,7 @@
 <script lang="ts">
+  // 滑块图标而非齿轮:标题栏右上角已经有一枚齿轮(应用设置),两枚一模一样的齿轮上下挨着
+  // 分不清谁是谁。滑块 = "调这个模块的参数",跟"应用设置"一眼区分开。
+  import { SlidersHorizontal } from 'lucide-svelte';
   import CommandDetail from '$components/CommandDetail.svelte';
   import McpCallLog from '$components/McpCallLog.svelte';
   import {
@@ -17,6 +20,7 @@
     scriptRunCount,
     scriptRunning,
     scriptRunState,
+    settingsRequest,
     switchScriptModule,
   } from '$lib/stores';
 
@@ -38,6 +42,15 @@
     if (!showSuggestTab && scriptView === 'reference') scriptView = 'scripts';
     if (!showMcpTab && scriptView === 'mcp') scriptView = 'scripts';
   });
+
+  // 右上角齿轮跳哪个扩展子页:跟着当前 tab 走(三个 tab 各有自己的设置页)
+  const settingsTarget = $derived(
+    scriptView === 'scripts'
+      ? { module: 'quick' as const, title: '快捷指令设置(字号/输入框高度/行距/字体)' }
+      : scriptView === 'reference'
+        ? { module: 'suggest' as const, title: '指令联想设置(知识库地址/刷新/手册勾选)' }
+        : { module: 'mcp' as const, title: 'MCP 服务设置(端口/自启/接入命令)' },
+  );
 
   // 快捷指令编辑区密度(字号 + 输入框高度 + 行间距 + 字体族),只作用于快捷指令表格,不外溢其他 UI
   const qcFontSize = $derived(cachedSettings.value?.ui?.qc_font_size ?? 13);
@@ -591,6 +604,16 @@
         onclick={() => (scriptView = 'mcp')}
       >MCP 日志</button>
     {/if}
+    <!-- 跳当前 tab 对应的扩展设置子页。三个 tab 共用这一枚、位置固定在右上角,
+         比各自在内容区里再摆一个更好找(MCP 日志那页也没有能挂按钮的表头行)。
+         22px 见方,不超过 tab 文字那行的高度,不会把这条撑高。 -->
+    <button
+      type="button"
+      class="ml-auto shrink-0 flex items-center justify-center rounded transition-colors text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer"
+      style="width: 22px; height: 22px;"
+      title={settingsTarget.title}
+      onclick={() => { settingsRequest.section = 'extensions'; settingsRequest.extModule = settingsTarget.module; }}
+    ><SlidersHorizontal size={14} /></button>
   </div>
 
   {#if scriptView === 'scripts'}

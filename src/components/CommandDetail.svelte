@@ -1,8 +1,7 @@
 <script lang="ts">
   import { tick, onMount } from 'svelte';
-  import { Settings as SettingsIcon } from 'lucide-svelte';
   import { commandIndex } from '$lib/commandIndex.svelte';
-  import { cachedSettings, requestSuggestFill, settingsRequest } from '$lib/stores';
+  import { cachedSettings, requestSuggestFill } from '$lib/stores';
   import {
     buildManualEntries,
     displayName,
@@ -28,6 +27,17 @@
   );
   const results = $derived(searchCommands(searchQuery, manualEntries));
   const selected = $derived(results[selectedIndex] ?? null);
+
+  // 结果区没东西时的一行提示:只在真的有问题时出(没索引/手册全关/搜不到)。
+  // 空手进来不出——搜索框的 placeholder 已经把用法说了,底下再摆一句是重复。
+  const emptyHint = $derived.by((): string | null => {
+    if (results.length) return null;
+    if (!commandIndex.commands.length) return '还没有指令索引。点右上角齿轮填知识库地址,再刷新指令库。';
+    if (!manualEntries.length) return '参与联想的手册都关掉了。点右上角齿轮勾选要用的手册。';
+    return searchQuery.trim() ? '无匹配指令。换个更短或更通用的词试试。' : null;
+  });
+  /** 搜索框下面是否有内容(决定要不要画那条分隔线) */
+  const hasBody = $derived(results.length > 0 || emptyHint !== null);
 
   // 结果集变化(新搜索/输入)时选回第一条,来源复位。读 results.length 触发。
   let prevLen = -1;
@@ -82,25 +92,22 @@
 </script>
 
 <div class="flex flex-col h-full min-h-0">
-  <!-- 搜索框 + 跳设置齿轮:模糊搜 command/name/summary;齿轮直接跳设置→扩展→指令联想子页 -->
-  <div class="flex items-center gap-2 p-2 shrink-0" style="border-bottom: 1px solid var(--border);">
+  <!-- 搜索框:模糊搜 command/name/summary。去设置的齿轮在面板右上角(ScriptSequencer 的
+       tab 条里,三个 tab 共用),这里不再重复摆一个。
+       输入框只压高度,底色/圆角/聚焦描边都沿用全局 input 样式(白底 + 6px 圆角),
+       跟窗口里其他输入框一致;分隔线只在下面真有内容时画,不留一根悬着的线。 -->
+  <div class="flex items-center px-3 py-2 shrink-0" style={hasBody ? 'border-bottom: 1px solid var(--border);' : ''}>
     <input
       bind:this={searchEl}
       type="text"
       class="flex-1 min-w-0"
-      style="height: 32px; padding: 4px 10px; font-size: 13px; background: var(--background); border: 1px solid var(--border); border-radius: var(--radius); color: var(--foreground);"
+      style="height: 32px; padding: 0 10px;"
       placeholder="搜索指令或功能(如 mqtt、信号、CSQ)…"
+      title="↑↓ 选中,Enter 把指令填入发送框"
       spellcheck="false"
       bind:value={searchQuery}
       onkeydown={handleSearchKey}
     />
-    <button
-      type="button"
-      class="shrink-0 flex items-center justify-center rounded transition-colors hover:bg-[var(--border-subtle)] cursor-pointer"
-      style="width: 32px; height: 32px; color: var(--muted-foreground);"
-      title="指令联想设置(知识库地址/刷新/手册勾选)"
-      onclick={() => { settingsRequest.section = 'extensions'; settingsRequest.extModule = 'suggest'; }}
-    ><SettingsIcon size={16} /></button>
   </div>
 
   <!-- 结果列表 + 详情:上下堆叠(避免左右分栏在窄面板里挤压),各自独立滚动 -->
@@ -127,13 +134,13 @@
           </div>
         {/each}
       </div>
-    {:else if searchQuery.trim()}
-      <div class="px-4 py-3 text-[12px]" style="color: var(--muted-foreground);">无匹配指令。试试更短或更通用的词(mqtt、信号、CSQ)。</div>
+    {:else if emptyHint}
+      <div class="px-3 py-3 text-[12px]" style="color: var(--muted-foreground);">{emptyHint}</div>
     {/if}
 
     {#if record}
       {@const entry = (selected as ManualEntry)}
-      <div class="overflow-y-auto px-4 py-3 text-[12px] leading-relaxed" style="flex: 1 1 0%; min-height: 0; border-top: 1px solid var(--border); color: var(--foreground);">
+      <div class="overflow-y-auto px-3 py-3 text-[12px] leading-relaxed" style="flex: 1 1 0%; min-height: 0; border-top: 1px solid var(--border); color: var(--foreground);">
         <div class="flex items-baseline gap-2 flex-wrap">
           <span class="text-[14px] font-semibold" style="font-family: var(--font-mono);">{record.command.trim()}</span>
           <span style="color: var(--muted-foreground);">{displayName(record, 60)}</span>
@@ -205,8 +212,6 @@
           {/if}
         </div>
       </div>
-    {:else if !results.length && !searchQuery.trim()}
-      <div class="px-4 py-3 text-[12px]" style="color: var(--muted-foreground);">输入关键词搜索指令(mqtt、信号、CSQ…),↑↓ 选中,Enter 填入输入框。</div>
     {/if}
   </div>
 </div>
