@@ -3,9 +3,9 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
+  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
-  import { Github, Eye, EyeOff, Plug, Loader2 } from 'lucide-svelte';
+  import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import type { Settings, SettingsPatch } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
@@ -78,8 +78,18 @@
   let editDisabledDocIds = $state<number[]>([]);
   let showApiKey = $state(false);
   let indexRefreshing = $state(false);
+  // 正在单本刷新的手册 id(null=没有)。后端 REFRESHING 只允许一个写入者,所以一次只转一行
+  let indexRefreshingDocId = $state<number | null>(null);
   // 连通性测试中(地址行按钮);与刷新独立,测试结果也写进 indexRefreshMsg 复用状态行展示
   let indexTesting = $state(false);
+  /** 每本手册在本地缓存里实际有多少条指令。手册列表报的 cmd_count 是服务器侧的数,
+   *  单本刷新之后会出现"服务器说 13 条、本地一条没缓存"的行,显示本地数才看得出该刷哪本。
+   *  documents 可能几十本、commands 上千条,算一次 Map 而不是每行 filter 一遍。 */
+  const cachedCmdCounts = $derived.by(() => {
+    const m = new Map<number, number>();
+    for (const c of commandIndex.commands) m.set(c.document_id, (m.get(c.document_id) ?? 0) + 1);
+    return m;
+  });
   // 刷新结果:ok 全部成功 / warn 部分手册失败沿用旧缓存 / error 整体失败
   let indexRefreshMsg = $state<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   let historyCleared = $state(false);
@@ -344,19 +354,44 @@
   }
 
   // 刷新指令库:用编辑框里的地址/Key(不必先保存)。缓存更新后后端广播,commandIndex store 自己重载。
+  // 后端是增量的:updated_at 与条数都没变的手册直接沿用缓存,所以文案带上"重拉了几本"。
   async function handleRefreshIndex() {
     if (!canRefreshIndex) return;
     indexRefreshing = true;
     indexRefreshMsg = null;
     try {
       const r = await commandIndexRefresh(editKbBaseUrl, editKbApiKey);
+      const detail = r.refreshed === 0
+        ? '各手册均无更新'
+        : `重拉 ${r.refreshed} 本${r.skipped ? `,${r.skipped} 本无更新` : ''}`;
       indexRefreshMsg = r.failed.length
         ? { kind: 'warn', text: `${r.failed.length} 本手册更新失败,沿用旧缓存:${r.failed.join('、')}` }
-        : { kind: 'ok', text: `已更新 · ${r.doc_count} 本手册 · ${r.cmd_count} 条指令` };
+        : { kind: 'ok', text: `已更新 · ${detail} · 共 ${r.doc_count} 本手册 ${r.cmd_count} 条指令` };
     } catch (e) {
       indexRefreshMsg = { kind: 'error', text: `刷新失败:${e}` };
     } finally {
       indexRefreshing = false;
+    }
+  }
+
+  /** 手册行末尾的"刷新这一本":只拉这本,其余沿用缓存。与全量刷新共用后端那把标志,
+   *  所以一次只能刷一本(其余行的按钮期间禁用)。 */
+  async function handleRefreshDoc(id: number) {
+    if (!canRefreshIndex || indexRefreshingDocId !== null || indexRefreshing) return;
+    indexRefreshingDocId = id;
+    indexRefreshMsg = null;
+    try {
+      const r = await commandIndexRefreshDoc(editKbBaseUrl, editKbApiKey, id);
+      indexRefreshMsg = r.cmd_status === 'done'
+        ? { kind: 'ok', text: `已更新《${r.title}》· ${r.cmd_count} 条指令` }
+        : {
+            kind: 'warn',
+            text: `《${r.title}》${r.cmd_status === 'running' ? '知识库仍在提取指令,稍后再刷' : r.cmd_status === 'failed' ? '知识库提取失败,没有可用指令' : '知识库尚未提取指令'}`,
+          };
+    } catch (e) {
+      indexRefreshMsg = { kind: 'error', text: `刷新失败:${e}` };
+    } finally {
+      indexRefreshingDocId = null;
     }
   }
 
@@ -876,19 +911,38 @@
                   <div class="flex flex-col gap-1.5 mb-4 overflow-y-auto px-1 py-1" style="max-height: 200px; border: 1px solid var(--border); border-radius: var(--radius);">
                     {#each commandIndex.documents as d (d.id)}
                       {@const ready = d.cmd_status === 'done'}
-                      <label class="flex items-center gap-2 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
-                        <input
-                          type="checkbox"
-                          class="h-4 w-4 rounded accent-[var(--primary)]"
-                          disabled={!ready}
-                          checked={ready && !editDisabledDocIds.includes(d.id)}
-                          onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
-                        />
-                        <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
-                        <span class="text-[12px] text-[var(--muted-foreground)] shrink-0">
-                          {#if ready}({d.cmd_count} 条指令){:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
-                        </span>
-                      </label>
+                      {@const cached = cachedCmdCounts.get(d.id) ?? 0}
+                      {@const stale = ready && cached !== d.cmd_count}
+                      <!-- 行不能整个是 <label>:点末尾的刷新按钮会被 label 转成"点了 checkbox",
+                           连带切换勾选(与 CustomSelect 那处同一个 label 激活行为)。label 只包勾选+标题。 -->
+                      <div class="flex items-center gap-2">
+                        <label class="flex items-center gap-2 min-w-0 flex-1 select-none {ready ? 'cursor-pointer' : 'opacity-50 cursor-not-allowed'}">
+                          <input
+                            type="checkbox"
+                            class="h-4 w-4 rounded accent-[var(--primary)] shrink-0"
+                            disabled={!ready}
+                            checked={ready && !editDisabledDocIds.includes(d.id)}
+                            onchange={(e) => toggleDoc(d.id, (e.target as HTMLInputElement).checked)}
+                          />
+                          <span class="text-[13px] text-[var(--foreground)] truncate">{d.title}</span>
+                          <!-- 条数显示本地缓存的数;与服务器报的不一致时补出"服务器 N",提示这本该刷新 -->
+                          <span class="text-[12px] shrink-0" style="color: {stale ? 'var(--warning)' : 'var(--muted-foreground)'};">
+                            {#if ready}
+                              ({cached} 条指令{#if stale} · 服务器 {d.cmd_count}{/if})
+                            {:else if d.cmd_status === 'running'}提取中{:else if d.cmd_status === 'failed'}提取失败{:else}未提取{/if}
+                          </span>
+                        </label>
+                        <button
+                          type="button"
+                          class="btn btn-ghost shrink-0"
+                          style="padding: 2px 6px;"
+                          disabled={!canRefreshIndex || indexRefreshing || indexRefreshingDocId !== null}
+                          title={canRefreshIndex ? `只刷新《${d.title}》,其余手册沿用缓存` : '填写地址和 API Key 后可刷新'}
+                          onclick={() => handleRefreshDoc(d.id)}
+                        >
+                          {#if indexRefreshingDocId === d.id}<Loader2 size={13} class="animate-spin" />{:else}<RefreshCw size={13} />{/if}
+                        </button>
+                      </div>
                     {/each}
                   </div>
                 {/if}

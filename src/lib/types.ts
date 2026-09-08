@@ -289,4 +289,17 @@ export interface CommandIndexRefreshResult {
   fetched_at: string;
   /** 拉失败、沿用旧缓存的手册标题 */
   failed: string[];
+  /** 本次实际重拉的手册数(updated_at 与条数都没变的直接沿用缓存) */
+  refreshed: number;
+  /** 因无变化而跳过的手册数 */
+  skipped: number;
+}
+
+/** 单本手册刷新的结果 */
+export interface CommandIndexRefreshDocResult {
+  title: string;
+  /** 本次拉到的指令条数;手册尚未提取完成时为 0 */
+  cmd_count: number;
+  /** 刷新后的 cmd_status:done/running/failed/'' */
+  cmd_status: string;
 }

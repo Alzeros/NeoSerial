@@ -3,6 +3,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import type {
   CommandIndexCache,
+  CommandIndexRefreshDocResult,
   CommandIndexRefreshResult,
   ConnectionMode,
   ConnectionParams,
@@ -233,6 +234,12 @@ export async function loadSequenceAuto(): Promise<ScriptModule[]> {
 /** 设置页"刷新指令库":用编辑框里的地址/Key 按手册拉全量并写本地缓存;成功后后端广播 command-index-changed。 */
 export async function commandIndexRefresh(baseUrl: string, apiKey: string): Promise<CommandIndexRefreshResult> {
   return await invoke<CommandIndexRefreshResult>('command_index_refresh', { baseUrl, apiKey });
+}
+
+/** 手册列表每行的"刷新这一本":只拉这本的指令,其余沿用缓存。与全量刷新互斥(后端同一把标志),
+ *  撞上正在进行的刷新会 reject "正在刷新,请稍候"。成功后后端广播 command-index-changed。 */
+export async function commandIndexRefreshDoc(baseUrl: string, apiKey: string, documentId: number): Promise<CommandIndexRefreshDocResult> {
+  return await invoke<CommandIndexRefreshDocResult>('command_index_refresh_doc', { baseUrl, apiKey, documentId });
 }
 
 /** 读本地缓存(%APPDATA%/neoserial/command-index.json)。从未刷新过返回空 documents/commands。 */

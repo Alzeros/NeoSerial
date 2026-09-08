@@ -34,6 +34,21 @@ pub struct RefreshResult {
     pub fetched_at: String,
     /// 拉失败、沿用旧缓存的手册标题
     pub failed: Vec<String>,
+    /// 本次实际重拉的手册数(增量:updated_at 与条数都没变的直接沿用缓存)
+    pub refreshed: usize,
+    /// 因无变化而跳过的手册数
+    pub skipped: usize,
+}
+
+/// 单本手册刷新的结果。
+#[derive(Clone, Serialize)]
+pub struct RefreshDocResult {
+    /// 手册标题(以刷新后的手册列表为准)
+    pub title: String,
+    /// 本次拉到的指令条数;手册尚未提取完成时为 0
+    pub cmd_count: usize,
+    /// 刷新后的 cmd_status,前端据此提示"提取中"等
+    pub cmd_status: String,
 }
 
 #[derive(Deserialize)]
@@ -163,15 +178,8 @@ fn ensure_crypto_provider() {
     }
 }
 
-/// 刷新主流程(不落盘、不广播):手册列表 → 逐本拉指令 → 与旧缓存合并。
-/// 单本失败不中断,记进 failed 并沿用旧缓存;手册列表本身失败整体返错。
-/// 对所有 cmd_status=done 的手册都拉,不按 disabled_doc_ids 跳过(那是前端显示层过滤)。
-/// 调用方若要把返回的缓存 save() 落盘,必须先拿到 REFRESHING(见 command_index_refresh),
-/// 否则破坏 save_to 的单写入者前提。
-pub async fn refresh_impl(
-    base_url: &str,
-    api_key: &str,
-) -> Result<(CommandIndexCache, Vec<String>), String> {
+/// 校验地址/Key 并建 HTTP 客户端。刷新与单本刷新共用。
+fn prepare(base_url: &str, api_key: &str) -> Result<(String, String, reqwest::Client), String> {
     let base = normalize_base_url(base_url);
     let key = api_key.trim().to_string();
     if base.is_empty() || key.is_empty() {
@@ -182,36 +190,120 @@ pub async fn refresh_impl(
         .timeout(Duration::from_secs(15))
         .build()
         .map_err(|e| format!("创建 HTTP 客户端失败: {}", e))?;
-    let docs: Vec<ManualDocument> =
-        get_json(&client, &format!("{}/api/v1/commands/documents", base), &key).await?;
-    let old = tauri::async_runtime::spawn_blocking(CommandIndexCache::load)
-        .await
-        .map_err(|e| format!("读取旧缓存任务执行异常: {}", e))?;
+    Ok((base, key, client))
+}
 
+async fn fetch_documents(
+    client: &reqwest::Client,
+    base: &str,
+    key: &str,
+) -> Result<Vec<ManualDocument>, String> {
+    get_json(client, &format!("{}/api/v1/commands/documents", base), key).await
+}
+
+async fn load_cache() -> Result<CommandIndexCache, String> {
+    tauri::async_runtime::spawn_blocking(CommandIndexCache::load)
+        .await
+        .map_err(|e| format!("读取旧缓存任务执行异常: {}", e))
+}
+
+/// 一次刷新的统计:实际重拉了几本、跳过几本、失败哪几本。
+pub struct RefreshStats {
+    pub refreshed: usize,
+    pub skipped: usize,
+    pub failed_titles: Vec<String>,
+}
+
+/// 刷新主流程(不落盘、不广播):手册列表 → 拉有变化的手册的指令 → 与旧缓存合并。
+/// **增量**:`updated_at` 与缓存里一致、且缓存条数与列表报的 `cmd_count` 相等的手册直接沿用
+/// 缓存,不重拉(见 [`reusable_doc_ids`])。接口有 rpm 限流与日配额,而多数时候只有一两本变过。
+/// 单本失败不中断,记进 failed 并沿用旧缓存;手册列表本身失败整体返错。
+/// 拉取不按 disabled_doc_ids 跳过(那是前端显示层过滤,跳过的也必须进 keep_old 否则等于清空)。
+/// 调用方若要把返回的缓存 save() 落盘,必须先拿到 REFRESHING(见 command_index_refresh),
+/// 否则破坏 save_to 的单写入者前提。
+pub async fn refresh_impl(
+    base_url: &str,
+    api_key: &str,
+) -> Result<(CommandIndexCache, RefreshStats), String> {
+    let (base, key, client) = prepare(base_url, api_key)?;
+    let docs = fetch_documents(&client, &base, &key).await?;
+    let old = load_cache().await?;
+
+    // 无变化的手册沿用缓存;非 done 的也进 keep_old(它们本就没有指令可拉,但不能被当成"清空")
+    let reusable = crate::config::command_index::reusable_doc_ids(&docs, &old, &base);
+    let mut keep_old_ids: Vec<i64> = docs
+        .iter()
+        .filter(|d| d.cmd_status != "done" || reusable.contains(&d.id))
+        .map(|d| d.id)
+        .collect();
     let mut fetched: HashMap<i64, Vec<ManualCommand>> = HashMap::new();
-    let mut failed_ids = Vec::new();
     let mut failed_titles = Vec::new();
-    for d in docs.iter().filter(|d| d.cmd_status == "done") {
+    for d in docs
+        .iter()
+        .filter(|d| d.cmd_status == "done" && !reusable.contains(&d.id))
+    {
         match fetch_all_commands(&client, &base, &key, d.id).await {
             Ok(items) => {
                 fetched.insert(d.id, items);
             }
             Err(e) => {
                 log::warn!("拉取手册 {}({}) 指令失败: {}", d.title, d.id, e);
-                failed_ids.push(d.id);
+                keep_old_ids.push(d.id);
                 failed_titles.push(d.title.clone());
             }
         }
     }
+    let stats = RefreshStats {
+        refreshed: fetched.len(),
+        skipped: reusable.len(),
+        failed_titles,
+    };
     let cache = merge_fetched(
         docs,
         fetched,
-        &failed_ids,
+        &keep_old_ids,
         &old,
         &base,
-        chrono::Local::now().to_rfc3339(),
+        Some(chrono::Local::now().to_rfc3339()),
     );
-    Ok((cache, failed_titles))
+    Ok((cache, stats))
+}
+
+/// 单本手册刷新(不落盘、不广播):手册列表 → 只拉这一本的指令 → 其余各本沿用缓存。
+/// 顺带把手册列表整份换新(1 个请求):否则这本的标题/条数/状态还是旧的,别人新上传的手册
+/// 也永远不出现在列表里。`fetched_at` 传旧值不动——它是"上次全量刷新"的语义。
+async fn refresh_doc_impl(
+    base_url: &str,
+    api_key: &str,
+    document_id: i64,
+) -> Result<(CommandIndexCache, RefreshDocResult), String> {
+    let (base, key, client) = prepare(base_url, api_key)?;
+    let docs = fetch_documents(&client, &base, &key).await?;
+    let old = load_cache().await?;
+    let target = docs
+        .iter()
+        .find(|d| d.id == document_id)
+        .ok_or_else(|| format!("手册已不在知识库里(id {}),点\"刷新指令库\"更新列表", document_id))?
+        .clone();
+
+    let mut fetched: HashMap<i64, Vec<ManualCommand>> = HashMap::new();
+    if target.cmd_status == "done" {
+        let items = fetch_all_commands(&client, &base, &key, document_id).await?;
+        fetched.insert(document_id, items);
+    }
+    // 除本次拉到的那本之外全部沿用缓存(漏了就等于清空,见 merge_fetched)
+    let keep_old_ids: Vec<i64> = docs
+        .iter()
+        .map(|d| d.id)
+        .filter(|id| !fetched.contains_key(id))
+        .collect();
+    let result = RefreshDocResult {
+        title: target.title.clone(),
+        cmd_count: fetched.get(&document_id).map(|v| v.len()).unwrap_or(0),
+        cmd_status: target.cmd_status.clone(),
+    };
+    let cache = merge_fetched(docs, fetched, &keep_old_ids, &old, &base, old.fetched_at.clone());
+    Ok((cache, result))
 }
 
 /// 设置页"刷新指令库":拉取 → 写缓存 → 广播 command-index-changed → 返回统计。
@@ -226,22 +318,52 @@ pub async fn command_index_refresh(
         return Err("正在刷新,请稍候".into());
     }
     let _guard = RefreshGuard;
-    let (cache, failed) = refresh_impl(&base_url, &api_key).await?;
+    let (cache, stats) = refresh_impl(&base_url, &api_key).await?;
     // 统计先算出来,cache 整份移进落盘闭包,不为了取三个数多复制一份指令表
     let doc_count = cache.documents.iter().filter(|d| d.cmd_status == "done").count();
     let cmd_count = cache.commands.len();
     let fetched_at = cache.fetched_at.clone().unwrap_or_default();
+    save_and_broadcast(&app_handle, cache).await?;
+    Ok(RefreshResult {
+        doc_count,
+        cmd_count,
+        fetched_at,
+        failed: stats.failed_titles,
+        refreshed: stats.refreshed,
+        skipped: stats.skipped,
+    })
+}
+
+/// 设置页手册列表每行的"刷新这一本":只拉这本的指令,其余沿用缓存。
+/// 与全量刷新共用 REFRESHING(save_to 的固定临时文件名要求单写入者),所以一次只能刷一本,
+/// 撞上正在进行的刷新会返回"正在刷新,请稍候"。
+#[tauri::command]
+pub async fn command_index_refresh_doc(
+    app_handle: tauri::AppHandle,
+    base_url: String,
+    api_key: String,
+    document_id: i64,
+) -> Result<RefreshDocResult, String> {
+    if REFRESHING.swap(true, Ordering::SeqCst) {
+        return Err("正在刷新,请稍候".into());
+    }
+    let _guard = RefreshGuard;
+    let (cache, result) = refresh_doc_impl(&base_url, &api_key, document_id).await?;
+    save_and_broadcast(&app_handle, cache).await?;
+    Ok(result)
+}
+
+/// 落盘 + 广播 command-index-changed(前端各窗口据此重载缓存)。调用方须持 REFRESHING。
+async fn save_and_broadcast(
+    app_handle: &tauri::AppHandle,
+    cache: CommandIndexCache,
+) -> Result<(), String> {
     tauri::async_runtime::spawn_blocking(move || cache.save())
         .await
         .map_err(|e| format!("写缓存任务执行异常: {}", e))?
         .map_err(|e| format!("写入缓存失败: {}", e))?;
     let _ = app_handle.emit("command-index-changed", ());
-    Ok(RefreshResult {
-        doc_count,
-        cmd_count,
-        fetched_at,
-        failed,
-    })
+    Ok(())
 }
 
 /// 前端启动 / 收到 command-index-changed 时调:读本地缓存。从未刷新过返回空缓存。
@@ -282,9 +404,11 @@ pub fn spawn_auto_refresh(handle: &tauri::AppHandle, cfg: &CommandIndexSettings)
     tauri::async_runtime::spawn(async move {
         match command_index_refresh(handle, base_url, api_key).await {
             Ok(r) => log::info!(
-                "启动刷新指令库完成: {} 本手册 {} 条指令, 失败 {} 本",
+                "启动刷新指令库完成: {} 本手册 {} 条指令, 重拉 {} 本 / 沿用缓存 {} 本, 失败 {} 本",
                 r.doc_count,
                 r.cmd_count,
+                r.refreshed,
+                r.skipped,
                 r.failed.len()
             ),
             Err(e) => log::warn!("启动刷新指令库失败: {}", e),

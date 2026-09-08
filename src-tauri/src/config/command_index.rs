@@ -117,31 +117,79 @@ impl CommandIndexCache {
 /// 把一次刷新的结果拼成新缓存。
 /// - `documents`:本次拉到的手册列表,顺序保留(前端"同名指令主记录取排前面那本"以此为准)
 /// - `fetched`:成功拉到的手册指令,按 document_id
-/// - `failed_ids`:拉失败的手册,沿用 `old` 里这本的指令(旧缓存没有就没有)
-/// - 既不在 fetched 也不在 failed_ids 的手册视为无指令(旧指令丢弃)。所以调用方必须对所有 cmd_status=done 的手册都发起拉取,不能为省配额跳过 disabled_doc_ids 里的——那是前端显示层过滤,不是拉取过滤。
+/// - `keep_old_ids`:不重拉、沿用 `old` 里这本指令的手册(拉失败的、增量刷新判定无变化的、
+///   单本刷新时的其余各本);旧缓存里没有就是没有
+/// - 既不在 `fetched` 也不在 `keep_old_ids` 的手册视为无指令(旧指令丢弃)。调用方要么拉它,
+///   要么把它放进 `keep_old_ids`——漏了就等于清空这本。注意别为省配额跳过 disabled_doc_ids 里的:
+///   那是前端显示层过滤,不是拉取过滤(跳过也要放进 keep_old_ids)。
+/// - `fetched_at`:全量刷新传 Some(现在);单本刷新传旧值原样,免得"上次更新"变成谎话。
 /// 不在 `documents` 里的旧指令一律丢弃(手册已删)。
 pub fn merge_fetched(
     documents: Vec<ManualDocument>,
     mut fetched: HashMap<i64, Vec<ManualCommand>>,
-    failed_ids: &[i64],
+    keep_old_ids: &[i64],
     old: &CommandIndexCache,
     base_url: &str,
-    fetched_at: String,
+    fetched_at: Option<String>,
 ) -> CommandIndexCache {
     let mut commands = Vec::new();
     for d in &documents {
         if let Some(items) = fetched.remove(&d.id) {
             commands.extend(items);
-        } else if failed_ids.contains(&d.id) {
+        } else if keep_old_ids.contains(&d.id) {
             commands.extend(old.commands.iter().filter(|c| c.document_id == d.id).cloned());
         }
     }
     CommandIndexCache {
-        fetched_at: Some(fetched_at),
+        fetched_at,
         base_url: base_url.to_string(),
         documents,
         commands,
     }
+}
+
+/// 本地缓存里每本手册各有多少条指令(按 document_id 计数)。
+/// 与手册列表报的 `cmd_count` 对比即知"这本同步过没有";前端也用它显示每行的实际条数。
+pub fn cached_counts(cache: &CommandIndexCache) -> HashMap<i64, usize> {
+    let mut m: HashMap<i64, usize> = HashMap::new();
+    for c in &cache.commands {
+        *m.entry(c.document_id).or_insert(0) += 1;
+    }
+    m
+}
+
+/// 全量刷新时挑出"可以沿用旧缓存、不必重拉"的手册 id(增量刷新)。
+/// 判据(全部满足才跳过):
+/// - 缓存来自同一个知识库地址——换了服务器,旧数据一律作废
+/// - 该手册 `cmd_status == "done"`(其他状态本就没有指令可拉)
+/// - 手册列表报的 `updated_at` 非空且与缓存里这本的完全一致
+/// - 缓存里这本的指令条数与列表报的 `cmd_count` 相等
+///
+/// 最后一条是关键:上次拉这本失败时,缓存里的**手册条目**是新的(documents 整份换),
+/// **指令**却是空的。只看 updated_at 会认为"没变、跳过",这本就永远空着。
+/// 条数不符一律重拉,方向上偏保守(顶多退化成旧的每次全拉)。
+pub fn reusable_doc_ids(
+    documents: &[ManualDocument],
+    old: &CommandIndexCache,
+    base_url: &str,
+) -> Vec<i64> {
+    if old.base_url != base_url {
+        return Vec::new();
+    }
+    let counts = cached_counts(old);
+    let old_docs: HashMap<i64, &ManualDocument> = old.documents.iter().map(|d| (d.id, d)).collect();
+    documents
+        .iter()
+        .filter(|d| {
+            if d.cmd_status != "done" || d.updated_at.is_empty() {
+                return false;
+            }
+            let Some(prev) = old_docs.get(&d.id) else { return false };
+            prev.updated_at == d.updated_at
+                && counts.get(&d.id).copied().unwrap_or(0) as i64 == d.cmd_count
+        })
+        .map(|d| d.id)
+        .collect()
 }
 
 #[cfg(test)]
@@ -158,6 +206,15 @@ mod tests {
             cmd_count: 0,
             category_id: 0,
             updated_at: String::new(),
+        }
+    }
+
+    /// 带 updated_at 与 cmd_count 的手册(增量判定用)
+    fn doc_at(id: i64, updated_at: &str, cmd_count: i64) -> ManualDocument {
+        ManualDocument {
+            cmd_count,
+            updated_at: updated_at.into(),
+            ..doc(id, "T", "done")
         }
     }
 
@@ -216,13 +273,13 @@ mod tests {
         let mut fetched = HashMap::new();
         fetched.insert(4, vec![cmd(17, 4, "AT+MIPLCREATE")]);
 
-        let merged = merge_fetched(docs, fetched, &[3], &old, "http://h:8200", "2026-09-03T10:00:00+08:00".into());
+        let merged = merge_fetched(docs, fetched, &[3], &old, "http://h:8200", Some("2026-09-03T10:00:00+08:00".into()));
 
         let names: Vec<&str> = merged.commands.iter().map(|c| c.command.as_str()).collect();
         assert_eq!(
             names,
             vec!["AT+MIPLCREATE", "AT+MQTTCFG", "AT+MQTTCONN"],
-            "按手册顺序排;失败手册沿用旧缓存;旧缓存里已不存在的手册(99)丢弃;running 的手册没有指令"
+            "按手册顺序排;沿用旧缓存的手册(3)保留旧指令;旧缓存里已不存在的手册(99)丢弃;running 的手册没有指令"
         );
         assert_eq!(merged.documents.len(), 3);
         assert_eq!(merged.fetched_at.as_deref(), Some("2026-09-03T10:00:00+08:00"));
@@ -237,10 +294,79 @@ mod tests {
             &[4],
             &CommandIndexCache::default(),
             "",
-            "t".into(),
+            Some("t".into()),
         );
         assert!(merged.commands.is_empty());
         assert_eq!(merged.documents.len(), 1);
+    }
+
+    /// 单本刷新:只有被点的那本重拉,其余各本进 keep_old 原样保留;fetched_at 传旧值不动。
+    #[test]
+    fn test_merge_single_doc_keeps_others() {
+        let old = CommandIndexCache {
+            fetched_at: Some("2026-09-01T00:00:00+08:00".into()),
+            base_url: "http://h:8200".into(),
+            documents: vec![doc(1, "A", "done"), doc(2, "B", "done")],
+            commands: vec![cmd(1, 1, "AT+A1"), cmd(2, 2, "AT+B1"), cmd(3, 2, "AT+B2")],
+        };
+        let mut fetched = HashMap::new();
+        fetched.insert(2, vec![cmd(9, 2, "AT+B1NEW")]);
+        let merged = merge_fetched(
+            vec![doc(1, "A", "done"), doc(2, "B", "done")],
+            fetched,
+            &[1], // 除被刷的 2 以外都沿用
+            &old,
+            "http://h:8200",
+            old.fetched_at.clone(),
+        );
+        let names: Vec<&str> = merged.commands.iter().map(|c| c.command.as_str()).collect();
+        assert_eq!(names, vec!["AT+A1", "AT+B1NEW"], "1 沿用旧指令,2 换成新拉的");
+        assert_eq!(merged.fetched_at.as_deref(), Some("2026-09-01T00:00:00+08:00"), "单本刷新不动全量刷新时间");
+    }
+
+    /// 增量刷新:updated_at 与条数都对得上才跳过重拉。
+    #[test]
+    fn test_reusable_doc_ids() {
+        let old = CommandIndexCache {
+            fetched_at: Some("t".into()),
+            base_url: "http://h:8200".into(),
+            documents: vec![
+                doc_at(1, "2026-09-07T08:00:00", 2), // 未变,2 条都在 → 可跳过
+                doc_at(2, "2026-09-07T08:00:00", 1), // updated_at 会变 → 要重拉
+                doc_at(3, "2026-09-07T08:00:00", 5), // 上次拉失败,缓存里 0 条 → 要重拉
+                doc_at(4, "2026-09-07T08:00:00", 0), // 服务器就是 0 条 → 可跳过
+            ],
+            commands: vec![cmd(1, 1, "AT+A1"), cmd(2, 1, "AT+A2"), cmd(3, 2, "AT+B1")],
+        };
+        let fresh = vec![
+            doc_at(1, "2026-09-07T08:00:00", 2),
+            doc_at(2, "2026-09-08T01:40:00", 1),
+            doc_at(3, "2026-09-07T08:00:00", 5),
+            doc_at(4, "2026-09-07T08:00:00", 0),
+            doc_at(5, "2026-09-07T09:00:00", 3), // 新手册,缓存里没有 → 要拉
+        ];
+        assert_eq!(reusable_doc_ids(&fresh, &old, "http://h:8200"), vec![1, 4]);
+        // 换了知识库地址:旧数据一律作废,全部重拉
+        assert!(reusable_doc_ids(&fresh, &old, "http://other:8200").is_empty());
+        // updated_at 为空(接口没给)无法判断,不跳过
+        let mut no_ts = old.clone();
+        no_ts.documents[0].updated_at = String::new();
+        assert!(!reusable_doc_ids(&[doc_at(1, "", 2)], &no_ts, "http://h:8200").contains(&1));
+        // 非 done 状态没有指令可拉,也不算"可沿用"(由调用方放进 keep_old)
+        let running = vec![ManualDocument { cmd_status: "running".into(), ..doc_at(1, "2026-09-07T08:00:00", 2) }];
+        assert!(reusable_doc_ids(&running, &old, "http://h:8200").is_empty());
+    }
+
+    #[test]
+    fn test_cached_counts() {
+        let cache = CommandIndexCache {
+            commands: vec![cmd(1, 7, "AT+A"), cmd(2, 7, "AT+B"), cmd(3, 9, "AT+C")],
+            ..Default::default()
+        };
+        let m = cached_counts(&cache);
+        assert_eq!(m.get(&7), Some(&2));
+        assert_eq!(m.get(&9), Some(&1));
+        assert_eq!(m.get(&11), None);
     }
 
     #[test]
