@@ -798,6 +798,183 @@ pub fn sequence_status(req: SequenceStatusReq) -> SequenceStatusResp {
     SequenceStatusResp { ok: true, running, completed, current_index, total }
 }
 
+// ============ 知识库指令查询(kb_search / kb_get / kb_manuals) ============
+//
+// 三个工具都只读本地缓存 %APPDATA%/neoserial/command-index.json,不发网络请求:
+// 知识库接口有 rpm 限流与日配额,刷新是"人在设置页点"的动作,agent 查手册不该消耗配额。
+// 缓存为空(没配知识库 / 没刷过 / 联想关着从没拉过)时给出带处置办法的错误,而不是空结果——
+// 空结果会让 agent 以为"手册里没这条指令",继续凭记忆猜指令。
+
+#[derive(Deserialize)]
+pub struct KbSearchReq {
+    pub query: String,
+    /// 返回条数上限,默认 10,最大 50
+    #[serde(default)]
+    pub limit: Option<usize>,
+}
+
+#[derive(Serialize)]
+pub struct KbSearchItem {
+    pub command: String,
+    /// 中文名/一句话功能(手册 LLM 抽取,可能就是指令本身)
+    pub name: String,
+    pub manual: String,
+    pub page_no: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct KbSearchResp {
+    pub ok: bool,
+    /// 命中总数(未截断);> items.len() 说明还有更多,请收窄 query
+    pub total: usize,
+    pub items: Vec<KbSearchItem>,
+}
+
+#[derive(Deserialize)]
+pub struct KbGetReq {
+    pub command: String,
+}
+
+#[derive(Serialize)]
+pub struct KbSource {
+    pub manual: String,
+    pub page_no: Option<i64>,
+    pub name: String,
+    pub syntax: String,
+    pub example: String,
+}
+
+#[derive(Serialize)]
+pub struct KbGetResp {
+    pub ok: bool,
+    pub command: String,
+    pub name: String,
+    pub syntax: String,
+    pub parameters: Vec<crate::config::command_index::CommandParameter>,
+    pub example: String,
+    pub summary: String,
+    pub manual: String,
+    pub page_no: Option<i64>,
+    /// 同名指令在其他手册里的记录(语法/示例可能不同)
+    pub also_in: Vec<KbSource>,
+}
+
+#[derive(Serialize)]
+pub struct KbManualItem {
+    pub id: i64,
+    pub title: String,
+    /// 本地缓存里这本手册有多少条指令
+    pub cached_commands: usize,
+    /// 服务器报的条数;与 cached_commands 不等说明这本没拉全
+    pub server_commands: i64,
+    /// "" 未提取 / running 提取中 / done 已提取 / failed 失败
+    pub cmd_status: String,
+    pub groups: Vec<String>,
+}
+
+#[derive(Serialize)]
+pub struct KbManualsResp {
+    pub ok: bool,
+    /// 上次全量刷新时间(RFC 3339);null = 从未刷新
+    pub fetched_at: Option<String>,
+    pub manuals: Vec<KbManualItem>,
+}
+
+/// 载入缓存;缓存里没有可查的指令时返回带处置办法的错误(区分未配置/未刷新)。
+fn load_kb_cache(shared: &McpShared) -> Result<crate::config::command_index::CommandIndexCache, ErrorResp> {
+    let cache = crate::config::command_index::CommandIndexCache::load();
+    if !cache.commands.is_empty() {
+        return Ok(cache);
+    }
+    // 空缓存:把原因说清楚,agent 才能告诉用户去做什么
+    let configured = shared
+        .app_handle
+        .try_state::<crate::state::AppState>()
+        .and_then(|st| st.settings.lock().ok().map(|s| s.command_index.clone()))
+        .map(|ci| !ci.base_url.trim().is_empty() && !ci.api_key.trim().is_empty())
+        .unwrap_or(false);
+    Err(ErrorResp::new(if configured {
+        "本地指令索引为空:请在 NeoSerial 设置 → 扩展 → 指令联想 点『刷新指令库』后重试"
+    } else {
+        "知识库未配置:请在 NeoSerial 设置 → 扩展 → 指令联想 填服务器地址与 API Key,再点『刷新指令库』"
+    }))
+}
+
+/// 搜手册指令(多关键词,匹配指令名/中文名/摘要,大小写无关)。只读本地缓存。
+pub fn kb_search(shared: &McpShared, req: KbSearchReq) -> Result<KbSearchResp, ErrorResp> {
+    if req.query.trim().is_empty() {
+        return Err(ErrorResp::new("query 不能为空"));
+    }
+    let cache = load_kb_cache(shared)?;
+    let entries = crate::config::command_index::merged_entries(&cache);
+    let hits = crate::config::command_index::search_entries(&entries, &req.query);
+    let limit = req.limit.unwrap_or(10).clamp(1, 50);
+    let items = hits
+        .iter()
+        .take(limit)
+        .map(|e| KbSearchItem {
+            command: e.key.clone(),
+            name: e.primary.name.clone(),
+            manual: crate::config::command_index::doc_title(&cache.documents, e.primary.document_id),
+            page_no: e.primary.page_no,
+        })
+        .collect();
+    Ok(KbSearchResp { ok: true, total: hits.len(), items })
+}
+
+/// 取一条指令的完整记录(语法/参数表/示例/摘要/来源)。command 大小写无关,须是完整指令名。
+pub fn kb_get(shared: &McpShared, req: KbGetReq) -> Result<KbGetResp, ErrorResp> {
+    let cache = load_kb_cache(shared)?;
+    let entries = crate::config::command_index::merged_entries(&cache);
+    let Some(e) = crate::config::command_index::find_entry(&entries, &req.command) else {
+        return Err(ErrorResp::new(format!(
+            "手册里没有指令 {};用 kb_search 按关键词找",
+            req.command.trim()
+        )));
+    };
+    Ok(KbGetResp {
+        ok: true,
+        command: e.key.clone(),
+        name: e.primary.name.clone(),
+        syntax: e.primary.syntax.clone(),
+        parameters: e.primary.parameters.clone(),
+        example: e.primary.example.clone(),
+        summary: e.primary.summary.clone(),
+        manual: crate::config::command_index::doc_title(&cache.documents, e.primary.document_id),
+        page_no: e.primary.page_no,
+        also_in: e
+            .also_in
+            .iter()
+            .map(|r| KbSource {
+                manual: crate::config::command_index::doc_title(&cache.documents, r.document_id),
+                page_no: r.page_no,
+                name: r.name.clone(),
+                syntax: r.syntax.clone(),
+                example: r.example.clone(),
+            })
+            .collect(),
+    })
+}
+
+/// 列本地缓存里的手册(能查到什么)。手册列表本身在缓存里就有,不请求服务器。
+pub fn kb_manuals(shared: &McpShared) -> Result<KbManualsResp, ErrorResp> {
+    let cache = load_kb_cache(shared)?;
+    let counts = crate::config::command_index::cached_counts(&cache);
+    let manuals = cache
+        .documents
+        .iter()
+        .map(|d| KbManualItem {
+            id: d.id,
+            title: d.title.clone(),
+            cached_commands: counts.get(&d.id).copied().unwrap_or(0),
+            server_commands: d.cmd_count,
+            cmd_status: d.cmd_status.clone(),
+            groups: d.group_names.clone(),
+        })
+        .collect();
+    Ok(KbManualsResp { ok: true, fetched_at: cache.fetched_at.clone(), manuals })
+}
+
 // ============ get_settings / save_settings ============
 
 #[derive(Serialize)]

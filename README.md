@@ -58,7 +58,7 @@ NEOSERIAL_KB_API_KEY = "kb_xxxxxxxx"
 - **后台运行（设置项，默认关，托盘常驻）**：开启时关窗口不断开连接——连接留在后台继续收发、存日志、跑序列，关掉最后一个窗口应用留在托盘，MCP 照常；首次收后台发一条系统通知说明。托盘 tooltip 列出占用的端口，右键菜单：新建窗口 / 每个连接一项（无窗口的"打开"=开新窗口挂上并回填历史日志，有窗口的"切到"）/ 退出。关闭时（轻量模式）不显示托盘，关窗口断开该窗口自己建的连接（agent 建的交还 agent），关掉最后一个窗口即退出——若此时 agent 建的连接还活着，先弹确认（取消 / 开启后台运行并收起 / 仍然退出），避免顺手关窗把 agent 会话掐断。改开关即时生效。
 - **单实例**：再次启动 exe 只把已有窗口拉到前台（没有窗口就新建一个），不会起第二个进程去抢 COM 口和 MCP 端口。
 
-### MCP 工具（16 个）
+### MCP 工具（19 个）
 
 | 工具 | 能力 |
 |------|------|
@@ -74,6 +74,14 @@ NEOSERIAL_KB_API_KEY = "kb_xxxxxxxx"
 | `sequence_run` / `sequence_stop` | 脚本序列（批量命令+循环+延时，自动化测试） |
 | `get_sequence_status` | 查序列运行状态（端口断开导致中止后 running=false） |
 | `get_settings` / `save_settings` | 读/写配置（持久化） |
+| `kb_search` | 搜手册 AT 指令（多关键词，匹配指令名/中文名/摘要），返回指令+中文名+来源手册+页码 |
+| `kb_get` | 取一条指令的完整记录（语法/参数表/示例/摘要/来源，含"也见于"其他手册的版本） |
+| `kb_manuals` | 列本地缓存里的手册（标题/条数/提取状态/分组），知道能查到什么范围 |
+
+后三个是**知识库指令查询**：agent 发指令前先查手册语法，不必凭记忆猜。只读本地缓存
+（`command-index.json`），不请求知识库、不耗 rpm/日配额；缓存为空时返回 `ok:false` 并说明是"未配置"
+还是"没刷新过"，让 agent 能告诉用户去点哪里。搜索范围不受"参与联想的手册"勾选影响——那个勾选是
+输入框联想的减噪开关，agent 查手册该能查到缓存里的全部（返回带来源手册名）。
 
 agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`（单实例下只有一条，记录实际 MCP 端口与已连端口，心跳 5s），没有新鲜（30s 内）条目就启动 NeoSerial；再退化为从默认端口 34594 起逐端口 `get_status` 探测。Claude Code 配置：
 
@@ -235,7 +243,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（203 passed）
+cargo test           # Rust 单元测试（207 passed）
 npm run test:unit    # 指令联想匹配的纯函数单测（11 tests）
 npm run check        # Svelte/TypeScript 类型检查
 ```

@@ -197,6 +197,113 @@ pub fn reusable_doc_ids(
         .collect()
 }
 
+/// 同名指令(去首尾空格后大写)合并后的一条:`primary` 取手册列表里排前面那本的记录,
+/// 其余进 `also_in`。与前端 buildManualEntries 同一规则,但**不按 disabled_doc_ids 过滤**——
+/// 那个勾选是输入框联想的减噪开关,MCP 查手册该能查到缓存里的全部内容(返回里带来源手册名)。
+pub struct MergedEntry<'a> {
+    /// 合并键:指令去首尾空格后大写
+    pub key: String,
+    pub primary: &'a ManualCommand,
+    pub also_in: Vec<&'a ManualCommand>,
+}
+
+/// 缓存里 cmd_status=done 的手册的指令,按指令名合并同名项。结果按 key 字母序。
+pub fn merged_entries(cache: &CommandIndexCache) -> Vec<MergedEntry<'_>> {
+    let order: HashMap<i64, usize> = cache
+        .documents
+        .iter()
+        .enumerate()
+        .map(|(i, d)| (d.id, i))
+        .collect();
+    let done: std::collections::HashSet<i64> = cache
+        .documents
+        .iter()
+        .filter(|d| d.cmd_status == "done")
+        .map(|d| d.id)
+        .collect();
+
+    let mut groups: HashMap<String, Vec<&ManualCommand>> = HashMap::new();
+    for c in &cache.commands {
+        if !done.contains(&c.document_id) {
+            continue;
+        }
+        let key = c.command.trim().to_uppercase();
+        if key.is_empty() {
+            continue;
+        }
+        groups.entry(key).or_default().push(c);
+    }
+
+    let mut entries: Vec<MergedEntry<'_>> = groups
+        .into_iter()
+        .map(|(key, mut recs)| {
+            // 手册列表里排前面那本作 primary;同本手册内按记录 id
+            recs.sort_by_key(|c| (*order.get(&c.document_id).unwrap_or(&usize::MAX), c.id));
+            let primary = recs[0];
+            MergedEntry { key, primary, also_in: recs[1..].to_vec() }
+        })
+        .collect();
+    entries.sort_by(|a, b| a.key.cmp(&b.key));
+    entries
+}
+
+/// 多关键词 contains 搜索,与前端 searchCommands 同一套打分:
+/// 每个 token 都必须在 指令名 / 中文名(含 also_in 的) / 摘要 里命中,否则整条不算;
+/// 命中位置越靠前分越高,命中指令名 > 中文名 > 摘要。按分数降序、同分按指令名字母序。
+pub fn search_entries<'a>(entries: &'a [MergedEntry<'a>], query: &str) -> Vec<&'a MergedEntry<'a>> {
+    let tokens: Vec<String> = query
+        .trim()
+        .to_uppercase()
+        .split_whitespace()
+        .map(|t| t.to_string())
+        .collect();
+    if tokens.is_empty() {
+        return Vec::new();
+    }
+    let mut scored: Vec<(&MergedEntry<'a>, i64)> = Vec::new();
+    for e in entries {
+        let summary = e.primary.summary.to_uppercase();
+        let mut names = vec![e.primary.name.to_uppercase()];
+        names.extend(e.also_in.iter().map(|r| r.name.to_uppercase()));
+        let mut score: i64 = 0;
+        let mut all = true;
+        for t in &tokens {
+            let cmd_pos = e.key.find(t.as_str());
+            let name_hit = names.iter().any(|n| n.contains(t.as_str()));
+            let sum_pos = summary.find(t.as_str());
+            score += match (cmd_pos, name_hit, sum_pos) {
+                (Some(p), _, _) => 1000 - p as i64,
+                (None, true, _) => 500,
+                (None, false, Some(p)) => 100 - p as i64,
+                (None, false, None) => {
+                    all = false;
+                    break;
+                }
+            };
+        }
+        if all {
+            scored.push((e, score));
+        }
+    }
+    scored.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.key.cmp(&b.0.key)));
+    scored.into_iter().map(|(e, _)| e).collect()
+}
+
+/// 精确取一条:指令名去首尾空格、大小写无关。输入不带 AT 前缀时不做补全(那是联想的事)。
+pub fn find_entry<'a>(entries: &'a [MergedEntry<'a>], command: &str) -> Option<&'a MergedEntry<'a>> {
+    let key = command.trim().to_uppercase();
+    entries.iter().find(|e| e.key == key)
+}
+
+/// 手册标题;缓存里找不到该 id 时给个占位,不至于返回空串让调用方猜。
+pub fn doc_title(documents: &[ManualDocument], doc_id: i64) -> String {
+    documents
+        .iter()
+        .find(|d| d.id == doc_id)
+        .map(|d| d.title.clone())
+        .unwrap_or_else(|| format!("手册 {}", doc_id))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -387,6 +494,89 @@ mod tests {
         assert_eq!(m.get(&7), Some(&2));
         assert_eq!(m.get(&9), Some(&1));
         assert_eq!(m.get(&11), None);
+    }
+
+    /// 合并同名指令:primary 取手册列表里排前面那本;未提取(cmd_status != done)的手册不参与。
+    #[test]
+    fn test_merged_entries_dedups_by_command_and_prefers_first_doc() {
+        let cache = CommandIndexCache {
+            // 文档顺序即优先级:4 在前,3 在后
+            documents: vec![doc(4, "LwM2M", "done"), doc(3, "MQTT", "done"), doc(2, "SSL", "running")],
+            commands: vec![
+                cmd(1, 3, "at+csq "), // 脏数据:小写 + 尾随空格
+                cmd(2, 4, "AT+CSQ"),
+                cmd(3, 4, "AT+MIPLCREATE"),
+                cmd(9, 2, "AT+MSSLCFG"), // 手册还在提取中,不该出现
+            ],
+            ..Default::default()
+        };
+        let entries = merged_entries(&cache);
+        assert_eq!(
+            entries.iter().map(|e| e.key.as_str()).collect::<Vec<_>>(),
+            vec!["AT+CSQ", "AT+MIPLCREATE"],
+            "按 key 字母序;未提取的手册被排除"
+        );
+        let csq = &entries[0];
+        assert_eq!(csq.primary.document_id, 4, "LwM2M 在文档列表里排前面");
+        assert_eq!(csq.also_in.len(), 1);
+        assert_eq!(csq.also_in[0].document_id, 3);
+    }
+
+    /// 搜索:每个 token 都要命中(指令名/中文名/摘要之一),命中指令名的排前面。
+    #[test]
+    fn test_search_entries_multi_token_and_ranking() {
+        let cache = CommandIndexCache {
+            documents: vec![doc(1, "MQTT", "done")],
+            commands: vec![
+                ManualCommand { name: "配置或查询MQTT参数".into(), ..cmd(1, 1, "AT+MQTTCFG") },
+                ManualCommand { name: "连接至MQTT服务器".into(), ..cmd(2, 1, "AT+MQTTCONN") },
+                ManualCommand {
+                    name: "查询信号质量".into(),
+                    summary: "该命令用于查询信号强度,MQTT 场景常用".into(),
+                    ..cmd(3, 1, "AT+CSQ")
+                },
+            ],
+            ..Default::default()
+        };
+        let entries = merged_entries(&cache);
+
+        let keys = |q: &str| {
+            search_entries(&entries, q)
+                .iter()
+                .map(|e| e.key.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            keys("mqtt"),
+            vec!["AT+MQTTCFG", "AT+MQTTCONN", "AT+CSQ"],
+            "命中指令名的在前(位置越靠前分越高),只在摘要里命中的垫底"
+        );
+        assert_eq!(keys("信号"), vec!["AT+CSQ"], "中文名命中");
+        assert_eq!(keys("mqtt 配置"), vec!["AT+MQTTCFG"], "多 token 必须全命中");
+        assert!(keys("mqtt 不存在的词").is_empty());
+        assert!(keys("   ").is_empty(), "空 query 不返回全表");
+    }
+
+    /// 精确取一条:大小写与首尾空格无关;不做前缀补全。
+    #[test]
+    fn test_find_entry_exact_case_insensitive() {
+        let cache = CommandIndexCache {
+            documents: vec![doc(1, "MQTT", "done")],
+            commands: vec![cmd(1, 1, "AT+CSQ")],
+            ..Default::default()
+        };
+        let entries = merged_entries(&cache);
+        assert!(find_entry(&entries, " at+csq ").is_some());
+        assert!(find_entry(&entries, "AT+CSQ").is_some());
+        assert!(find_entry(&entries, "CSQ").is_none(), "不带 AT 前缀不补全(那是联想的事)");
+        assert!(find_entry(&entries, "AT+CS").is_none(), "不做前缀匹配");
+    }
+
+    #[test]
+    fn test_doc_title_falls_back_for_unknown_id() {
+        let docs = vec![doc(7, "HTTP-HTTPS用户手册", "done")];
+        assert_eq!(doc_title(&docs, 7), "HTTP-HTTPS用户手册");
+        assert_eq!(doc_title(&docs, 99), "手册 99", "缓存里没这本时给占位,不返回空串");
     }
 
     #[test]

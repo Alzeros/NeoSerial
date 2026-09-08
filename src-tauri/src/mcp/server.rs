@@ -55,6 +55,9 @@ const SEQUENCE_STOP: &str = "sequence_stop";
 const GET_SEQUENCE_STATUS: &str = "get_sequence_status";
 const GET_SETTINGS: &str = "get_settings";
 const SAVE_SETTINGS: &str = "save_settings";
+const KB_SEARCH: &str = "kb_search";
+const KB_GET: &str = "kb_get";
+const KB_MANUALS: &str = "kb_manuals";
 
 pub struct NeoserialHandler {
     shared: Arc<McpShared>,
@@ -305,6 +308,40 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            Tool::new(
+                KB_SEARCH,
+                "搜知识库手册里的 AT 指令(发指令前查语法,别凭记忆猜)。多关键词空格分隔,                 匹配指令名/中文名/摘要,大小写无关,不带 AT+ 也能命中(如 \"csq\"、\"mqtt 配置\")。                 参数: query, limit(可选,默认 10,最大 50)。返回 { ok, total, items:[{command,name,manual,page_no}] };                 total > items 长度说明还有更多,收窄 query。要完整语法/参数/示例用 kb_get。                 **只读本地缓存,不请求知识库、不耗配额**;缓存空时返回 ok:false 并说明该让用户做什么。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "query": { "type": "string", "description": "关键词,空格分隔多个(需全部命中)" },
+                        "limit": { "type": "integer", "default": 10, "description": "返回条数上限,1-50" }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                KB_GET,
+                "取一条 AT 指令的完整手册记录:语法、参数表(名称/是否必选/说明)、示例、摘要、来源手册与页码;                 同名指令在别的手册里的记录进 also_in。参数: command(完整指令名,大小写无关,如 AT+MIPLCREATE)。                 找不到返回 ok:false,改用 kb_search 按关键词找。只读本地缓存,不耗配额。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "command": { "type": "string", "description": "完整指令名,如 AT+CSQ" }
+                    },
+                    "required": ["command"],
+                    "additionalProperties": false
+                })),
+            ),
+            Tool::new(
+                KB_MANUALS,
+                "列本地缓存里有哪些手册(知道能查到什么范围)。无参数。返回 { ok, fetched_at, manuals:[{id,title,                 cached_commands,server_commands,cmd_status,groups}] };cached_commands 与 server_commands 不等                 说明那本没拉全,可让用户在设置页刷新。只读本地缓存,不耗配额。",
+                schema(serde_json::json!({
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                })),
+            ),
         ];
         async move { Ok(ListToolsResult { tools, ..Default::default() }) }
     }
@@ -479,6 +516,43 @@ impl ServerHandler for NeoserialHandler {
                         }
                     };
                     serde_json::to_value(tools::sequence_status(req)).unwrap_or_default()
+                }
+                KB_SEARCH => {
+                    let req: tools::KbSearchReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    // 读缓存文件(百 KB 级 JSON 解析),丢到阻塞线程池,不占 tokio worker
+                    let shared_for_tool = shared.clone();
+                    match tokio::task::spawn_blocking(move || tools::kb_search(&shared_for_tool, req)).await {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::to_value(e).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("查询任务异常终止: {}", e) }),
+                    }
+                }
+                KB_GET => {
+                    let req: tools::KbGetReq = match serde_json::from_value(args) {
+                        Ok(r) => r,
+                        Err(e) => {
+                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
+                        }
+                    };
+                    let shared_for_tool = shared.clone();
+                    match tokio::task::spawn_blocking(move || tools::kb_get(&shared_for_tool, req)).await {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::to_value(e).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("查询任务异常终止: {}", e) }),
+                    }
+                }
+                KB_MANUALS => {
+                    let shared_for_tool = shared.clone();
+                    match tokio::task::spawn_blocking(move || tools::kb_manuals(&shared_for_tool)).await {
+                        Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
+                        Ok(Err(e)) => serde_json::to_value(e).unwrap_or_default(),
+                        Err(e) => serde_json::json!({ "ok": false, "error": format!("查询任务异常终止: {}", e) }),
+                    }
                 }
                 GET_SETTINGS => {
                     serde_json::to_value(tools::get_settings(&shared)).unwrap_or_default()
