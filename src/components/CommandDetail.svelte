@@ -140,7 +140,9 @@
 
     {#if record}
       {@const entry = (selected as ManualEntry)}
-      <div class="overflow-y-auto px-3 py-3 text-[12px] leading-relaxed" style="flex: 1 1 0%; min-height: 0; border-top: 1px solid var(--border); color: var(--foreground);">
+      <!-- select-text:语法/参数/示例是要往别处抄的正文(全局默认不可选,见 app.css"文本选中范围")。
+           tabindex="-1":点一下后 Ctrl+A 只圈这块(范围逻辑在 App.svelte 的 handleSelectAll) -->
+      <div tabindex="-1" class="overflow-y-auto outline-none px-3 py-3 text-[12px] leading-relaxed select-text" style="flex: 1 1 0%; min-height: 0; border-top: 1px solid var(--border); color: var(--foreground);">
         <div class="flex items-baseline gap-2 flex-wrap">
           <span class="text-[14px] font-semibold" style="font-family: var(--font-mono);">{record.command.trim()}</span>
           <span style="color: var(--muted-foreground);">{displayName(record, 60)}</span>
@@ -181,7 +183,12 @@
                     class="suggest-example text-left rounded px-1.5 py-0.5 break-all"
                     style="font-family: var(--font-mono); background: var(--border-subtle); color: var(--foreground);"
                     title="填入输入框"
-                    onclick={() => requestSuggestFill(ex.fill)}
+                    onclick={() => {
+                      // 详情区可选中(复制语法/示例),拖选恰好落在这个按钮里时不该顺手填进输入框。
+                      // 普通单击会先把选区折叠掉,isCollapsed 为真(无 range 也算真),照常填。
+                      if (!window.getSelection()?.isCollapsed) return;
+                      requestSuggestFill(ex.fill);
+                    }}
                   >{ex.fill}</button>
                 </div>
               {:else}

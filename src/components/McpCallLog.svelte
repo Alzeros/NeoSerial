@@ -31,7 +31,14 @@
 </script>
 
 <div class="flex flex-col h-full min-h-0">
-  <div bind:this={listEl} class="overflow-y-auto" style="flex: 1 1 0%; min-height: 0;">
+  <!-- select-text + tabindex="-1":入参/报错要能拖选复制,点一下容器后 Ctrl+A 也只圈这块
+       (范围逻辑在 App.svelte 的 handleSelectAll) -->
+  <div
+    bind:this={listEl}
+    tabindex="-1"
+    class="overflow-y-auto outline-none select-text"
+    style="flex: 1 1 0%; min-height: 0;"
+  >
     {#if records.length === 0}
       <div class="px-4 py-3 text-[12px]" style="color: var(--muted-foreground);">
         agent 经 MCP 调用工具(list_ports / connect / send …)时,这里实时显示每次调用的工具、入参、结果与耗时。

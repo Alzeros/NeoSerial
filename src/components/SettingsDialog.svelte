@@ -1255,7 +1255,8 @@
                     在 Claude Code 里粘贴执行,或在终端运行:
                   </div>
                   <div class="flex items-center gap-2">
-                    <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap">
+                    <!-- select-text:除了右边的复制按钮,也允许手动选一段(全局默认不可选) -->
+                    <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap select-text">
                       claude mcp add --transport http neoserial http://localhost:{mcpStatus.port}/mcp
                     </code>
                     <button
@@ -1276,7 +1277,8 @@
       <!-- 底部按钮:取消(撤销+关) | 应用(保存不关,无改动时置灰) | 保存(应用+关);保存失败原因显示在左侧 -->
       <div class="flex items-center gap-2 px-5 pb-3 border-t border-[var(--border)] pt-2">
         {#if saveError}
-          <span class="flex-1 min-w-0 truncate text-[12px]" style="color: var(--error);" title={saveError}>{saveError}</span>
+          <!-- select-text:报错要能拷出去问人(显示被 truncate 截断,选中拿到的是完整那句) -->
+          <span class="flex-1 min-w-0 truncate text-[12px] select-text" style="color: var(--error);" title={saveError}>{saveError}</span>
         {:else}
           <span class="flex-1"></span>
         {/if}

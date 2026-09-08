@@ -517,6 +517,30 @@
     closeInputMenu();
   }
 
+  /** Ctrl+A 的选中范围:只圈"数据/正文"那一块,不碰整个界面。
+   *  webview 默认是全选文档:app.css 已把标签/按钮/开关那些字设成不可选(选了也没用),
+   *  但默认全选仍会把所有可选块(日志区 + MCP 记录 + 指令详情)一起点亮,同时还会把
+   *  空输入框的占位文字刷蓝,看着像"整个软件被选中"。
+   *  规则:
+   *   - 焦点在输入框/文本域 → 不插手,浏览器默认就是"只选自己";
+   *   - 焦点落在某个 .select-text 块里(日志区、MCP 记录、指令详情,这些容器带
+   *     tabindex="-1",点一下即可聚焦)→ 只选那一块;
+   *   - 焦点不在任何可选块(刚启动、点在空白处)→ 清掉选区,什么都不选。 */
+  function handleSelectAll(e: KeyboardEvent) {
+    if (!(e.ctrlKey || e.metaKey) || (e.key !== 'a' && e.key !== 'A')) return;
+    const t = e.target as HTMLElement | null;
+    if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+    e.preventDefault();
+    const sel = window.getSelection();
+    if (!sel) return;
+    sel.removeAllRanges();
+    const scope = (document.activeElement as HTMLElement | null)?.closest('.select-text');
+    if (!scope) return;
+    const range = document.createRange();
+    range.selectNodeContents(scope);
+    sel.addRange(range);
+  }
+
   $effect(() => {
     if (!inputMenu.show) return;
     const close = () => { inputMenu.show = false; };
@@ -529,6 +553,9 @@
     };
   });
 </script>
+
+<!-- Ctrl+A 全局兜底:限定选中范围,见 handleSelectAll -->
+<svelte:window onkeydown={handleSelectAll} />
 
 {#if isThemeEditorWindow}
   <ThemeEditor />
