@@ -90,7 +90,7 @@ export interface CommandGroup {
 
 /** settings.json 的 command_index 段。与后端 CommandIndexSettings 对齐。 */
 export interface CommandIndexSettings {
-  /** 知识库服务器地址,如 http://10.12.16.11:8200;空 = 未配置,联想只用发送历史 */
+  /** 知识库服务器地址,如 http://127.0.0.1:8200;空 = 未配置,联想只用发送历史 */
   base_url: string;
   api_key: string;
   /** 手册 id 排除名单:不在此列的手册都参与候选 */

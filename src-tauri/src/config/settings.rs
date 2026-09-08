@@ -260,11 +260,13 @@ impl Default for McpSettings {
 /// 输入框指令联想设置:知识库手册索引接入 + 联想开关。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandIndexSettings {
-    /// 知识库服务器地址,如 http://10.12.16.11:8200;空 = 未配置,联想只用发送历史
-    #[serde(default)]
+    /// 知识库服务器地址,如 http://127.0.0.1:8200;空 = 未配置,联想只用发送历史。
+    /// 缺键时取编译期注入的默认值,见 default_kb_base_url
+    #[serde(default = "default_kb_base_url")]
     pub base_url: String,
-    /// X-API-Key。明文存 settings.json,与本机其他配置同等对待
-    #[serde(default)]
+    /// X-API-Key。明文存 settings.json,与本机其他配置同等对待。
+    /// 缺键时取编译期注入的默认值,见 default_kb_api_key
+    #[serde(default = "default_kb_api_key")]
     pub api_key: String,
     /// 手册 id 排除名单:不在此列的手册都参与候选,新出现的手册默认参与
     #[serde(default)]
@@ -311,6 +313,34 @@ fn default_suggest_max_history() -> u32 {
     10
 }
 
+/// 知识库接入的默认地址/Key:**构建时**设 NEOSERIAL_KB_BASE_URL / NEOSERIAL_KB_API_KEY
+/// 即编译进二进制,作为"settings.json 里没有这两个键"时的默认值(用户填过就以配置文件为准)。
+/// 不设 = 空 = 未配置,联想只用发送历史,与不注入时的行为一致。
+///
+/// 这么绕一下是为了让 key 不进仓库:CI 从 GitHub Secrets 注入,本地开发写
+/// src-tauri/.cargo/config.toml 的 [env](已 gitignore)。改了环境变量要重新编译才生效
+/// (build.rs 里有 rerun-if-env-changed)。注意注入的 key 随二进制分发、strings 可见,
+/// 只适合内网只读接口这类场景。
+fn default_kb_base_url() -> String {
+    clean_injected(option_env!("NEOSERIAL_KB_BASE_URL"))
+}
+
+fn default_kb_api_key() -> String {
+    clean_injected(option_env!("NEOSERIAL_KB_API_KEY"))
+}
+
+/// 注入值的清洗:去首尾空白,再剥掉外层引号。
+/// TOML 的 [env] 段语法上必须带引号,而 CI secret 输入框、shell export 不要引号——
+/// 两边写法不同,很容易把引号一起粘进来。带引号的地址会变成 `"http://h:8200"`,
+/// 请求报个看不懂的连接错误;带引号的 Key 则是 401。这里直接剥掉。
+fn clean_injected(raw: Option<&str>) -> String {
+    raw.unwrap_or("")
+        .trim()
+        .trim_matches(&['"', '\''][..])
+        .trim()
+        .to_string()
+}
+
 fn default_history_limit() -> u32 {
     crate::config::send_history::SEND_HISTORY_DEFAULT_MAX as u32
 }
@@ -318,8 +348,8 @@ fn default_history_limit() -> u32 {
 impl Default for CommandIndexSettings {
     fn default() -> Self {
         CommandIndexSettings {
-            base_url: String::new(),
-            api_key: String::new(),
+            base_url: default_kb_base_url(),
+            api_key: default_kb_api_key(),
             disabled_doc_ids: Vec::new(),
             auto_refresh: default_true(),
             suggest_enabled: default_true(),
@@ -882,6 +912,16 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// 注入值带引号(TOML 与 secret 输入框写法不同,容易一起粘进来)应被剥掉。
+    #[test]
+    fn test_clean_injected_strips_quotes_and_space() {
+        assert_eq!(clean_injected(Some(" http://h:8200 ")), "http://h:8200");
+        assert_eq!(clean_injected(Some("\"http://h:8200\"")), "http://h:8200");
+        assert_eq!(clean_injected(Some("'kb_abc'")), "kb_abc");
+        assert_eq!(clean_injected(None), "");
+        assert_eq!(clean_injected(Some("  ")), "");
+    }
+
     /// 旧配置没有 command_index 段 → 整段取默认(auto_refresh/suggest_enabled 为 true,不是 bool 默认的 false)。
     #[test]
     fn test_missing_command_index_takes_default() {
@@ -890,8 +930,9 @@ mod tests {
         let s: Settings = serde_json::from_value(v).unwrap();
         assert!(s.command_index.auto_refresh);
         assert!(s.command_index.suggest_enabled);
-        assert!(s.command_index.base_url.is_empty());
-        assert!(s.command_index.api_key.is_empty());
+        // 地址/Key 的默认值可能由构建环境注入,这里断言"取的是编译期默认"(未注入时即空)
+        assert_eq!(s.command_index.base_url, default_kb_base_url());
+        assert_eq!(s.command_index.api_key, default_kb_api_key());
         assert!(s.command_index.disabled_doc_ids.is_empty());
     }
 

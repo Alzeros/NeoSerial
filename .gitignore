@@ -11,6 +11,9 @@ src-tauri/target/
 # 更新检查的运行时版本缓存
 exe_version_check.txt
 
+# 本地注入的默认知识库接入(含 API Key),不入库;CI 走 GitHub Secrets
+src-tauri/.cargo/config.toml
+
 # Node / Vite
 node_modules/
 dist/

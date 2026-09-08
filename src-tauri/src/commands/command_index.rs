@@ -514,7 +514,7 @@ mod tests {
 
     #[test]
     fn test_normalize_base_url_strips_trailing_slash_and_space() {
-        assert_eq!(normalize_base_url(" http://10.12.16.11:8200/ "), "http://10.12.16.11:8200");
+        assert_eq!(normalize_base_url(" http://127.0.0.1:8200/ "), "http://127.0.0.1:8200");
         assert_eq!(normalize_base_url("http://h:8200//"), "http://h:8200");
         assert_eq!(normalize_base_url("   "), "");
     }

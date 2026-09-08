@@ -12,6 +12,33 @@ npm run tauri dev    # 开发模式（同时启动 Vite + Cargo）
 npm run tauri build  # 发布构建（生成 NSIS 安装包）
 ```
 
+### 可选：编译期注入默认知识库接入
+
+指令联想要连知识库(见下)。构建时设这两个环境变量,会编译进二进制,作为 `settings.json`
+里**没有**这两个键时的默认值——内网用户装上即可用,不必手填地址与 Key;用户在设置页填过则以配置文件为准。
+
+```bash
+NEOSERIAL_KB_BASE_URL=http://kb.intranet:8200
+NEOSERIAL_KB_API_KEY=kb_xxxxxxxx
+```
+
+不设 = 空 = 未配置(联想只用发送历史),与不注入时行为一致。CI 从 GitHub Secrets 取同名 secret,
+所以仓库里不存 Key;本地开发可写 `src-tauri/.cargo/config.toml` 的 `[env]` 段(已 gitignore),
+免得每次开终端都 export:
+
+```toml
+[env]
+NEOSERIAL_KB_BASE_URL = "http://kb.intranet:8200"
+NEOSERIAL_KB_API_KEY = "kb_xxxxxxxx"
+```
+
+注意 TOML 的 `[env]` 段语法上要引号,而 **GitHub secret 输入框、shell export 都不要引号**——
+两边写法不同,容易把引号一起粘进值里。真粘进去了也不会坏事:注入值会先剥掉外层引号
+(见 `clean_injected`),但填的时候别带。
+
+改了变量要重新编译才生效(`build.rs` 里声明了 `rerun-if-env-changed`)。注意注入的 Key 随二进制
+分发、`strings` 可见,只适合内网只读接口这类场景。
+
 ## 技术栈
 
 - **前端**: Svelte 5（$state 响应式）+ TypeScript + Tailwind CSS + Vite + lucide-svelte（图标）
@@ -208,7 +235,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（202 passed）
+cargo test           # Rust 单元测试（203 passed）
 npm run test:unit    # 指令联想匹配的纯函数单测（11 tests）
 npm run check        # Svelte/TypeScript 类型检查
 ```

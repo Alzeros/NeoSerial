@@ -1038,7 +1038,7 @@
                     <Collapsible title="知识库服务器" summary={kbSummary} bind:open={openKb}>
                       <div class="flex items-center gap-3 mb-3">
                         <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
-                        <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://10.12.16.11:8200" spellcheck="false" />
+                        <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://127.0.0.1:8200" spellcheck="false" />
                         <!-- 测试连通性:与下方 API Key 行的显示/隐藏按钮同尺寸对齐;探活结果写进状态行 -->
                         <button
                           type="button"

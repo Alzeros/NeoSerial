@@ -38,6 +38,10 @@ jobs:
           GITHUB_TOKEN: ${{ github.token }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # 指令联想的默认知识库接入:编译进二进制作为 settings.command_index 缺键时的默认值。
+          # secrets 没配就是空串,等于不注入(用户自己在设置页填),不影响构建。
+          NEOSERIAL_KB_BASE_URL: ${{ secrets.NEOSERIAL_KB_BASE_URL }}
+          NEOSERIAL_KB_API_KEY: ${{ secrets.NEOSERIAL_KB_API_KEY }}
         with:
           tagName: v__VERSION__
           releaseName: 'NeoSerial v__VERSION__'
