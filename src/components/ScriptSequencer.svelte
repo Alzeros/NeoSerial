@@ -664,9 +664,9 @@
     <table class="w-full text-[13px] table-fixed">
       <thead class="sticky top-0" style="background: var(--background-elevated);">
         <tr class="text-[var(--muted-foreground)]">
-          <th class="w-8 px-1 py-1 text-center font-medium">
+          <th class="w-7 px-0.5 py-1 text-center font-medium">
             <button
-              class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false)
+              class="w-full rounded px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
                 : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
               title="全选/取消选中"
@@ -678,10 +678,10 @@
               }}
             >#</button>
           </th>
-          <th class="px-2 py-1 text-center font-medium">命令</th>
-          <th class="w-10 px-1 py-1 text-center font-medium">
+          <th class="px-1 py-1 text-center font-medium">命令</th>
+          <th class="w-[34px] px-0.5 py-1 text-center font-medium">
             <button
-              class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.hex) ?? false)
+              class="w-full rounded px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.hex) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
                 : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
               title="全选/取消 Hex"
@@ -693,9 +693,9 @@
               }}
             >Hex</button>
           </th>
-          <th class="w-8 px-1 py-1 text-center font-medium">
+          <th class="w-[26px] px-0.5 py-1 text-center font-medium">
             <button
-              class="w-full rounded px-1 py-0.5 text-[12px] font-medium transition-colors {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enter) ?? false)
+              class="w-full rounded px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enter) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
                 : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
               title="全选/取消 回车"
@@ -707,8 +707,9 @@
               }}
             >↩</button>
           </th>
-          <th class="w-[48px] px-1 py-1 text-center font-medium">Delay</th>
-          <th class="w-[95px] px-2 py-1 text-center font-medium">注释</th>
+          <!-- 列窄到放不下单位,挂 title 说明 -->
+          <th class="w-[42px] px-0.5 py-1 text-center font-medium" title="单位 ms">Delay</th>
+          <th class="w-[78px] px-1 py-1 text-center font-medium">注释</th>
         </tr>
       </thead>
       <tbody>
@@ -718,7 +719,7 @@
             class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]"
             oncontextmenu={(e) => handleRowContextMenu(e, i)}
           >
-            <td class="px-1 py-1 text-center text-[var(--muted-foreground)]">
+            <td class="px-0.5 py-1 text-center text-[var(--muted-foreground)]">
               {#if orderMode.value}
                 <span
                   class="select-none cursor-grab inline-flex items-center justify-center w-5 h-5 rounded-md border border-[var(--primary)] bg-[var(--primary)]/10 text-[var(--primary)] text-[12px] font-bold transition-colors hover:bg-[var(--primary)]/20"
@@ -736,7 +737,7 @@
                 >{i + 1}</button>
               {/if}
             </td>
-            <td class="px-2 py-1">
+            <td class="px-1 py-1">
               <input
                 class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.command}
@@ -750,23 +751,24 @@
                 }}
               />
             </td>
-            <td class="px-1 py-1 text-center">
+            <td class="px-0.5 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.hex} disabled={orderMode.value} />
             </td>
-            <td class="px-1 py-1 text-center">
+            <td class="px-0.5 py-1 text-center">
               <input type="checkbox" class="h-3.5 w-3.5 rounded accent-[var(--primary)]" bind:checked={cmd.enter} disabled={orderMode.value} />
             </td>
-            <td class="px-1 py-1">
+            <td class="px-0.5 py-1">
               <input
                 type="number"
-                class="w-full tnum rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1 text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                class="w-full tnum rounded border border-[var(--border)] bg-[var(--background-input)] px-1 py-1 text-[13px] text-center focus-visible:outline-none focus-visible:border-[var(--primary)]"
                 bind:value={cmd.delay_ms}
                 disabled={orderMode.value}
+                title="单位 ms"
               />
             </td>
-            <td class="px-2 py-1">
+            <td class="px-1 py-1">
               <button
-                class="w-full rounded border px-2 py-1 text-[13px] transition-colors truncate text-center flex items-center justify-center {connected.value
+                class="w-full rounded border px-1 py-1 text-[13px] transition-colors truncate text-center flex items-center justify-center {connected.value
                   ? 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
                   : 'border-[var(--border-subtle)] text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'}"
                 style="padding: 2px 3px; line-height: 1;"
@@ -781,7 +783,7 @@
       <!-- 第 N+1 行：大 + 号，点击新增一行 -->
       <tfoot>
         <tr>
-          <td colspan="6" class="px-2 py-1">
+          <td colspan="6" class="px-1 py-1">
             <button
               data-add-row
               class="w-full py-1 text-[13px] font-medium text-[var(--muted-foreground)] hover:bg-[var(--primary)]/10 hover:text-[var(--primary)] border border-dashed border-[var(--border)] hover:border-[var(--primary)] cursor-pointer transition-colors rounded-md"
