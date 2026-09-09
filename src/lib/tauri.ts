@@ -231,7 +231,8 @@ export async function loadSequenceAuto(): Promise<ScriptModule[]> {
 
 // ============ 指令联想(知识库手册索引 + 发送历史) ============
 
-/** 设置页"刷新指令库":用编辑框里的地址/Key 按手册拉全量并写本地缓存;成功后后端广播 command-index-changed。 */
+/** 设置页"刷新指令库":用编辑框里的地址/Key 按手册拉全量并写本地缓存;成功后后端广播 command-index-changed。
+ *  地址/Key 传空串 = 用后端的生效值(用户已保存的,或编译期内置的)。 */
 export async function commandIndexRefresh(baseUrl: string, apiKey: string): Promise<CommandIndexRefreshResult> {
   return await invoke<CommandIndexRefreshResult>('command_index_refresh', { baseUrl, apiKey });
 }
@@ -242,14 +243,53 @@ export async function commandIndexRefreshDoc(baseUrl: string, apiKey: string, do
   return await invoke<CommandIndexRefreshDocResult>('command_index_refresh_doc', { baseUrl, apiKey, documentId });
 }
 
-/** 读本地缓存(%APPDATA%/neoserial/command-index.json)。从未刷新过返回空 documents/commands。 */
+/** 读本地缓存(%LOCALAPPDATA%/neoserial/command-index.json)。从未刷新过返回空 documents/commands。 */
 export async function commandIndexLoad(): Promise<CommandIndexCache> {
   return await invoke<CommandIndexCache>('command_index_load');
 }
 
-/** 连通性测试:用传入的地址/Key 请求手册列表接口探活,不落盘。返回一句话(如"连通正常 · 3 本手册")或失败原因。 */
+/** 连通性测试:用传入的地址/Key(传空串则用生效值)请求手册列表接口探活,不落盘。
+ *  返回一句话(如"连通正常 · 3 本手册")或失败原因。 */
 export async function commandIndexTestConnection(baseUrl: string, apiKey: string): Promise<string> {
   return await invoke<string>('command_index_test_connection', { baseUrl, apiKey });
+}
+
+/** 知识库凭据状态。只有布尔与枚举,拿不到 Key 本身——前端不需要知道它是什么。 */
+export interface KbCredentialStatus {
+  /** 二进制里注入了内置地址:地址框留空即用它 */
+  builtin_base_url: boolean;
+  /** 二进制里注入了内置 Key */
+  builtin_api_key: boolean;
+  /** 用户自己填的 Key:set=已存 / unset=没填 / undecryptable=存了但解不开(换了 Windows 用户或机器) */
+  user_key: 'set' | 'unset' | 'undecryptable';
+}
+
+export async function kbCredentialStatus(): Promise<KbCredentialStatus> {
+  return await invoke<KbCredentialStatus>('kb_credential_status');
+}
+
+/** 写入/清除用户填的知识库 API Key(空串 = 清除,回到内置值)。
+ *  Key 不走 patchSettings:它不在 Settings 结构里,见 config/secret.rs。 */
+export async function kbSetApiKey(key: string): Promise<void> {
+  await invoke('kb_set_api_key', { key });
+}
+
+// ============ 数据目录 ============
+
+/** 当前使用的数据目录。standard = 系统标准位置;portable = exe 旁的便携目录;custom = NEOSERIAL_DATA_DIR */
+export interface DataDirs {
+  config: string;
+  local: string;
+  mode: 'standard' | 'portable' | 'custom';
+}
+
+export async function dataDirs(): Promise<DataDirs> {
+  return await invoke<DataDirs>('data_dirs');
+}
+
+/** 在资源管理器里打开数据目录(cache=true 打开缓存目录)。路径由后端解析,不传路径。 */
+export async function openDataDir(cache: boolean): Promise<void> {
+  await invoke('open_data_dir', { cache });
 }
 
 /** 输入框手动发送成功后记一条历史;后端去重挪前、按设置的留存上限截尾,变化时广播 send-history-changed。返回最新全量列表。 */

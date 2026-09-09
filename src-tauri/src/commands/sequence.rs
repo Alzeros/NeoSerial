@@ -567,7 +567,7 @@ pub async fn load_sequence_config(path: String) -> Result<Vec<serde_json::Value>
     serde_json::from_str(&text).map_err(|e| e.to_string())
 }
 
-/// 自动保存序列配置到默认路径（%APPDATA%/neoserial/sequence.json）。
+/// 自动保存序列配置到配置目录下的 sequence.json（默认 %APPDATA%/neoserial）。
 /// 前端数据变化时自动调用，无需用户手动选择路径。
 /// 保存后广播 "sequence-changed"(带 source label),其他窗口收到后 reload,
 /// 实现多窗口快捷指令同步(避免 A 窗口改了 B 窗口不知道,后续保存覆盖 A 的改动)。
@@ -581,14 +581,22 @@ pub async fn save_sequence_auto(
     let source = webview_window.label().to_string();
     let handle = app_handle.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let appdata = std::env::var("APPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let dir = appdata.join("neoserial");
+        let dir = crate::config::config_dir();
         std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
         let path = dir.join("sequence.json");
         let text = serde_json::to_string_pretty(&data).map_err(|e| e.to_string())?;
-        std::fs::write(&path, text).map_err(|e| e.to_string())?;
+        // 先写 .tmp 再改名:这是全部快捷指令(几十 KB 的用户内容),直接覆盖写时
+        // 崩溃/断电会留下半个 JSON,下次启动整份读不出来。settings / send-history /
+        // command-index / registry 都是这么写的,这里原先漏了。
+        //
+        // 临时文件名固定,所以要串行:多窗口同时改快捷指令会各自触发一次保存(同一进程、
+        // 不同 spawn_blocking 线程),两个写入者共用一个 tmp 名会写出交错的内容再被 rename
+        // 成正式文件。加锁比给 tmp 名编号简单,也不会像编号那样留下一堆残留文件。
+        static SAVE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _guard = SAVE_LOCK.lock().map_err(|e| e.to_string())?;
+        let tmp = path.with_extension("json.tmp");
+        std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())?;
         // 广播给所有窗口(含自己,前端按 source label 跳过自己)
         let _ = handle.emit("sequence-changed", serde_json::json!({
             "source": source
@@ -599,17 +607,14 @@ pub async fn save_sequence_auto(
     .map_err(|e| format!("自动保存序列任务执行异常: {}", e))?
 }
 
-/// 自动加载序列配置（从 %APPDATA%/neoserial/sequence.json）。
+/// 自动加载序列配置（从配置目录的 sequence.json）。
 /// 文件不存在时返回空数组，前端用默认模块。
 #[tauri::command]
 pub async fn load_sequence_auto() -> Result<Vec<serde_json::Value>, String> {
     // 磁盘读取是阻塞操作,不放主线程。文件不存在时返回空数组(前端用默认模块)。
     // spawn_blocking 返回双层 Result(JoinHandle 错误 + 内层 IO 错误),双 `?` 展开。
     let text = tauri::async_runtime::spawn_blocking(|| {
-        let appdata = std::env::var("APPDATA")
-            .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
-        let path = appdata.join("neoserial").join("sequence.json");
+        let path = crate::config::config_dir().join("sequence.json");
         if !path.exists() {
             return Ok(None);
         }

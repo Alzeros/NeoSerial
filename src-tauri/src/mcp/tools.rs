@@ -886,13 +886,15 @@ fn load_kb_cache(shared: &McpShared) -> Result<crate::config::command_index::Com
     if !cache.commands.is_empty() {
         return Ok(cache);
     }
-    // 空缓存:把原因说清楚,agent 才能告诉用户去做什么
+    // 空缓存:把原因说清楚,agent 才能告诉用户去做什么。
+    // 地址取生效值(用户配的或编译期内置的),Key 走 secret(不在 Settings 里)。
     let configured = shared
         .app_handle
         .try_state::<crate::state::AppState>()
         .and_then(|st| st.settings.lock().ok().map(|s| s.command_index.clone()))
-        .map(|ci| !ci.base_url.trim().is_empty() && !ci.api_key.trim().is_empty())
-        .unwrap_or(false);
+        .map(|ci| !ci.effective_base_url().is_empty())
+        .unwrap_or(false)
+        && !crate::config::secret::effective_api_key().is_empty();
     Err(ErrorResp::new(if configured {
         "本地指令索引为空:请在 NeoSerial 设置 → 扩展 → 指令联想 点『刷新指令库』后重试"
     } else {
@@ -1004,6 +1006,8 @@ pub struct SaveSettingsResp {
 }
 
 /// 保存配置(持久化到 settings.json)。改后部分项(如 MCP 端口)需重启生效。
+/// 知识库 API Key 不在 Settings 里(见 config/secret.rs),因此既读不到也无法经此设置;
+/// 老客户端若还在 command_index 里带 api_key,会被 serde 静默忽略。
 pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSettingsResp, ErrorResp> {
     let state = shared.app_handle.try_state::<crate::state::AppState>()
         .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;

@@ -11,10 +11,10 @@ mod util;
 use tauri::{Emitter, Manager};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
 use commands::send::{send, send_file};
-use commands::config::{get_settings, save_settings, patch_settings, save_commands, export_theme_file, import_theme_file};
+use commands::config::{get_settings, save_settings, patch_settings, save_commands, export_theme_file, import_theme_file, data_dirs, open_data_dir};
 use commands::logging::{start_logging, stop_logging, get_logging_status};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
-use commands::command_index::{command_index_refresh, command_index_refresh_doc, command_index_load, command_index_test_connection, send_history_push, send_history_load, send_history_clear};
+use commands::command_index::{command_index_refresh, command_index_refresh_doc, command_index_load, command_index_test_connection, kb_credential_status, kb_set_api_key, send_history_push, send_history_load, send_history_clear};
 use commands::mcp_log::get_mcp_call_log;
 
 use state::AppState;
@@ -177,7 +177,17 @@ async fn resolve_last_close(
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
+/// 供 main.rs 在创建窗口前查 WebView2 数据目录(便携/自定义目录模式下跟着数据走)。
+/// config 模块是私有的,这里开一个口子。
+pub fn webview2_data_dir() -> Option<std::path::PathBuf> {
+    config::webview2_dir()
+}
+
 pub fn run() {
+    // 目录解析必须最先:之后所有读写(设置、快捷指令、缓存、凭据)都基于它。
+    // 紧接着跑一次性迁移(缓存挪到 Local、明文 Key 挪进凭据文件),再让 AppState 去 load 设置。
+    config::init_dirs();
+    config::migrate::run_once();
     tauri::Builder::default()
         // 单实例必须最先注册。应用在托盘里跑着(或窗口都关了)时用户再双击图标"打开软件",
         // 若起了第二个进程:MCP 落到 34595、第一个进程还占着 COM 口,第二个里连同一口报
@@ -307,6 +317,8 @@ pub fn run() {
             get_settings,
             save_settings,
             patch_settings,
+            data_dirs,
+            open_data_dir,
             save_commands,
             start_logging,
             stop_logging,
@@ -323,6 +335,8 @@ pub fn run() {
             command_index_refresh_doc,
             command_index_load,
             command_index_test_connection,
+            kb_credential_status,
+            kb_set_api_key,
             send_history_push,
             send_history_load,
             send_history_clear,

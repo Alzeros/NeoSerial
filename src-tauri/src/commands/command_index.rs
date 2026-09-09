@@ -178,6 +178,28 @@ fn ensure_crypto_provider() {
     }
 }
 
+/// 定这次请求实际用的地址与 Key。
+///
+/// 参数非空 = 设置页编辑框里的当前值(保留"填完还没点应用就先测一下/先刷一下"这个交互;
+/// 那个值本来就是用户刚在这个 webview 里敲进去的,不构成新的暴露面)。
+/// 参数为空 = 用生效值:地址取已保存的、否则编译期内置;Key 取 DPAPI 凭据、否则编译期内置。
+/// Key 永远不从 Settings 里取——它不在那个结构里,见 config/secret.rs。
+fn resolve_credentials(app: &tauri::AppHandle, base_url: &str, api_key: &str) -> (String, String) {
+    let base = if base_url.trim().is_empty() {
+        app.try_state::<AppState>()
+            .and_then(|s| s.settings.lock().ok().map(|g| g.command_index.effective_base_url()))
+            .unwrap_or_default()
+    } else {
+        base_url.trim().to_string()
+    };
+    let key = if api_key.trim().is_empty() {
+        crate::config::secret::effective_api_key()
+    } else {
+        api_key.trim().to_string()
+    };
+    (base, key)
+}
+
 /// 校验地址/Key 并建 HTTP 客户端。刷新与单本刷新共用。
 fn prepare(base_url: &str, api_key: &str) -> Result<(String, String, reqwest::Client), String> {
     let base = normalize_base_url(base_url);
@@ -307,7 +329,7 @@ async fn refresh_doc_impl(
 }
 
 /// 设置页"刷新指令库":拉取 → 写缓存 → 广播 command-index-changed → 返回统计。
-/// 用传入的地址/Key(设置页编辑框里的当前值,不要求先保存)。
+/// 地址/Key 传空 = 用生效值(见 resolve_credentials);传了就用传的,不要求先保存。
 #[tauri::command]
 pub async fn command_index_refresh(
     app_handle: tauri::AppHandle,
@@ -318,6 +340,7 @@ pub async fn command_index_refresh(
         return Err("正在刷新,请稍候".into());
     }
     let _guard = RefreshGuard;
+    let (base_url, api_key) = resolve_credentials(&app_handle, &base_url, &api_key);
     let (cache, stats) = refresh_impl(&base_url, &api_key).await?;
     // 统计先算出来,cache 整份移进落盘闭包,不为了取三个数多复制一份指令表
     let doc_count = cache.documents.iter().filter(|d| d.cmd_status == "done").count();
@@ -348,6 +371,7 @@ pub async fn command_index_refresh_doc(
         return Err("正在刷新,请稍候".into());
     }
     let _guard = RefreshGuard;
+    let (base_url, api_key) = resolve_credentials(&app_handle, &base_url, &api_key);
     let (cache, result) = refresh_doc_impl(&base_url, &api_key, document_id).await?;
     save_and_broadcast(&app_handle, cache).await?;
     Ok(result)
@@ -374,11 +398,17 @@ pub async fn command_index_load() -> Result<CommandIndexCache, String> {
         .map_err(|e| format!("读取缓存任务执行异常: {}", e))
 }
 
-/// 设置页"地址"行的连通性测试:用编辑框里的地址/Key(不必先保存),只请求手册列表接口探活,
-/// 不落盘不广播。返回一句话给前端在状态行显示。比刷新轻(不逐本拉指令),地址/Key 填错时快速反馈。
+/// 设置页"地址"行的连通性测试:用编辑框里的地址/Key(不必先保存;传空则用生效值),
+/// 只请求手册列表接口探活,不落盘不广播。返回一句话给前端在状态行显示。
+/// 比刷新轻(不逐本拉指令),地址/Key 填错时快速反馈。
 #[tauri::command]
-pub async fn command_index_test_connection(base_url: String, api_key: String) -> Result<String, String> {
+pub async fn command_index_test_connection(
+    app_handle: tauri::AppHandle,
+    base_url: String,
+    api_key: String,
+) -> Result<String, String> {
     ensure_crypto_provider();
+    let (base_url, api_key) = resolve_credentials(&app_handle, &base_url, &api_key);
     let base = normalize_base_url(&base_url);
     let key = api_key.trim().to_string();
     if base.is_empty() || key.is_empty() {
@@ -393,14 +423,16 @@ pub async fn command_index_test_connection(base_url: String, api_key: String) ->
     Ok(format!("连通正常 · {} 本手册", docs.len()))
 }
 
-/// setup 时调一次:配了地址和 Key 且 auto_refresh 开 → 后台刷新,失败只记日志。
+/// setup 时调一次:有生效的地址和 Key 且 auto_refresh 开 → 后台刷新,失败只记日志。
 /// 进程级只跑一次,不按窗口跑(多窗口各跑一遍会撞 REFRESHING 也浪费配额)。
+/// 生效值 = 用户配置 → 编译期内置,所以内网用户装完不填也会自动刷。
 pub fn spawn_auto_refresh(handle: &tauri::AppHandle, cfg: &CommandIndexSettings) {
-    if !cfg.auto_refresh || cfg.base_url.trim().is_empty() || cfg.api_key.trim().is_empty() {
+    let base_url = cfg.effective_base_url();
+    let api_key = crate::config::secret::effective_api_key();
+    if !cfg.auto_refresh || base_url.trim().is_empty() || api_key.trim().is_empty() {
         return;
     }
     let handle = handle.clone();
-    let (base_url, api_key) = (cfg.base_url.clone(), cfg.api_key.clone());
     tauri::async_runtime::spawn(async move {
         match command_index_refresh(handle, base_url, api_key).await {
             Ok(r) => log::info!(
@@ -414,6 +446,38 @@ pub fn spawn_auto_refresh(handle: &tauri::AppHandle, cfg: &CommandIndexSettings)
             Err(e) => log::warn!("启动刷新指令库失败: {}", e),
         }
     });
+}
+
+/// 知识库凭据状态。**只回布尔与枚举,绝不回 Key 本身**——前端要知道的是
+/// "配没配""该不该提示重填",不需要知道 Key 是什么。
+#[derive(Serialize)]
+pub struct KbCredentialStatus {
+    /// 二进制里注入了内置地址(用户把地址框留空时用它)
+    pub builtin_base_url: bool,
+    /// 二进制里注入了内置 Key
+    pub builtin_api_key: bool,
+    /// 用户自己填的 Key:set / unset / undecryptable
+    pub user_key: crate::config::secret::KeyState,
+}
+
+/// 设置页据此决定:地址/Key 框的占位提示、"刷新指令库"能不能点、要不要提示重填凭据。
+#[tauri::command]
+pub fn kb_credential_status() -> KbCredentialStatus {
+    KbCredentialStatus {
+        builtin_base_url: !crate::config::settings::builtin_base_url().is_empty(),
+        builtin_api_key: crate::config::secret::has_builtin(),
+        user_key: crate::config::secret::state(),
+    }
+}
+
+/// 写入/清除用户填的知识库 API Key。空串 = 清除,回到内置值。
+/// 单独一条命令是因为 Key 不在 Settings 里:它不能走 save_settings / patch_settings
+/// (那两条路会把值发给前端、发给 agent、写进 settings.json)。见 config/secret.rs。
+#[tauri::command]
+pub async fn kb_set_api_key(key: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || crate::config::secret::set_user_key(&key))
+        .await
+        .map_err(|e| format!("写凭据任务执行异常: {}", e))?
 }
 
 // ============ 发送历史 ============

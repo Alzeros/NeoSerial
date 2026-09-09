@@ -8,6 +8,54 @@ pub fn get_settings(state: State<'_, AppState>) -> Result<crate::config::setting
     Ok(settings.clone())
 }
 
+/// 当前用的数据目录,给设置页显示"我的数据在哪"。
+#[derive(serde::Serialize)]
+pub struct DataDirs {
+    /// 配置与用户数据:settings.json / sequence.json / send-history.json / 凭据
+    pub config: String,
+    /// 缓存与日志:command-index.json / 默认日志目录
+    pub local: String,
+    /// standard = 系统标准位置;portable = exe 旁的便携目录;custom = NEOSERIAL_DATA_DIR
+    pub mode: crate::config::DirMode,
+}
+
+#[tauri::command]
+pub fn data_dirs() -> DataDirs {
+    DataDirs {
+        config: crate::config::config_dir().to_string_lossy().to_string(),
+        local: crate::config::local_dir().to_string_lossy().to_string(),
+        mode: crate::config::dir_mode(),
+    }
+}
+
+/// 在资源管理器里打开数据目录。路径由后端自己解析——不接受前端传路径,
+/// 免得这条命令变成"任意路径打开器"。
+#[tauri::command]
+pub fn open_data_dir(cache: bool) -> Result<(), String> {
+    let dir = if cache {
+        crate::config::local_dir()
+    } else {
+        crate::config::config_dir()
+    };
+    std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败: {}", e))?;
+    #[cfg(target_os = "windows")]
+    {
+        // 不经 shell,单参数传给 explorer:路径里有 & 空格之类也不会被解释
+        std::process::Command::new("explorer")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(&dir)
+            .spawn()
+            .map_err(|e| format!("打开目录失败: {}", e))?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_settings(
     app_handle: tauri::AppHandle,

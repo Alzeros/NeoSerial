@@ -261,13 +261,15 @@ impl Default for McpSettings {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommandIndexSettings {
     /// 知识库服务器地址,如 http://127.0.0.1:8200;空 = 未配置,联想只用发送历史。
-    /// 缺键时取编译期注入的默认值,见 default_kb_base_url
-    #[serde(default = "default_kb_base_url")]
+    /// 空 = 用编译期注入的内置地址(见 builtin_base_url);两者都空才是"未配置"。
+    /// 注入值只作运行时兜底、不写进这里,所以 settings.json 里不会出现内网地址,
+    /// 设置页的地址框也是空的(显示"已内置")。取生效值走 effective_base_url()。
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub base_url: String,
-    /// X-API-Key。明文存 settings.json,与本机其他配置同等对待。
-    /// 缺键时取编译期注入的默认值,见 default_kb_api_key
-    #[serde(default = "default_kb_api_key")]
-    pub api_key: String,
+    // 注意:这里**没有** api_key 字段。Settings 会发给前端(devtools 可见)、发给 MCP 的
+    // get_settings 工具(端点无鉴权)、整份写进 settings.json;key 存在这里等于三处明文。
+    // 它改存 config/secret.rs(DPAPI 加密的独立文件),老配置里的 api_key 键由
+    // config::migrate 搬走后被 serde 自动忽略(本结构没有 deny_unknown_fields)。
     /// 手册 id 排除名单:不在此列的手册都参与候选,新出现的手册默认参与
     #[serde(default)]
     pub disabled_doc_ids: Vec<i64>,
@@ -313,27 +315,25 @@ fn default_suggest_max_history() -> u32 {
     10
 }
 
-/// 知识库接入的默认地址/Key:**构建时**设 NEOSERIAL_KB_BASE_URL / NEOSERIAL_KB_API_KEY
-/// 即编译进二进制,作为"settings.json 里没有这两个键"时的默认值(用户填过就以配置文件为准)。
-/// 不设 = 空 = 未配置,联想只用发送历史,与不注入时的行为一致。
+/// 内置知识库地址:**构建时**设 NEOSERIAL_KB_BASE_URL 即编译进二进制,作为用户没填时的兜底。
+/// 不设 = 空 = 未配置,联想只用发送历史。Key 那半边见 secret::builtin_api_key。
 ///
 /// 这么绕一下是为了让 key 不进仓库:CI 从 GitHub Secrets 注入,本地开发写
 /// src-tauri/.cargo/config.toml 的 [env](已 gitignore)。改了环境变量要重新编译才生效
-/// (build.rs 里有 rerun-if-env-changed)。注意注入的 key 随二进制分发、strings 可见,
+/// (build.rs 里有 rerun-if-env-changed)。注意注入值随二进制分发、strings 可见,
 /// 只适合内网只读接口这类场景。
-fn default_kb_base_url() -> String {
+///
+/// 与旧版的区别:注入值不再作为 serde default 物化进 Settings。物化会把它写进每台机器的
+/// settings.json、显示在设置页的输入框里——"留默认值但不显示出来"就落空了。
+pub(crate) fn builtin_base_url() -> String {
     clean_injected(option_env!("NEOSERIAL_KB_BASE_URL"))
-}
-
-fn default_kb_api_key() -> String {
-    clean_injected(option_env!("NEOSERIAL_KB_API_KEY"))
 }
 
 /// 注入值的清洗:去首尾空白,再剥掉外层引号。
 /// TOML 的 [env] 段语法上必须带引号,而 CI secret 输入框、shell export 不要引号——
 /// 两边写法不同,很容易把引号一起粘进来。带引号的地址会变成 `"http://h:8200"`,
 /// 请求报个看不懂的连接错误;带引号的 Key 则是 401。这里直接剥掉。
-fn clean_injected(raw: Option<&str>) -> String {
+pub(crate) fn clean_injected(raw: Option<&str>) -> String {
     raw.unwrap_or("")
         .trim()
         .trim_matches(&['"', '\''][..])
@@ -345,11 +345,33 @@ fn default_history_limit() -> u32 {
     crate::config::send_history::SEND_HISTORY_DEFAULT_MAX as u32
 }
 
+impl CommandIndexSettings {
+    /// 实际请求知识库时用的地址:用户填的优先,否则内置注入值,都没有则空(=未配置)。
+    /// Key 那半边是 secret::effective_api_key()。
+    pub fn effective_base_url(&self) -> String {
+        let user = self.base_url.trim();
+        if user.is_empty() {
+            builtin_base_url()
+        } else {
+            user.to_string()
+        }
+    }
+
+    /// 存量配置归一化:早先版本把注入的内置地址物化进了 settings.json。
+    /// 与内置值相同就当"用户没配"清掉——行为等价(effective 还是它),
+    /// 而且下次保存就从磁盘上消失,设置页也不再显示内网地址。
+    pub(crate) fn normalize(&mut self) {
+        let builtin = builtin_base_url();
+        if !builtin.is_empty() && self.base_url.trim() == builtin {
+            self.base_url.clear();
+        }
+    }
+}
+
 impl Default for CommandIndexSettings {
     fn default() -> Self {
         CommandIndexSettings {
-            base_url: default_kb_base_url(),
-            api_key: default_kb_api_key(),
+            base_url: String::new(),
             disabled_doc_ids: Vec::new(),
             auto_refresh: default_true(),
             suggest_enabled: default_true(),
@@ -449,7 +471,8 @@ impl Settings {
             Err(_) => return Self::default_settings(),
         };
         // 先尝试新格式
-        if let Ok(s) = serde_json::from_str::<Settings>(&text) {
+        if let Ok(mut s) = serde_json::from_str::<Settings>(&text) {
+            s.command_index.normalize();
             return s;
         }
         // 再尝试旧格式迁移（quick_commands → command_groups）
@@ -802,7 +825,7 @@ mod tests {
         base.ui.background_mode = true;
         base.ui.log_font_size = 16;
         base.presets.theme = "preset-3".into();
-        base.command_index.api_key = "k".into();
+        base.command_index.base_url = "http://h:8200".into();
         let next = base
             .apply_patch(&serde_json::json!({ "ui": { "show_timestamp": false, "qc_font_size": 15 } }))
             .unwrap();
@@ -811,7 +834,45 @@ mod tests {
         assert!(next.ui.background_mode, "同段未提到的键不能被冲掉");
         assert_eq!(next.ui.log_font_size, 16);
         assert_eq!(next.presets.theme, "preset-3");
-        assert_eq!(next.command_index.api_key, "k");
+        assert_eq!(next.command_index.base_url, "http://h:8200", "skip_serializing_if 的字段也要能穿过补丁往返");
+    }
+
+    /// 前端/agent 若还按老 schema 传 command_index.api_key:静默忽略(本结构没有 deny_unknown_fields),
+    /// 既不报错也不落盘,同段其他键照常生效。key 只能走 secret::set_user_key。
+    #[test]
+    fn test_apply_patch_ignores_legacy_api_key() {
+        let base = Settings::default_settings();
+        let next = base
+            .apply_patch(&serde_json::json!({
+                "command_index": { "api_key": "kb_leak", "suggest_min_chars": 4 }
+            }))
+            .unwrap();
+        assert_eq!(next.command_index.suggest_min_chars, 4);
+        let text = serde_json::to_string(&next).unwrap();
+        assert!(!text.contains("api_key"), "序列化产物里不该有 api_key 字段");
+        assert!(!text.contains("kb_leak"), "补丁里的 key 不该被保留");
+    }
+
+    /// 存量配置里物化的内置地址在加载时归一化掉:effective 值不变,但不再落盘、不再显示。
+    #[test]
+    fn test_normalize_clears_base_url_equal_to_builtin() {
+        let mut ci = CommandIndexSettings { base_url: "http://user:9000".into(), ..Default::default() };
+        ci.normalize();
+        assert_eq!(ci.base_url, "http://user:9000", "用户自己填的不动");
+        assert_eq!(ci.effective_base_url(), "http://user:9000");
+
+        let builtin = builtin_base_url();
+        if builtin.is_empty() {
+            // 没注入内置值时:空地址就是未配置
+            let mut empty = CommandIndexSettings::default();
+            empty.normalize();
+            assert!(empty.effective_base_url().is_empty());
+        } else {
+            let mut same = CommandIndexSettings { base_url: builtin.clone(), ..Default::default() };
+            same.normalize();
+            assert!(same.base_url.is_empty(), "与内置值相同 → 清空");
+            assert_eq!(same.effective_base_url(), builtin, "生效值仍是内置值");
+        }
     }
 
     /// 数组整体替换(不做元素合并);非法值(端口越界、类型不对)整份拒绝,底稿不动。
@@ -930,10 +991,21 @@ mod tests {
         let s: Settings = serde_json::from_value(v).unwrap();
         assert!(s.command_index.auto_refresh);
         assert!(s.command_index.suggest_enabled);
-        // 地址/Key 的默认值可能由构建环境注入,这里断言"取的是编译期默认"(未注入时即空)
-        assert_eq!(s.command_index.base_url, default_kb_base_url());
-        assert_eq!(s.command_index.api_key, default_kb_api_key());
+        // 地址默认为空(内置注入值只在 effective_base_url 里兜底,不物化进配置)
+        assert!(s.command_index.base_url.is_empty());
+        assert_eq!(s.command_index.effective_base_url(), builtin_base_url());
         assert!(s.command_index.disabled_doc_ids.is_empty());
+    }
+
+    /// 空地址不写进 JSON:settings.json 里干净,也不会把内网地址物化到用户文件里。
+    #[test]
+    fn test_empty_base_url_is_not_serialized() {
+        let s = Settings::default_settings();
+        let text = serde_json::to_string(&s).unwrap();
+        assert!(!text.contains("base_url"), "地址为空时该键整个省掉");
+        // 省掉的键反序列化回来仍是空,往返稳定
+        let back: Settings = serde_json::from_str(&text).unwrap();
+        assert!(back.command_index.base_url.is_empty());
     }
 
     /// 段里只写了部分键 → 缺的键各取默认。

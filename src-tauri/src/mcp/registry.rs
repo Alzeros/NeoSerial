@@ -5,6 +5,11 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// registry 文件路径:%APPDATA%/neoserial/mcp-registry.json
+///
+/// **不跟 config_dir() 走**:便携模式/NEOSERIAL_DATA_DIR 把其他数据挪到 exe 旁边或别的盘,
+/// 这一份仍留在这个固定位置。它不是用户数据,是 agent 找 MCP 端口的汇合点,必须在众所周知
+/// 的路径上(README/CLAUDE.md 里的发现约定就是它),否则 agent 得先知道 exe 在哪才能发现实例。
+/// 条目带 heartbeat_at、读方有 30s 新鲜度检查,所以即便被漫游配置同步到别的机器也无害。
 pub fn registry_path() -> PathBuf {
     let appdata = std::env::var("APPDATA")
         .map(PathBuf::from)
@@ -160,6 +165,30 @@ pub fn cleanup_dead() {
     all.retain(|e| is_pid_alive(e.pid));
     if all.len() != before {
         let _ = write_all(&path, &all);
+    }
+    sweep_stale_tmp(&path);
+}
+
+/// 清掉 mcp-registry.json.tmp.<pid> 残留。
+/// write_all 的临时文件名带 pid(多实例并发时不能共用一个 tmp 名,否则原子写失效),
+/// 代价是进程在 write 与 rename 之间被强杀(Ctrl+C、任务管理器结束进程)就留下孤儿文件,
+/// 一次一个地攒。只删 pid 已不存活的:活着的那个可能正在写。
+fn sweep_stale_tmp(path: &Path) {
+    let (Some(dir), Some(file)) = (path.parent(), path.file_name().and_then(|n| n.to_str())) else {
+        return;
+    };
+    // with_extension("json.tmp.<pid>") 产出的是 mcp-registry.json.tmp.<pid>
+    let prefix = format!("{}.tmp.", file);
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(pid) = name.strip_prefix(&prefix).and_then(|p| p.parse::<u32>().ok()) else {
+            continue;
+        };
+        if !is_pid_alive(pid) {
+            let _ = fs::remove_file(entry.path());
+        }
     }
 }
 

@@ -3,7 +3,7 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear } from '$lib/tauri';
+  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
@@ -104,7 +104,17 @@
   // 刷新结果:ok 全部成功 / warn 部分手册失败沿用旧缓存 / error 整体失败
   let indexRefreshMsg = $state<{ kind: 'ok' | 'warn' | 'error'; text: string } | null>(null);
   let historyCleared = $state(false);
-  const canRefreshIndex = $derived(editKbBaseUrl.trim().length > 0 && editKbApiKey.trim().length > 0 && !indexRefreshing);
+  // 知识库凭据状态(只有布尔与枚举,拿不到 Key 本身)与数据目录:开窗时拉一次
+  let kbCred = $state<KbCredentialStatus>({ builtin_base_url: false, builtin_api_key: false, user_key: 'unset' });
+  let dirs = $state<DataDirs | null>(null);
+  let keyCleared = $state(false);
+  // "有生效的地址/Key":用户填了、或已存过凭据、或二进制里有内置值。
+  // 内置值不显示也不下发,所以能不能刷新只能靠后端给的这几个布尔判断。
+  const hasBase = $derived(editKbBaseUrl.trim().length > 0 || kbCred.builtin_base_url);
+  const hasKey = $derived(
+    editKbApiKey.trim().length > 0 || kbCred.user_key === 'set' || kbCred.builtin_api_key,
+  );
+  const canRefreshIndex = $derived(hasBase && hasKey && !indexRefreshing);
   // 编辑副本的结构化快照:脏检测(与上次加载/应用时的快照比)和构建补丁(只提交变了的字段)共用。
   // 只比编辑副本本身,不依赖 cachedSettings 的字段完整性(避免后端版本差异导致 JSON 永远不等、应用按钮常亮)。
   type EditValues = {
@@ -114,7 +124,7 @@
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
     baudRates: number[]; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
-    kbBaseUrl: string; kbApiKey: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
+    kbBaseUrl: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
     suggestMinChars: number; suggestIgnoreAtPrefix: boolean; suggestMaxManual: number; suggestMaxHistory: number;
     historyLimit: number;
   };
@@ -129,7 +139,7 @@
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
       baudRates, theme: editTheme, custom: { ...editCustom },
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
-      kbBaseUrl: editKbBaseUrl.trim(), kbApiKey: editKbApiKey.trim(), disabledDocIds: [...editDisabledDocIds],
+      kbBaseUrl: editKbBaseUrl.trim(), disabledDocIds: [...editDisabledDocIds],
       kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
       suggestMinChars: editSuggestMinChars, suggestIgnoreAtPrefix: editSuggestIgnoreAtPrefix,
       suggestMaxManual: editSuggestMaxManual, suggestMaxHistory: editSuggestMaxHistory,
@@ -141,7 +151,11 @@
   }
   // 上次加载/应用时的编辑值:脏检测基准,也是补丁的比对基准
   let lastAppliedEdits = $state<EditValues | null>(null);
-  const hasUnsavedChanges = $derived(lastAppliedEdits !== null && editsSnapshot() !== JSON.stringify(lastAppliedEdits));
+  // Key 不在 EditValues 里(不进补丁、不下发),脏检测单独把"输入框里有待保存的新 Key"算进来
+  const hasUnsavedChanges = $derived(
+    (lastAppliedEdits !== null && editsSnapshot() !== JSON.stringify(lastAppliedEdits)) ||
+      editKbApiKey.trim().length > 0,
+  );
   // 保存失败的原因(值无效、写盘失败),显示在按钮栏;下次应用/保存或重开对话框时清掉
   let saveError = $state<string | null>(null);
 
@@ -173,7 +187,9 @@
     const ci = cachedSettings.value?.command_index;
     editSuggestEnabled = ci?.suggest_enabled ?? true;
     editKbBaseUrl = ci?.base_url ?? '';
-    editKbApiKey = ci?.api_key ?? '';
+    // Key 拿不到也不该拿:输入框永远从空开始,填了才是"要改成这个"。
+    // 已存过/内置的状态由 kbCred 表达(占位文字与能否刷新都看它)。
+    editKbApiKey = '';
     editKbAutoRefresh = ci?.auto_refresh ?? true;
     editDisabledDocIds = [...(ci?.disabled_doc_ids ?? [])];
     editSuggestMinChars = ci?.suggest_min_chars ?? defaultSuggestLimits.minChars;
@@ -184,11 +200,24 @@
     showApiKey = false;
     indexRefreshMsg = null;
     historyCleared = false;
+    keyCleared = false;
     saveError = null;
-    // 指令联想子页的分节折叠:每次开窗重置。知识库没配全 → 展开知识库那节做引导
-    const kbConfigured = editKbBaseUrl.trim().length > 0 && editKbApiKey.trim().length > 0;
-    openKb = !kbConfigured;
-    openManuals = kbConfigured;
+    // 凭据状态与数据目录:后端说了才算(内置值不下发,前端自己看不出配没配)
+    kbCredentialStatus()
+      .then((s) => {
+        kbCred = s;
+        // 真的什么都没有(没内置、没存过、也没填地址)才展开知识库那节做引导。
+        // 默认按"已配置"排布,内置用户(常见情况)开窗就不会看到多余的展开
+        if (!s.builtin_api_key && s.user_key === 'unset' && !editKbBaseUrl.trim()) {
+          openKb = true;
+          openManuals = false;
+        }
+      })
+      .catch(() => {});
+    dataDirs().then((d) => (dirs = d)).catch(() => {});
+    // 指令联想子页的分节折叠:每次开窗重置
+    openKb = false;
+    openManuals = true;
     openBehavior = false;
     openHistory = false;
     collapsedGroups = [];
@@ -309,7 +338,8 @@
     if (Object.keys(mcp).length) patch.mcp = mcp;
     const ci: NonNullable<SettingsPatch['command_index']> = {};
     if (changed('kbBaseUrl')) ci.base_url = cur.kbBaseUrl;
-    if (changed('kbApiKey')) ci.api_key = cur.kbApiKey;
+    // api_key 不在这里:它不是 Settings 的字段,由 applyEdits 单独调 kbSetApiKey 存进
+    // DPAPI 凭据文件(见 config/secret.rs)
     if (changed('disabledDocIds')) ci.disabled_doc_ids = cur.disabledDocIds;
     if (changed('kbAutoRefresh')) ci.auto_refresh = cur.kbAutoRefresh;
     if (changed('suggestEnabled')) ci.suggest_enabled = cur.suggestEnabled;
@@ -331,6 +361,21 @@
     if (!Number.isInteger(editMcpPort) || editMcpPort < 1024 || editMcpPort > 65535) {
       saveError = 'MCP 端口须为 1024–65535 的整数';
       return false;
+    }
+    // Key 走独立通道(不进 settings.json / 不下发给前端与 agent):填了就存,存不进就别继续
+    const newKey = editKbApiKey.trim();
+    if (newKey) {
+      try {
+        await kbSetApiKey(newKey);
+      } catch (e) {
+        console.error('保存知识库 Key 失败:', e);
+        saveError = `保存 API Key 失败:${e}`;
+        return false;
+      }
+      editKbApiKey = '';
+      showApiKey = false;
+      keyCleared = false;
+      kbCred = { ...kbCred, user_key: 'set' };
     }
     const patch = buildPatch();
     if (Object.keys(patch).length === 0) return true;
@@ -481,8 +526,10 @@
   let openHistory = $state(false);
 
   const kbSummary = $derived.by(() => {
+    if (!hasBase || !hasKey) return '未配置';
     const base = editKbBaseUrl.trim();
-    if (!base || !editKbApiKey.trim()) return '未配置';
+    // 内置地址不显示(它就是不该露出来的那个值),只说"已内置"
+    if (!base) return '已内置';
     return base.replace(/^https?:\/\//, '').replace(/\/+$/, '');
   });
   const manualSummary = $derived.by(() => {
@@ -527,6 +574,33 @@
       console.error('清空发送历史失败:', e);
     }
   }
+
+  /** 删掉用户自己填的 Key,回到内置值(没内置就是回到未配置)。
+   *  与"清空发送历史"一样即时生效:Key 不在设置补丁里,没有"应用"可等。 */
+  async function handleClearApiKey() {
+    try {
+      await kbSetApiKey('');
+      editKbApiKey = '';
+      showApiKey = false;
+      keyCleared = true;
+      kbCred = { ...kbCred, user_key: 'unset' };
+      setTimeout(() => (keyCleared = false), 1500);
+    } catch (e) {
+      console.error('清除知识库 Key 失败:', e);
+      saveError = `清除 API Key 失败:${e}`;
+    }
+  }
+
+  /** Key 输入框的占位文字:它永远是空的(读不回已存的值),状态全靠这里表达 */
+  const apiKeyPlaceholder = $derived(
+    kbCred.user_key === 'set'
+      ? '已保存(填新值可替换)'
+      : kbCred.user_key === 'undecryptable'
+        ? '请重新填写'
+        : kbCred.builtin_api_key
+          ? '已内置(留空即用)'
+          : 'kb_…',
+  );
 
   /** "上次更新 09-03 10:22" 用的短时间;解析不了就原样显示 */
   function formatFetchedAt(iso: string | null): string {
@@ -985,7 +1059,9 @@
                   >
                     {#if indexRefreshMsg}
                       {indexRefreshMsg.text}
-                    {:else if !editKbBaseUrl.trim() || !editKbApiKey.trim()}
+                    {:else if kbCred.user_key === 'undecryptable'}
+                      已存的知识库 Key 解不开,请在下面重新填写。
+                    {:else if !hasBase || !hasKey}
                       填写地址和 API Key 后可刷新;未配置时联想只用发送历史。
                     {:else if commandIndex.fetchedAt}
                       上次更新 {formatFetchedAt(commandIndex.fetchedAt)} · {commandIndex.documents.filter((d) => d.cmd_status === 'done').length} 本手册 · {commandIndex.commands.length} 条指令
@@ -1036,9 +1112,18 @@
                        收起的节头部显示当前值摘要;仍然可以整页上下滚,只是不必一次面对全部设置项。 -->
                   <div>
                     <Collapsible title="知识库服务器" summary={kbSummary} bind:open={openKb}>
+                      <!-- 地址/Key 都留空 = 用内置值。内置值不显示也不下发前端(它就是不该露出来的
+                           那两个值),所以占位文字只说"已内置",能不能刷新看 kbCred 给的布尔。 -->
                       <div class="flex items-center gap-3 mb-3">
                         <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">地址</span>
-                        <input type="text" class="flex-1 min-w-0" style="padding: 6px 10px;" bind:value={editKbBaseUrl} placeholder="http://127.0.0.1:8200" spellcheck="false" />
+                        <input
+                          type="text"
+                          class="flex-1 min-w-0"
+                          style="padding: 6px 10px;"
+                          bind:value={editKbBaseUrl}
+                          placeholder={kbCred.builtin_base_url ? '已内置(留空即用)' : 'http://127.0.0.1:8200'}
+                          spellcheck="false"
+                        />
                         <!-- 测试连通性:与下方 API Key 行的显示/隐藏按钮同尺寸对齐;探活结果写进状态行 -->
                         <button
                           type="button"
@@ -1049,12 +1134,42 @@
                           onclick={handleTestConnection}
                         >{#if indexTesting}<Loader2 size={14} class="animate-spin" />{:else}<Plug size={14} />{/if}</button>
                       </div>
-                      <div class="flex items-center gap-3 mb-3">
+                      <div class="flex items-center gap-3 mb-1">
                         <span class="w-16 text-[13px] text-[var(--foreground)] shrink-0">API Key</span>
-                        <input type="text" class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}" style="padding: 6px 10px;" bind:value={editKbApiKey} placeholder="kb_…" spellcheck="false" autocomplete="off" />
+                        <input
+                          type="text"
+                          class="flex-1 min-w-0 {showApiKey ? '' : 'masked-input'}"
+                          style="padding: 6px 10px;"
+                          bind:value={editKbApiKey}
+                          placeholder={apiKeyPlaceholder}
+                          spellcheck="false"
+                          autocomplete="off"
+                        />
                         <button type="button" class="btn btn-ghost shrink-0" style="padding: 4px 8px;" title={showApiKey ? '隐藏' : '显示'} onclick={() => (showApiKey = !showApiKey)}>
                           {#if showApiKey}<EyeOff size={14} />{:else}<Eye size={14} />{/if}
                         </button>
+                      </div>
+                      <!-- Key 存的是 DPAPI 加密的独立文件,读不回来,所以"改"= 输入新值后点应用,
+                           "去掉"只能给一个显式按钮。与"清空发送历史"一样即时生效(不等应用)。 -->
+                      <div class="flex items-center gap-2 mb-3 text-[12px]" style="color: var(--muted-foreground);">
+                        {#if kbCred.user_key === 'undecryptable'}
+                          <span style="color: var(--warning);">已存的 Key 解不开(换了 Windows 用户或机器),请重新填写</span>
+                        {:else if kbCred.user_key === 'set'}
+                          <span>已保存一个 Key(加密存放,不显示);填新值可替换</span>
+                        {:else if kbCred.builtin_api_key}
+                          <span>使用内置 Key,填了才覆盖</span>
+                        {:else}
+                          <span>知识库管理员给的 X-API-Key</span>
+                        {/if}
+                        {#if kbCred.user_key !== 'unset'}
+                          <button
+                            type="button"
+                            class="btn btn-ghost ml-auto shrink-0"
+                            style="padding: 2px 8px; font-size: 12px;"
+                            title={kbCred.builtin_api_key ? '删掉自己填的 Key,回到内置 Key' : '删掉已保存的 Key'}
+                            onclick={handleClearApiKey}
+                          >{keyCleared ? '已清除' : '清除'}</button>
+                        {/if}
                       </div>
                       <div class="flex items-center gap-3">
                         <label class="flex items-center gap-2 cursor-pointer select-none">
@@ -1069,6 +1184,29 @@
                           onclick={handleRefreshIndex}
                         >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
                       </div>
+
+                      <!-- 数据目录:用户最常问的"我的东西存哪儿"就在这儿自答。
+                           路径可选中复制(全局默认不可选),点按钮用资源管理器打开。
+                           便携/自定义模式额外标一下,免得以为设置丢了。 -->
+                      {#if dirs}
+                        <div class="mt-3 pt-2 text-[12px]" style="border-top: 1px solid var(--border-subtle); color: var(--muted-foreground);">
+                          <div class="flex items-center gap-2 mb-1">
+                            <span>数据目录</span>
+                            {#if dirs.mode !== 'standard'}
+                              <span style="color: var(--primary);">{dirs.mode === 'portable' ? '便携模式' : '自定义目录'}</span>
+                            {/if}
+                            <button
+                              type="button"
+                              class="btn btn-ghost ml-auto shrink-0"
+                              style="padding: 2px 8px; font-size: 12px;"
+                              title="在资源管理器里打开配置目录"
+                              onclick={() => openDataDir(false).catch((e) => console.error('打开目录失败:', e))}
+                            >打开</button>
+                          </div>
+                          <div class="select-text break-all" style="font-family: var(--font-mono);">配置 {dirs.config}</div>
+                          <div class="select-text break-all" style="font-family: var(--font-mono);">缓存 {dirs.local}</div>
+                        </div>
+                      {/if}
                     </Collapsible>
 
                     {#if commandIndex.documents.length}

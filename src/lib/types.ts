@@ -88,11 +88,13 @@ export interface CommandGroup {
   items: CommandItem[];
 }
 
-/** settings.json 的 command_index 段。与后端 CommandIndexSettings 对齐。 */
+/** settings.json 的 command_index 段。与后端 CommandIndexSettings 对齐。
+ *  注意这里**没有 api_key**:Key 存在后端 DPAPI 加密的独立文件里,不经这个结构下发
+ *  (它会进 devtools、进 MCP 的 get_settings、写进 settings.json)。
+ *  读状态用 kbCredentialStatus(),写用 kbSetApiKey()。 */
 export interface CommandIndexSettings {
-  /** 知识库服务器地址,如 http://127.0.0.1:8200;空 = 未配置,联想只用发送历史 */
+  /** 知识库服务器地址;空 = 用编译期内置地址(内置也空才是未配置) */
   base_url: string;
-  api_key: string;
   /** 手册 id 排除名单:不在此列的手册都参与候选 */
   disabled_doc_ids: number[];
   /** 启动时后台刷新一次缓存 */

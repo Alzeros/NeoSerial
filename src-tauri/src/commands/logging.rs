@@ -64,7 +64,9 @@ pub(crate) fn start_logging_impl(app_handle: &tauri::AppHandle, path: Option<Str
                 Some(p) => (p, true),
                 None => {
                     let filename = format!("{}.log", now_local_compact());
-                    let p = crate::config::config_dir()
+                    // 默认日志目录放缓存目录(%LOCALAPPDATA%):长时间抓包可能到 GB 级,
+                    // 不该跟着漫游配置同步。用户在界面上选了路径就写他选的地方,与此无关。
+                    let p = crate::config::local_dir()
                         .join("logs")
                         .join(filename)
                         .to_string_lossy()

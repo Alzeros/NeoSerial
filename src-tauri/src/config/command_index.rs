@@ -1,5 +1,5 @@
 //! 手册指令索引本地缓存:知识库接口按手册拉下来的 AT 指令,落在
-//! %APPDATA%/neoserial/command-index.json,前端启动时整份载入做本地前缀匹配。
+//! %LOCALAPPDATA%/neoserial/command-index.json,前端启动时整份载入做本地前缀匹配。
 //! 字段与接口(GET /api/v1/commands/documents、GET /api/v1/commands)原样对齐。
 use std::collections::HashMap;
 use std::fs;
@@ -78,8 +78,10 @@ pub struct CommandIndexCache {
 }
 
 impl CommandIndexCache {
+    /// 放缓存目录(%LOCALAPPDATA%)而不是配置目录:这份是可重建的缓存,几百 KB 且随手册增长,
+    /// 放漫游配置里会跟着域登录/注销同步。旧位置的文件由 config::migrate 搬过来。
     fn cache_path() -> PathBuf {
-        crate::config::config_dir().join("command-index.json")
+        crate::config::local_dir().join("command-index.json")
     }
 
     pub fn load() -> Self {
