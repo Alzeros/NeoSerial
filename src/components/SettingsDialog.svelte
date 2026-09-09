@@ -120,9 +120,13 @@
   let kbCred = $state<KbCredentialStatus>({ builtin_base_url: false, builtin_api_key: false, user_key: 'unset' });
   let dirs = $state<DataDirs | null>(null);
   let keyCleared = $state(false);
-  // "有生效的地址/Key":用户填了、或已存过凭据、或二进制里有内置值。
+  // 已存在 settings.json 里的地址。设置页不显示它,只用来判断"配没配"与要不要给清除按钮
+  const storedBase = $derived((cachedSettings.value?.command_index?.base_url ?? '').trim());
+  // 这次编辑之后地址会变成什么:填了就是填的,没填则沿用已存的(空输入框 = 不改)
+  const editedBase = $derived(editKbBaseUrl.trim() || storedBase);
+  // "有生效的地址/Key":这次编辑后有值、或已存过凭据、或二进制里有内置值。
   // 内置值不显示也不下发,所以能不能刷新只能靠后端给的这几个布尔判断。
-  const hasBase = $derived(editKbBaseUrl.trim().length > 0 || kbCred.builtin_base_url);
+  const hasBase = $derived(editedBase.length > 0 || kbCred.builtin_base_url);
   const hasKey = $derived(
     editKbApiKey.trim().length > 0 || kbCred.user_key === 'set' || kbCred.builtin_api_key,
   );
@@ -151,7 +155,7 @@
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
       baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, theme: editTheme, custom: { ...editCustom },
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
-      kbBaseUrl: editKbBaseUrl.trim(), disabledDocIds: [...editDisabledDocIds],
+      kbBaseUrl: editedBase, disabledDocIds: [...editDisabledDocIds],
       kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
       suggestMinChars: editSuggestMinChars, suggestIgnoreAtPrefix: editSuggestIgnoreAtPrefix,
       suggestMaxManual: editSuggestMaxManual, suggestMaxHistory: editSuggestMaxHistory,
@@ -208,9 +212,11 @@
     if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
     const ci = cachedSettings.value?.command_index;
     editSuggestEnabled = ci?.suggest_enabled ?? true;
-    editKbBaseUrl = ci?.base_url ?? '';
-    // Key 拿不到也不该拿:输入框永远从空开始,填了才是"要改成这个"。
-    // 已存过/内置的状态由 kbCred 表达(占位文字与能否刷新都看它)。
+    // 地址与 Key 一样从空开始,填了才是"要改成这个"。地址仍明文存在 settings.json 里
+    // (那份暴露面权衡后接受了),但设置页不显示它——内置注入的那个不下发前端,已存的也不回填。
+    // 状态只由占位文字表达("已保存"/"已内置")。空框 = 不改:要换填新值,要彻底去掉改配置文件
+    // (只为这个在行里加一个"清除"按钮不值得——两行输入框会因此错开)。
+    editKbBaseUrl = '';
     editKbApiKey = '';
     editKbAutoRefresh = ci?.auto_refresh ?? true;
     editDisabledDocIds = [...(ci?.disabled_doc_ids ?? [])];
@@ -465,6 +471,8 @@
     logFontCJK.value = editFontCJK;
     textEncoding.value = editTextEncoding;
     cachedSettings.value = next;
+    // 地址与 Key 一样不回显:落盘后清空输入框,状态回到占位文字("已保存")
+    editKbBaseUrl = '';
     // 保留行数调小了就当场裁掉多余的最旧行(与发送历史上限同样的即时生效)
     trimLogLines();
     // 已应用的值就是新的"打开前原值":之后再取消/Esc 只撤销这之后的预览,不能把已落盘的 4 项翻回去
@@ -617,10 +625,8 @@
 
   const kbSummary = $derived.by(() => {
     if (!hasBase || !hasKey) return '未配置';
-    const base = editKbBaseUrl.trim();
-    // 内置地址不显示(它就是不该露出来的那个值),只说"已内置"
-    if (!base) return '已内置';
-    return base.replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    // 地址不进摘要:设置页里本来就不显示它,折叠头再印一遍等于没藏
+    return editedBase ? '已配置' : '已内置';
   });
   const manualSummary = $derived.by(() => {
     const ready = commandIndex.documents.filter((d) => d.cmd_status === 'done');
@@ -680,6 +686,15 @@
       saveError = `清除 API Key 失败:${e}`;
     }
   }
+
+  /** 地址输入框的占位文字:它永远是空的(已存的值不回填),状态与该填什么样子全靠这里表达。
+   *  示例带"例"字是必要的:紧跟在"已内置"后面的一个裸 URL 会被读成"内置的就是这个地址"。 */
+  const baseUrlPlaceholder = $derived.by(() => {
+    const example = '例 http://127.0.0.1:8200';
+    if (storedBase) return `已保存 · ${example}`;
+    if (kbCred.builtin_base_url) return `已内置 · ${example}`;
+    return example;
+  });
 
   /** Key 输入框的占位文字:它永远是空的(读不回已存的值),状态全靠这里表达 */
   const apiKeyPlaceholder = $derived(
@@ -1278,7 +1293,7 @@
                           class="flex-1 min-w-0"
                           style="padding: 6px 10px;"
                           bind:value={editKbBaseUrl}
-                          placeholder={kbCred.builtin_base_url ? '已内置(留空即用)' : 'http://127.0.0.1:8200'}
+                          placeholder={baseUrlPlaceholder}
                           spellcheck="false"
                         />
                         <!-- 测试连通性:与下方 API Key 行的显示/隐藏按钮同尺寸对齐;探活结果写进状态行 -->
