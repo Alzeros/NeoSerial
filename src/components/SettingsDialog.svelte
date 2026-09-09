@@ -1519,8 +1519,13 @@
                     </Collapsible>
 
                     <Collapsible title="发送历史" summary={historySummary} bind:open={openHistory}>
-                      <div class="flex items-center gap-3 mb-2">
-                        <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">留存上限</span>
+                      <!-- 说明挂在标签上(与「数据目录」两行同一路子):三句话里只有"别跟联想
+                           条数搞混"那句真要紧,而它也不必常驻在页面上占三行。 -->
+                      <div class="flex items-center gap-3 mb-3">
+                        <span
+                          class="w-20 text-[13px] text-[var(--foreground)] shrink-0 cursor-help"
+                          title={'输入框手动发过的内容留这么多条,超出的挤掉最旧的(存在 send-history.json)。\n调小后保存,多出来的旧记录当场就裁掉。\n不是"联想里显示几条"——那个在「联想行为」里。'}
+                        >留存上限</span>
                         <input
                           type="range" min="50" max="1000" step="50"
                           class="flex-1 accent-[var(--primary)]"
@@ -1528,10 +1533,6 @@
                           oninput={(e) => (editHistoryLimit = Number((e.target as HTMLInputElement).value))}
                         />
                         <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editHistoryLimit} 条</span>
-                      </div>
-                      <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                        输入框手动发过的内容留这么多条(超出的挤掉最旧的),存在 <code>send-history.json</code>。
-                        调小后保存,多出来的旧记录当场就裁掉。<b>不是</b>联想里显示几条——那个在"联想行为"里。
                       </div>
                       <div class="flex items-center gap-3">
                         <span class="text-[12px] text-[var(--muted-foreground)]">已记录 {commandIndex.history.length} 条</span>
