@@ -243,13 +243,14 @@
       })
       .catch(() => {});
     dataDirs().then((d) => (dirs = d)).catch(() => {});
-    // 分节折叠:每次开窗重置(通用页四节 + 指令联想子页四节)。
+    // 分节折叠:每次开窗重置(通用页五节 + 指令联想子页四节)。
     // 例外:带 anchor 跳进来的那一节要展开——连接栏"添加…"跳过来却是收起的
     // 等于什么也没发生。
     openBaud = anchor === 'baud';
     openApp = false;
     openLogView = false;
     openLogData = false;
+    openDirs = false;
     openKb = false;
     openManuals = true;
     openBehavior = false;
@@ -603,6 +604,7 @@
   let openLogView = $state(false);
   let openLogData = $state(false);
   let openApp = $state(false);
+  let openDirs = $state(false);
   let openKb = $state(false);
   let openBehavior = $state(false);
   let openHistory = $state(false);
@@ -611,6 +613,16 @@
   const baudSummary = $derived(editBaudRates.join(' · ') || '无');
   /** 收起时看得见当前值:关窗到底会不会断连接 */
   const appSummary = $derived(editBackgroundMode ? '托盘常驻' : '关窗即退出');
+  /** 收起时看得见当前值:数据落在系统标准位置还是被挪走了 */
+  const dirsSummary = $derived(
+    dirs === null
+      ? ''
+      : dirs.mode === 'portable'
+        ? '便携模式'
+        : dirs.mode === 'custom'
+          ? '自定义目录'
+          : '系统标准位置',
+  );
   /** 收起时看得见当前值:字体 · 字号 · 行高 · 方向标签 */
   const logViewSummary = $derived.by(() => {
     const latin = logFontLatinPresets.find((x) => x.value === editFontLatin)?.label ?? '默认';
@@ -1033,6 +1045,42 @@
                   </span>
                 </div>
               </Collapsible>
+
+              <!-- 数据目录:整个应用的东西都在这两个目录下(设置、脚本序列、发送历史、凭据、
+                   日志、指令库缓存),与知识库没有特别关系——原先挂在扩展页的「知识库服务器」
+                   节里,位置不对,挪到通用页。只能看与打开:换位置得在启动前指定,见下面那行说明。 -->
+              <Collapsible title="数据目录" summary={dirsSummary} bind:open={openDirs}>
+                {#if dirs}
+                  <!-- 两个目录各一个"打开"(后端 open_data_dir 本来就分 config/cache 两个)。
+                       目录里装什么、位置怎么换都挂 title:这些是问一次就够的说明,
+                       常摆在页面上只是噪声。路径本身要往别处粘,开 select-text。 -->
+                  {#snippet dirRow(label: string, what: string, path: string, cache: boolean)}
+                    <div class="flex items-center gap-3 text-[12px]">
+                      <span class="w-8 shrink-0 cursor-help" style="color: var(--muted-foreground);" title={what}>{label}</span>
+                      <span class="flex-1 min-w-0 select-text break-all" style="font-family: var(--font-mono);">{path}</span>
+                      <button
+                        type="button"
+                        class="btn btn-ghost shrink-0"
+                        style="padding: 2px 8px; font-size: 12px;"
+                        title="在资源管理器里打开"
+                        onclick={() => openDataDir(cache).catch((e) => console.error('打开目录失败:', e))}
+                      >打开</button>
+                    </div>
+                  {/snippet}
+                  {@render dirRow('配置', '设置、脚本序列、发送历史、知识库凭据', dirs.config, false)}
+                  <div class="mt-1.5">
+                    {@render dirRow('缓存', '指令库缓存、默认日志目录', dirs.local, true)}
+                  </div>
+                  <div class="mt-2 text-[12px]" style="color: var(--muted-foreground);">
+                    <span
+                      class="cursor-help underline decoration-dotted"
+                      title={'要换位置:设环境变量 NEOSERIAL_DATA_DIR 指到目标目录,或在 exe 同目录放一个空文件 neoserial.portable(数据落到 exe 旁的 data 里)。\n两者都只在启动时生效,已有数据不会自动搬。'}
+                    >位置在启动前定,应用内改不了</span>
+                  </div>
+                {:else}
+                  <div class="text-[12px]" style="color: var(--muted-foreground);">读取中…</div>
+                {/if}
+              </Collapsible>
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->
@@ -1356,29 +1404,6 @@
                           onclick={handleRefreshIndex}
                         >{indexRefreshing ? '刷新中…' : '刷新指令库'}</button>
                       </div>
-
-                      <!-- 数据目录:用户最常问的"我的东西存哪儿"就在这儿自答。
-                           路径可选中复制(全局默认不可选),点按钮用资源管理器打开。
-                           便携/自定义模式额外标一下,免得以为设置丢了。 -->
-                      {#if dirs}
-                        <div class="mt-3 pt-2 text-[12px]" style="border-top: 1px solid var(--border-subtle); color: var(--muted-foreground);">
-                          <div class="flex items-center gap-2 mb-1">
-                            <span>数据目录</span>
-                            {#if dirs.mode !== 'standard'}
-                              <span style="color: var(--primary);">{dirs.mode === 'portable' ? '便携模式' : '自定义目录'}</span>
-                            {/if}
-                            <button
-                              type="button"
-                              class="btn btn-ghost ml-auto shrink-0"
-                              style="padding: 2px 8px; font-size: 12px;"
-                              title="在资源管理器里打开配置目录"
-                              onclick={() => openDataDir(false).catch((e) => console.error('打开目录失败:', e))}
-                            >打开</button>
-                          </div>
-                          <div class="select-text break-all" style="font-family: var(--font-mono);">配置 {dirs.config}</div>
-                          <div class="select-text break-all" style="font-family: var(--font-mono);">缓存 {dirs.local}</div>
-                        </div>
-                      {/if}
                     </Collapsible>
 
                     {#if commandIndex.documents.length}
