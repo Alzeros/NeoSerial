@@ -224,8 +224,13 @@ export const fileSendProgress = $state<{ value: number }>({ value: 0 });
 /** 跨组件打开设置页的触发器：写入 section 名称(如 'general')，
  *  TitleBar 的 $effect 监听到后调 settingsDialog.show(section, extModule) 并清空。
  *  extModule 可选:打开扩展页时直接进对应子页(侧栏面板右上角齿轮用,跟着当前 tab 走)。
+ *  anchor 可选:页内要展开哪一节(设置页的节默认收起,跳过来若不展开就等于什么也没发生)。
  *  供 ConnectionBar 波特率下拉的"添加…"等场景使用。 */
-export const settingsRequest = $state<{ section: string | null; extModule: 'suggest' | 'mcp' | 'quick' | null }>({ section: null, extModule: null });
+export const settingsRequest = $state<{
+  section: string | null;
+  extModule: 'suggest' | 'mcp' | 'quick' | null;
+  anchor: 'baud' | null;
+}>({ section: null, extModule: null, anchor: null });
 
 // ============ 脚本序列面板 ============
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });

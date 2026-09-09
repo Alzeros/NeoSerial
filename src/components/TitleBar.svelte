@@ -102,9 +102,11 @@
     const section = settingsRequest.section;
     if (section) {
       const extMod = settingsRequest.extModule;
-      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'extensions', extMod);
+      const anchor = settingsRequest.anchor;
+      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'extensions', extMod, anchor);
       settingsRequest.section = null;
       settingsRequest.extModule = null;
+      settingsRequest.anchor = null;
     }
   });
 </script>

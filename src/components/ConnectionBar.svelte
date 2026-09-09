@@ -39,6 +39,8 @@
 
   function openBaudSettings() {
     settingsRequest.section = 'general';
+    // 通用页各节默认收起,不带这个就只是跳到页面、波特率那节还是关着
+    settingsRequest.anchor = 'baud';
   }
 
   async function refreshPorts() {

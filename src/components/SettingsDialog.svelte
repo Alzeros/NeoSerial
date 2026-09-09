@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
@@ -53,6 +54,9 @@
   // 预设波特率编辑副本（打开时从 store 拷贝，取消不污染 store）
   let editBaudRates = $state<number[]>([]);
   let newBaud = $state('');
+  /** 波特率输入框:从连接栏"添加…"跳进来时展开该节并聚焦到这里。
+   *  用 $state 声明:bind:this 会写它,普通 let 会被 svelte-check 报 non_reactive_update */
+  let baudInputEl = $state<HTMLInputElement | undefined>(undefined);
   // 错误关键词编辑副本(Rx 行含任一关键词即标红,大小写无关)。以前只能手改 settings.json
   let editErrorKeywords = $state<string[]>([]);
   let newKeyword = $state('');
@@ -167,7 +171,11 @@
   // 保存失败的原因(值无效、写盘失败),显示在按钮栏;下次应用/保存或重开对话框时清掉
   let saveError = $state<string | null>(null);
 
-  export function show(section: Section = 'about', extMod: 'suggest' | 'mcp' | 'quick' | null = null) {
+  export function show(
+    section: Section = 'about',
+    extMod: 'suggest' | 'mcp' | 'quick' | null = null,
+    anchor: 'baud' | null = null,
+  ) {
     editBaudRates = [...presetBaudRates.value];
     editTheme = theme.value;
     editCustom = { ...customTheme.value };
@@ -229,7 +237,13 @@
       })
       .catch(() => {});
     dataDirs().then((d) => (dirs = d)).catch(() => {});
-    // 指令联想子页的分节折叠:每次开窗重置
+    // 分节折叠:每次开窗重置(通用页四节 + 指令联想子页四节)。
+    // 例外:带 anchor 跳进来的那一节要展开——连接栏"添加…"跳过来却是收起的
+    // 等于什么也没发生。
+    openBaud = anchor === 'baud';
+    openApp = false;
+    openLogView = false;
+    openLogData = false;
     openKb = false;
     openManuals = true;
     openBehavior = false;
@@ -243,6 +257,13 @@
     // 拉取 MCP 运行状态(显示实际端口)
     getMcpStatus().then((s) => (mcpStatus = s)).catch(() => {});
     open = true;
+    // 展开的那一节渲染出来之后再聚焦,省得用户还要自己点输入框
+    if (anchor === 'baud') {
+      tick().then(() => {
+        baudInputEl?.focus();
+        baudInputEl?.select();
+      });
+    }
     // 进入关于页时懒加载版本号（仅首次拉取，失败兜底）
     if (section === 'about' && !version.value) {
       getVersion()
@@ -569,9 +590,30 @@
   // 知识库还没配置时改为展开知识库那节——第一次进来该被引导去填地址,而不是看一个空手册列表。
   // 展开状态只在本次开着设置页期间有效,每次 show() 重置(纯视图状态,不进 settings.json)。
   let openManuals = $state(true);
+  // 通用页四节的折叠状态:全铺开约 1100px,而内容区只有 360px
+  let openBaud = $state(false);
+  let openLogView = $state(false);
+  let openLogData = $state(false);
+  let openApp = $state(false);
   let openKb = $state(false);
   let openBehavior = $state(false);
   let openHistory = $state(false);
+
+  /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
+  const baudSummary = $derived(editBaudRates.join(' · ') || '无');
+  /** 收起时看得见当前值:关窗到底会不会断连接 */
+  const appSummary = $derived(editBackgroundMode ? '托盘常驻' : '关窗即退出');
+  /** 收起时看得见当前值:字体 · 字号 · 行高 · 方向标签 */
+  const logViewSummary = $derived.by(() => {
+    const latin = logFontLatinPresets.find((x) => x.value === editFontLatin)?.label ?? '默认';
+    const dir = editDirLabel === 'full' ? '发送/接收' : 'Tx/Rx';
+    return `${latin} · ${editFontSize}px · ${editLineHeight.toFixed(1)} · ${dir}`;
+  });
+  /** 收起时看得见当前值:编码 · 保留行数 · 关键词数 */
+  const logDataSummary = $derived.by(() => {
+    const enc = editTextEncoding === 'utf8' ? 'UTF-8' : editTextEncoding === 'gbk' ? 'GBK' : 'ASCII';
+    return `${enc} · ${editRingBuffer.toLocaleString()} 行 · ${editErrorKeywords.length} 个关键词`;
+  });
 
   const kbSummary = $derived.by(() => {
     if (!hasBase || !hasKey) return '未配置';
@@ -737,244 +779,245 @@
               <UpdaterCard version={version.value} />
             </div>
           {:else if activeSection === 'general'}
-            <!-- 通用：预设波特率 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">预设波特率</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              添加后可在连接栏波特率下拉中选择。
-            </div>
+            <!-- 四节全折叠:铺开约 1100px 而内容区只有 360px,要滚三屏。折叠头右侧显示当前值,
+                 收起也知道现在是什么设置;四节等价,视觉上比"两节展开两节折叠"整齐。
+                 与指令联想子页同一套语言。 -->
+            <div>
+              <Collapsible title="预设波特率" summary={baudSummary} bind:open={openBaud}>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                  添加后可在连接栏波特率下拉中选择。内置三项不可删除。
+                </div>
 
-            <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
-              {#each editBaudRates as b}
-                <span
-                  class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[13px]"
-                  style="border-color: var(--border); background: var(--border-subtle); color: var(--foreground);"
-                >
-                  {b}
+                <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
+                  {#each editBaudRates as b}
+                    <span
+                      class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[13px]"
+                      style="border-color: var(--border); background: var(--border-subtle); color: var(--foreground);"
+                    >
+                      {b}
+                      <!-- 内置项直接不给 × :原先渲染成 30% 透明的禁用叉,看着像坏了还引人去点 -->
+                      {#if !isDefault(b)}
+                        <button
+                          class="leading-none text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer"
+                          title="移除"
+                          onclick={() => removeBaud(b)}
+                        >×</button>
+                      {/if}
+                    </span>
+                  {:else}
+                    <span class="text-[12px] text-[var(--muted-foreground)] italic">暂无预设</span>
+                  {/each}
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <input
+                    bind:this={baudInputEl}
+                    type="number"
+                    class="flex-1 min-w-0 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                    bind:value={newBaud}
+                    placeholder="输入波特率，如 4800"
+                    onkeydown={(e) => { if (e.key === 'Enter') addBaud(); }}
+                  />
+                  <button class="btn btn-secondary shrink-0 whitespace-nowrap" style="padding: 6px 14px;" onclick={addBaud}>添加</button>
+                </div>
+              </Collapsible>
+              <Collapsible title="日志显示" summary={logViewSummary} bind:open={openLogView}>
+                <!-- 折叠头已经是"日志显示",不再重复一个"日志字体"标题;这行说明就是本节的说明 -->
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
+                  英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。
+                </div>
+
+                <!-- 英文字体 -->
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">英文字体</span>
+                  <select
+                    class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                    value={editFontLatin}
+                    onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
+                  >
+                    {#each logFontLatinPresets as p}
+                      <option value={p.value}>{p.label}</option>
+                    {/each}
+                  </select>
+                </div>
+
+                <!-- 中文字体 -->
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">中文字体</span>
+                  <select
+                    class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                    value={editFontCJK}
+                    onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
+                  >
+                    {#each logFontCJKPresets as p}
+                      <option value={p.value}>{p.label}</option>
+                    {/each}
+                  </select>
+                </div>
+
+                <!-- 字号 -->
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">字号</span>
+                  <input
+                    type="range" min="10" max="22" step="1"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editFontSize}
+                    oninput={(e) => changeFontSize(Number((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editFontSize}px</span>
+                </div>
+
+                <!-- 行高 -->
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">行高</span>
+                  <input
+                    type="range" min="1.0" max="3.0" step="0.1"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editLineHeight}
+                    oninput={(e) => changeLineHeight(Number((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editLineHeight.toFixed(1)}</span>
+                </div>
+
+                <!-- 方向标签 -->
+                <div class="flex items-center gap-3 mb-4">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">方向标签</span>
+                  <div class="flex gap-2">
+                    <button
+                      class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'short'
+                        ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                        : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                      onclick={() => changeDirLabel('short')}
+                    >Tx / Rx</button>
+                    <button
+                      class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'full'
+                        ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                        : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                      onclick={() => changeDirLabel('full')}
+                    >发送 / 接收</button>
+                  </div>
+                </div>
+
+                <!-- 预览 -->
+                <div class="mt-4 p-3 rounded border" style="border-color: var(--border); background: var(--background-data); font-family: var(--log-font-family); font-size: {editFontSize}px; line-height: {editLineHeight};">
+                  <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.362 AT</div>
+                  <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.484 OK</div>
+                  <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.545 AT+CSQ</div>
+                  <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.612 模块就绪</div>
+                </div>
+              </Collapsible>
+              <Collapsible title="日志内容" summary={logDataSummary} bind:open={openLogData}>
+                <!-- 文本编码 -->
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">文本编码</div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                  HEX显示关闭时的文本模式解码方式。
+                </div>
+                <div class="flex items-center gap-3 mb-5">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">编码</span>
+                  <div class="flex gap-2">
+                    {#each [
+                      { v: 'ascii', l: 'ASCII' },
+                      { v: 'utf8', l: 'UTF-8' },
+                      { v: 'gbk', l: 'GBK' },
+                    ] as enc}
+                      <button
+                        class="px-3 py-1 rounded-md border text-[13px] transition-colors {editTextEncoding === enc.v
+                          ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
+                          : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                        onclick={() => (editTextEncoding = enc.v as 'ascii' | 'utf8' | 'gbk')}
+                      >{enc.l}</button>
+                    {/each}
+                  </div>
+                </div>
+
+                <!-- 日志保留行数:对应 ui.ring_buffer_capacity。这个键以前没有任何消费方
+                     (真正生效的是前端写死的 10000),现在接上并给出入口 -->
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志保留行数</div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                  日志区最多保留多少行,超出后从最旧的开始丢。调小后立即生效;文件存盘不受此限。
+                </div>
+                <div class="flex items-center gap-3 mb-5">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">行数</span>
+                  <input
+                    type="range"
+                    min={MIN_LOG_LINES}
+                    max={MAX_LOG_LINES_LIMIT}
+                    step="1000"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editRingBuffer}
+                    oninput={(e) => (editRingBuffer = Number((e.target as HTMLInputElement).value))}
+                  />
+                  <span class="w-16 text-right text-[13px] text-[var(--muted-foreground)] tnum">{editRingBuffer.toLocaleString()}</span>
+                </div>
+
+                <!-- 错误关键词:Rx 行命中即标红。以前只能手改 settings.json -->
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">错误关键词</div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+                  接收行含其中任一词就整行标红(大小写无关,自己发的内容不参与)。改完即时生效,不必重连。
+                </div>
+
+                <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
+                  {#each editErrorKeywords as k (k)}
+                    <span
+                      class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[13px]"
+                      style="border-color: var(--border); background: var(--border-subtle); color: var(--foreground);"
+                    >
+                      {k}
+                      <button
+                        class="leading-none text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer"
+                        title="移除"
+                        onclick={() => removeKeyword(k)}
+                      >×</button>
+                    </span>
+                  {:else}
+                    <span class="text-[12px] text-[var(--muted-foreground)] italic">暂无关键词(不标红任何行)</span>
+                  {/each}
+                </div>
+
+                <div class="flex items-center gap-2">
+                  <input
+                    type="text"
+                    class="flex-1 min-w-0 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                    bind:value={newKeyword}
+                    placeholder="输入关键词,如 +CME ERROR"
+                    spellcheck="false"
+                    onkeydown={(e) => { if (e.key === 'Enter') addKeyword(); }}
+                  />
+                  <button class="btn btn-secondary shrink-0 whitespace-nowrap" style="padding: 6px 14px;" onclick={addKeyword}>添加</button>
+                </div>
+              </Collapsible>
+              <Collapsible title="后台与退出" summary={appSummary} bind:open={openApp}>
+                <!-- 开关用 switch-row(标签在左、开关贴右),与扩展三个子页一致;
+                     标签不再重复节标题里的"后台运行" -->
+                <label class="switch switch-row">
+                  <input type="checkbox" bind:checked={editBackgroundMode} />
+                  <span class="switch-track"></span>
+                  <span class="switch-label">托盘常驻</span>
+                </label>
+                <div class="text-[12px] text-[var(--muted-foreground)] mt-2 leading-relaxed">
+                  {#if editBackgroundMode}
+                    关窗不断开连接:后台继续收发、存日志、跑序列;关掉所有窗口应用留在托盘,MCP 照常。托盘右键可重开窗口或退出。
+                  {:else}
+                    关窗断开本窗口建立的连接(agent 建立的交还 agent);关掉最后一个窗口即退出应用并停 MCP(agent 仍连着会先确认)。
+                  {/if}
+                </div>
+
+                <!-- 按钮 shrink-0:原先与右侧长说明并排,被压得把"退出 NeoSerial"折成两行 -->
+                <div class="mt-4 flex items-start gap-3">
                   <button
-                    class="leading-none {isDefault(b)
-                      ? 'text-[var(--muted-foreground)] opacity-30 cursor-not-allowed'
-                      : 'text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer'}"
-                    title={isDefault(b) ? '内置预设，不可删除' : '移除'}
-                    disabled={isDefault(b)}
-                    onclick={() => removeBaud(b)}
-                  >×</button>
-                </span>
-              {:else}
-                <span class="text-[12px] text-[var(--muted-foreground)] italic">暂无预设</span>
-              {/each}
-            </div>
-
-            <div class="flex items-center gap-2">
-              <input
-                type="number"
-                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                bind:value={newBaud}
-                placeholder="输入波特率，如 4800"
-                onkeydown={(e) => { if (e.key === 'Enter') addBaud(); }}
-              />
-              <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={addBaud}>添加</button>
-            </div>
-
-            <!-- 分隔：日志显示 -->
-            <div class="my-5 border-t border-[var(--border)]"></div>
-
-            <!-- 文本编码 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">文本编码</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              HEX显示关闭时的文本模式解码方式。
-            </div>
-            <div class="flex items-center gap-3 mb-5">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">编码</span>
-              <div class="flex gap-2">
-                {#each [
-                  { v: 'ascii', l: 'ASCII' },
-                  { v: 'utf8', l: 'UTF-8' },
-                  { v: 'gbk', l: 'GBK' },
-                ] as enc}
-                  <button
-                    class="px-3 py-1 rounded-md border text-[13px] transition-colors {editTextEncoding === enc.v
-                      ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                      : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
-                    onclick={() => (editTextEncoding = enc.v as 'ascii' | 'utf8' | 'gbk')}
-                  >{enc.l}</button>
-                {/each}
-              </div>
-            </div>
-
-            <!-- 日志保留行数:对应 ui.ring_buffer_capacity。这个键以前没有任何消费方
-                 (真正生效的是前端写死的 10000),现在接上并给出入口 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志保留行数</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              日志区最多保留多少行,超出后从最旧的开始丢。调小后立即生效;文件存盘不受此限。
-            </div>
-            <div class="flex items-center gap-3 mb-5">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">行数</span>
-              <input
-                type="range"
-                min={MIN_LOG_LINES}
-                max={MAX_LOG_LINES_LIMIT}
-                step="1000"
-                class="flex-1 accent-[var(--primary)]"
-                value={editRingBuffer}
-                oninput={(e) => (editRingBuffer = Number((e.target as HTMLInputElement).value))}
-              />
-              <span class="w-16 text-right text-[13px] text-[var(--muted-foreground)] tnum">{editRingBuffer.toLocaleString()}</span>
-            </div>
-
-            <!-- 错误关键词:Rx 行命中即标红。以前只能手改 settings.json -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">错误关键词</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              接收行含其中任一词就整行标红(大小写无关,自己发的内容不参与)。改完即时生效,不必重连。
-            </div>
-
-            <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
-              {#each editErrorKeywords as k (k)}
-                <span
-                  class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[13px]"
-                  style="border-color: var(--border); background: var(--border-subtle); color: var(--foreground);"
-                >
-                  {k}
-                  <button
-                    class="leading-none text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer"
-                    title="移除"
-                    onclick={() => removeKeyword(k)}
-                  >×</button>
-                </span>
-              {:else}
-                <span class="text-[12px] text-[var(--muted-foreground)] italic">暂无关键词(不标红任何行)</span>
-              {/each}
-            </div>
-
-            <div class="flex items-center gap-2 mb-5">
-              <input
-                type="text"
-                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                bind:value={newKeyword}
-                placeholder="输入关键词,如 +CME ERROR"
-                spellcheck="false"
-                onkeydown={(e) => { if (e.key === 'Enter') addKeyword(); }}
-              />
-              <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={addKeyword}>添加</button>
-            </div>
-
-            <!-- 日志字体 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志字体</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-              英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。
-            </div>
-
-            <!-- 英文字体 -->
-            <div class="flex items-center gap-3 mb-4">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">英文字体</span>
-              <select
-                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                value={editFontLatin}
-                onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
-              >
-                {#each logFontLatinPresets as p}
-                  <option value={p.value}>{p.label}</option>
-                {/each}
-              </select>
-            </div>
-
-            <!-- 中文字体 -->
-            <div class="flex items-center gap-3 mb-4">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">中文字体</span>
-              <select
-                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                value={editFontCJK}
-                onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
-              >
-                {#each logFontCJKPresets as p}
-                  <option value={p.value}>{p.label}</option>
-                {/each}
-              </select>
-            </div>
-
-            <!-- 字号 -->
-            <div class="flex items-center gap-3 mb-4">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">字号</span>
-              <input
-                type="range" min="10" max="22" step="1"
-                class="flex-1 accent-[var(--primary)]"
-                value={editFontSize}
-                oninput={(e) => changeFontSize(Number((e.target as HTMLInputElement).value))}
-              />
-              <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editFontSize}px</span>
-            </div>
-
-            <!-- 行高 -->
-            <div class="flex items-center gap-3 mb-4">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">行高</span>
-              <input
-                type="range" min="1.0" max="3.0" step="0.1"
-                class="flex-1 accent-[var(--primary)]"
-                value={editLineHeight}
-                oninput={(e) => changeLineHeight(Number((e.target as HTMLInputElement).value))}
-              />
-              <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editLineHeight.toFixed(1)}</span>
-            </div>
-
-            <!-- 方向标签 -->
-            <div class="flex items-center gap-3 mb-4">
-              <span class="w-16 text-[13px] text-[var(--foreground)]">方向标签</span>
-              <div class="flex gap-2">
-                <button
-                  class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'short'
-                    ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                    : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
-                  onclick={() => changeDirLabel('short')}
-                >Tx / Rx</button>
-                <button
-                  class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'full'
-                    ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                    : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
-                  onclick={() => changeDirLabel('full')}
-                >发送 / 接收</button>
-              </div>
-            </div>
-
-            <!-- 预览 -->
-            <div class="mt-4 p-3 rounded border" style="border-color: var(--border); background: var(--background-data); font-family: var(--log-font-family); font-size: {editFontSize}px; line-height: {editLineHeight};">
-              <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.362 AT</div>
-              <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.484 OK</div>
-              <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.545 AT+CSQ</div>
-              <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.612 模块就绪</div>
-            </div>
-
-            <!-- 分隔：窗口行为 -->
-            <div class="my-5 border-t border-[var(--border)]"></div>
-
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">后台运行</div>
-            <div class="flex items-center gap-3">
-              <label class="switch">
-                <input type="checkbox" bind:checked={editBackgroundMode} />
-                <span class="switch-track"></span>
-                <span class="switch-label">后台运行（托盘常驻）</span>
-              </label>
-            </div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mt-2 leading-relaxed">
-              {#if editBackgroundMode}
-                开启：关闭窗口不断开串口连接，连接留在后台继续收发、存日志、跑序列；关掉最后一个窗口应用留在托盘，MCP 服务照常。
-                托盘右键菜单可重新打开后台连接、切到已开窗口或退出应用。
-              {:else}
-                关闭：不显示托盘图标。关闭窗口会断开该窗口自己建立的连接（agent 建立的交还 agent）；关掉最后一个窗口即退出应用、停止 MCP 服务（若 agent 仍连着，会先确认）。
-              {/if}
-            </div>
-
-            <div class="mt-4 flex items-center gap-3">
-              <button
-                class="btn {exitArmed ? 'btn-danger-solid' : 'btn-secondary'}"
-                style="padding: 6px 14px;"
-                onclick={handleExitClick}
-              >{exitArmed ? '确认退出?' : '退出 NeoSerial'}</button>
-              <span class="text-[12px]" style="color: {exitArmed ? 'var(--error)' : 'var(--muted-foreground)'};">
-                {#if exitArmed}
-                  再点一次立即退出;3 秒内不点则取消。
-                {:else}
-                  断开所有连接并停止 MCP 服务(agent 正连着也会断),与托盘菜单"退出"相同。
-                {/if}
-              </span>
+                    class="btn shrink-0 whitespace-nowrap {exitArmed ? 'btn-danger-solid' : 'btn-secondary'}"
+                    style="padding: 6px 14px;"
+                    onclick={handleExitClick}
+                  >{exitArmed ? '确认退出?' : '退出 NeoSerial'}</button>
+                  <span class="text-[12px] flex-1 min-w-0 leading-relaxed" style="color: {exitArmed ? 'var(--error)' : 'var(--muted-foreground)'};">
+                    {#if exitArmed}
+                      再点一次立即退出;3 秒内不点则取消。
+                    {:else}
+                      断开所有连接并停止 MCP(agent 正连着也会断)。
+                    {/if}
+                  </span>
+                </div>
+              </Collapsible>
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->
