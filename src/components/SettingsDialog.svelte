@@ -1,7 +1,7 @@
 <script lang="ts">
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
-  import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex } from '$lib/commandIndex';
@@ -53,6 +53,14 @@
   // 预设波特率编辑副本（打开时从 store 拷贝，取消不污染 store）
   let editBaudRates = $state<number[]>([]);
   let newBaud = $state('');
+  // 错误关键词编辑副本(Rx 行含任一关键词即标红,大小写无关)。以前只能手改 settings.json
+  let editErrorKeywords = $state<string[]>([]);
+  let newKeyword = $state('');
+  // 日志区保留行数(ui.ring_buffer_capacity)。这个键以前没有消费方,现在接上了
+  let editRingBuffer = $state(DEFAULT_MAX_LOG_LINES);
+  // "退出 NeoSerial" 的二次确认:这一下会断开所有连接并停 MCP,不该一击即中
+  let exitArmed = $state(false);
+  let exitArmTimer: ReturnType<typeof setTimeout> | null = null;
   // MCP 自动启动编辑副本（从 cachedSettings 拷贝；改后重启生效）
   let editMcpAutoStart = $state(true);
   // MCP 端口编辑副本（默认 34594;被占自动递增。改后需重新 claude mcp add）
@@ -122,7 +130,7 @@
     textEncoding: 'ascii' | 'utf8' | 'gbk';
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean;
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
-    baudRates: number[]; theme: string; custom: Record<string, string>;
+    baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
     kbBaseUrl: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
     suggestMinChars: number; suggestIgnoreAtPrefix: boolean; suggestMaxManual: number; suggestMaxHistory: number;
@@ -137,7 +145,7 @@
       textEncoding: editTextEncoding,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
-      baudRates, theme: editTheme, custom: { ...editCustom },
+      baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, theme: editTheme, custom: { ...editCustom },
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
       kbBaseUrl: editKbBaseUrl.trim(), disabledDocIds: [...editDisabledDocIds],
       kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
@@ -184,6 +192,12 @@
     editQcRowGap = cachedSettings.value?.ui?.qc_row_gap ?? 4;
     editQcFontFamily = cachedSettings.value?.ui?.qc_font_family ?? 'default';
     mcpCopied = false;
+    // 去空白项 + 去重:列表按关键词本身做 key,手改配置文件塞进重复项会让 {#each} 报错
+    editErrorKeywords = [...new Set((cachedSettings.value?.error_keywords ?? []).map((k) => k.trim()).filter(Boolean))];
+    newKeyword = '';
+    editRingBuffer = cachedSettings.value?.ui?.ring_buffer_capacity ?? DEFAULT_MAX_LOG_LINES;
+    exitArmed = false;
+    if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
     const ci = cachedSettings.value?.command_index;
     editSuggestEnabled = ci?.suggest_enabled ?? true;
     editKbBaseUrl = ci?.base_url ?? '';
@@ -299,6 +313,36 @@
     newBaud = '';
   }
 
+  /** 添加错误关键词。去空白、忽略重复(大小写无关,因为匹配本身就不分大小写)。 */
+  function addKeyword() {
+    const k = newKeyword.trim();
+    if (!k) return;
+    if (editErrorKeywords.some((x) => x.toLowerCase() === k.toLowerCase())) {
+      newKeyword = '';
+      return;
+    }
+    editErrorKeywords = [...editErrorKeywords, k];
+    newKeyword = '';
+  }
+
+  function removeKeyword(k: string) {
+    editErrorKeywords = editErrorKeywords.filter((x) => x !== k);
+  }
+
+  /** 退出前的二次确认:第一下只是"上膛",3 秒内再点才真退出。
+   *  这一下会断开所有连接、停掉 MCP(agent 正在用也一样),不该一击即中;
+   *  用两段式按钮而不是弹窗——设置页本身已经是对话框,再叠一层弹窗更重。 */
+  function handleExitClick() {
+    if (!exitArmed) {
+      exitArmed = true;
+      if (exitArmTimer) clearTimeout(exitArmTimer);
+      exitArmTimer = setTimeout(() => (exitArmed = false), 3000);
+      return;
+    }
+    if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
+    exitApp();
+  }
+
   function removeBaud(n: number) {
     // 内置默认波特率不可删除
     if (isDefault(n)) return;
@@ -326,7 +370,9 @@
     if (changed('qcInputHeight')) ui.qc_input_height = cur.qcInputHeight;
     if (changed('qcRowGap')) ui.qc_row_gap = cur.qcRowGap;
     if (changed('qcFontFamily')) ui.qc_font_family = cur.qcFontFamily;
+    if (changed('ringBuffer')) ui.ring_buffer_capacity = cur.ringBuffer;
     if (Object.keys(ui).length) patch.ui = ui;
+    if (changed('errorKeywords')) patch.error_keywords = cur.errorKeywords;
     const presets: NonNullable<SettingsPatch['presets']> = {};
     if (changed('baudRates')) presets.baud_rates = cur.baudRates;
     if (changed('theme')) presets.theme = cur.theme;
@@ -398,6 +444,8 @@
     logFontCJK.value = editFontCJK;
     textEncoding.value = editTextEncoding;
     cachedSettings.value = next;
+    // 保留行数调小了就当场裁掉多余的最旧行(与发送历史上限同样的即时生效)
+    trimLogLines();
     // 已应用的值就是新的"打开前原值":之后再取消/Esc 只撤销这之后的预览,不能把已落盘的 4 项翻回去
     origDirLabel = editDirLabel;
     origFontLatin = editFontLatin;
@@ -753,6 +801,62 @@
               </div>
             </div>
 
+            <!-- 日志保留行数:对应 ui.ring_buffer_capacity。这个键以前没有任何消费方
+                 (真正生效的是前端写死的 10000),现在接上并给出入口 -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志保留行数</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              日志区最多保留多少行,超出后从最旧的开始丢。调小后立即生效;文件存盘不受此限。
+            </div>
+            <div class="flex items-center gap-3 mb-5">
+              <span class="w-16 text-[13px] text-[var(--foreground)]">行数</span>
+              <input
+                type="range"
+                min={MIN_LOG_LINES}
+                max={MAX_LOG_LINES_LIMIT}
+                step="1000"
+                class="flex-1 accent-[var(--primary)]"
+                value={editRingBuffer}
+                oninput={(e) => (editRingBuffer = Number((e.target as HTMLInputElement).value))}
+              />
+              <span class="w-16 text-right text-[13px] text-[var(--muted-foreground)] tnum">{editRingBuffer.toLocaleString()}</span>
+            </div>
+
+            <!-- 错误关键词:Rx 行命中即标红。以前只能手改 settings.json -->
+            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">错误关键词</div>
+            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
+              接收行含其中任一词就整行标红(大小写无关,自己发的内容不参与)。改完即时生效,不必重连。
+            </div>
+
+            <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
+              {#each editErrorKeywords as k (k)}
+                <span
+                  class="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-[13px]"
+                  style="border-color: var(--border); background: var(--border-subtle); color: var(--foreground);"
+                >
+                  {k}
+                  <button
+                    class="leading-none text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer"
+                    title="移除"
+                    onclick={() => removeKeyword(k)}
+                  >×</button>
+                </span>
+              {:else}
+                <span class="text-[12px] text-[var(--muted-foreground)] italic">暂无关键词(不标红任何行)</span>
+              {/each}
+            </div>
+
+            <div class="flex items-center gap-2 mb-5">
+              <input
+                type="text"
+                class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                bind:value={newKeyword}
+                placeholder="输入关键词,如 +CME ERROR"
+                spellcheck="false"
+                onkeydown={(e) => { if (e.key === 'Enter') addKeyword(); }}
+              />
+              <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={addKeyword}>添加</button>
+            </div>
+
             <!-- 日志字体 -->
             <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志字体</div>
             <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
@@ -859,8 +963,18 @@
             </div>
 
             <div class="mt-4 flex items-center gap-3">
-              <button class="btn btn-secondary" style="padding: 6px 14px;" onclick={() => exitApp()}>退出 NeoSerial</button>
-              <span class="text-[12px] text-[var(--muted-foreground)]">断开所有连接并停止 MCP 服务（与托盘菜单"退出"相同）。</span>
+              <button
+                class="btn {exitArmed ? 'btn-danger-solid' : 'btn-secondary'}"
+                style="padding: 6px 14px;"
+                onclick={handleExitClick}
+              >{exitArmed ? '确认退出?' : '退出 NeoSerial'}</button>
+              <span class="text-[12px]" style="color: {exitArmed ? 'var(--error)' : 'var(--muted-foreground)'};">
+                {#if exitArmed}
+                  再点一次立即退出;3 秒内不点则取消。
+                {:else}
+                  断开所有连接并停止 MCP 服务(agent 正连着也会断),与托盘菜单"退出"相同。
+                {/if}
+              </span>
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->

@@ -220,7 +220,8 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 - ASCII / HEX 显示切换
 - 时间戳（HH:MM:SS.mmm）
 - 方向标签（Tx/Rx 或 发送/接收，可切换）
-- 错误关键词高亮（默认 ERROR/FAIL/+CME ERROR/+CMS ERROR，`settings.json` 的 `error_keywords` 可自定义；reader 每秒重取一次，改了不必重连）
+- 错误关键词高亮（默认 ERROR/FAIL/+CME ERROR/+CMS ERROR，设置 → 通用 里增删；只判定接收行、大小写无关；reader 每秒重取一次，改了不必重连）
+- 日志保留行数可调（设置 → 通用，1000–100000，默认 5000；超出后从最旧的丢，调小立即裁到位，不影响文件存盘）
 - 暂停/继续、清空、字号行高可调
 
 ### 日志记录

@@ -29,7 +29,29 @@ export const connectionParams = $state<{
 });
 
 // ============ 日志数据 ============
-const MAX_LOG_LINES = 10_000;
+/** 日志区保留行数的兜底值:设置里没有这个键时用它(与后端 default_settings 一致) */
+export const DEFAULT_MAX_LOG_LINES = 5000;
+/** 滑块范围,同时用来夹住手改配置文件写进来的离谱值(0 会让日志永远是空的) */
+export const MIN_LOG_LINES = 1000;
+export const MAX_LOG_LINES_LIMIT = 100_000;
+
+/** 当前生效的保留行数。设置里的 ui.ring_buffer_capacity 以前没有任何消费方
+ *  (界面上也没入口),真正生效的是这里写死的上限;现在接上,改设置即时生效。 */
+function maxLogLines(): number {
+  const n = cachedSettings.value?.ui?.ring_buffer_capacity ?? DEFAULT_MAX_LOG_LINES;
+  if (!Number.isFinite(n)) return DEFAULT_MAX_LOG_LINES;
+  return Math.min(MAX_LOG_LINES_LIMIT, Math.max(MIN_LOG_LINES, Math.floor(n)));
+}
+
+/** 上限调小后立刻裁掉多余的最旧行(设置页应用时调),不必等下一批数据到达。 */
+export function trimLogLines() {
+  const max = maxLogLines();
+  if (logLines.length > max) {
+    logLines.splice(0, logLines.length - max);
+    logVersion.value++;
+  }
+}
+
 export const logLines = $state<LogLine[]>([]);
 export const paused = $state<{ value: boolean }>({ value: false });
 export const displayMode = $state<{ value: 'ascii' | 'hex' }>({ value: 'ascii' });
@@ -48,15 +70,16 @@ export function appendLogLine(line: LogLine) {
 }
 
 /** 批量追加(后端 rx-lines 按批到达)。语义与逐行 appendLogLine 一致:
- * 暂停时丢弃、超过 MAX_LOG_LINES 裁剪;logVersion 每批只 +1,
+ * 暂停时丢弃、超过保留行数裁剪;logVersion 每批只 +1,
  * LogView 的 $derived/$effect 每批只重算一次(Svelte 响应式开销 ↓)。 */
 export function appendLogLines(batch: LogLine[]) {
   if (paused.value || batch.length === 0) return;
   for (const line of batch) {
     logLines.push(line);
   }
-  if (logLines.length > MAX_LOG_LINES) {
-    logLines.splice(0, logLines.length - MAX_LOG_LINES);
+  const max = maxLogLines();
+  if (logLines.length > max) {
+    logLines.splice(0, logLines.length - max);
   }
   logVersion.value++;
 }
@@ -66,8 +89,9 @@ export function appendLogLines(batch: LogLine[]) {
 export function insertLogLines(at: number, batch: LogLine[]) {
   if (batch.length === 0) return;
   logLines.splice(Math.min(at, logLines.length), 0, ...batch);
-  if (logLines.length > MAX_LOG_LINES) {
-    logLines.splice(0, logLines.length - MAX_LOG_LINES);
+  const max = maxLogLines();
+  if (logLines.length > max) {
+    logLines.splice(0, logLines.length - max);
   }
   logVersion.value++;
 }
@@ -305,6 +329,8 @@ export function applySharedSettings(s: Settings) {
   const tk = s.presets?.theme || 'preset-1';
   theme.value = tk;
   applyTheme(tk, customTheme.value);
+  // 保留行数调小了就立刻裁到位:别的窗口/agent 改的也一样,不必等本窗口下一批数据到达
+  trimLogLines();
 }
 
 // ===== 模块级操作（仅切换；模块为预置功能，用户不可增删） =====
