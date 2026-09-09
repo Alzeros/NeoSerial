@@ -7,6 +7,7 @@ use tokio::time::timeout;
 
 use crate::buffer::rx_history::RxHistory;
 use crate::commands::send::emit_tx_line;
+use crate::config::command_index::{CommandParameter, ManualDocument, MergedEntry};
 use crate::connection::{spawn_connection, ConnectingGuard, SerialParams, WriteCommand};
 use crate::util::codec::{ascii_to_bytes, hex_to_bytes, LineEnding};
 
@@ -820,6 +821,9 @@ pub struct KbSearchItem {
     pub name: String,
     pub manual: String,
     pub page_no: Option<i64>,
+    /// 同名指令还出现在几本别的手册里(0 = 只此一处)。>0 时 manual/page_no 只代表排最前那本,
+    /// 各本的语法/参数/示例可能有分歧,发指令前用 kb_get 看 also_in。
+    pub also_in_count: usize,
 }
 
 #[derive(Serialize)]
@@ -841,6 +845,8 @@ pub struct KbSource {
     pub page_no: Option<i64>,
     pub name: String,
     pub syntax: String,
+    /// 与 primary 同构:这本手册自己的参数表。别拿 primary 的参数去套这一版语法。
+    pub parameters: Vec<CommandParameter>,
     pub example: String,
 }
 
@@ -850,7 +856,7 @@ pub struct KbGetResp {
     pub command: String,
     pub name: String,
     pub syntax: String,
-    pub parameters: Vec<crate::config::command_index::CommandParameter>,
+    pub parameters: Vec<CommandParameter>,
     pub example: String,
     pub summary: String,
     pub manual: String,
@@ -902,6 +908,47 @@ fn load_kb_cache(shared: &McpShared) -> Result<crate::config::command_index::Com
     }))
 }
 
+/// 合并条目 → kb_search 的一项。`also_in_count` 是"这条指令还在几本别的手册里":
+/// 列表层面看不出重复的话,agent 会照 primary 的语法直接发,不知道别本写法不同。
+fn to_search_item(e: &MergedEntry<'_>, documents: &[ManualDocument]) -> KbSearchItem {
+    KbSearchItem {
+        command: e.key.clone(),
+        name: e.primary.name.clone(),
+        manual: crate::config::command_index::doc_title(documents, e.primary.document_id),
+        page_no: e.primary.page_no,
+        also_in_count: e.also_in.len(),
+    }
+}
+
+/// 合并条目 → kb_get 响应。顶层是 primary(手册列表里排最前那本),别本进 `also_in`,
+/// **每本各带自己的 name/syntax/parameters/example**——同一条指令在不同模组的手册里
+/// 参数表常常不一样,拿 primary 的参数去套别本的语法就会发出错误指令。
+fn to_get_resp(e: &MergedEntry<'_>, documents: &[ManualDocument]) -> KbGetResp {
+    KbGetResp {
+        ok: true,
+        command: e.key.clone(),
+        name: e.primary.name.clone(),
+        syntax: e.primary.syntax.clone(),
+        parameters: e.primary.parameters.clone(),
+        example: e.primary.example.clone(),
+        summary: e.primary.summary.clone(),
+        manual: crate::config::command_index::doc_title(documents, e.primary.document_id),
+        page_no: e.primary.page_no,
+        also_in: e
+            .also_in
+            .iter()
+            .map(|r| KbSource {
+                manual: crate::config::command_index::doc_title(documents, r.document_id),
+                page_no: r.page_no,
+                name: r.name.clone(),
+                syntax: r.syntax.clone(),
+                parameters: r.parameters.clone(),
+                example: r.example.clone(),
+            })
+            .collect(),
+    }
+}
+
 /// 搜手册指令(多关键词,匹配指令名/中文名/摘要,大小写无关)。只读本地缓存。
 pub fn kb_search(shared: &McpShared, req: KbSearchReq) -> Result<KbSearchResp, ErrorResp> {
     if req.query.trim().is_empty() {
@@ -911,16 +958,7 @@ pub fn kb_search(shared: &McpShared, req: KbSearchReq) -> Result<KbSearchResp, E
     let entries = crate::config::command_index::merged_entries(&cache);
     let hits = crate::config::command_index::search_entries(&entries, &req.query);
     let limit = req.limit.unwrap_or(10).clamp(1, 50);
-    let items = hits
-        .iter()
-        .take(limit)
-        .map(|e| KbSearchItem {
-            command: e.key.clone(),
-            name: e.primary.name.clone(),
-            manual: crate::config::command_index::doc_title(&cache.documents, e.primary.document_id),
-            page_no: e.primary.page_no,
-        })
-        .collect();
+    let items = hits.iter().take(limit).map(|e| to_search_item(e, &cache.documents)).collect();
     Ok(KbSearchResp { ok: true, total: hits.len(), items })
 }
 
@@ -934,28 +972,7 @@ pub fn kb_get(shared: &McpShared, req: KbGetReq) -> Result<KbGetResp, ErrorResp>
             req.command.trim()
         )));
     };
-    Ok(KbGetResp {
-        ok: true,
-        command: e.key.clone(),
-        name: e.primary.name.clone(),
-        syntax: e.primary.syntax.clone(),
-        parameters: e.primary.parameters.clone(),
-        example: e.primary.example.clone(),
-        summary: e.primary.summary.clone(),
-        manual: crate::config::command_index::doc_title(&cache.documents, e.primary.document_id),
-        page_no: e.primary.page_no,
-        also_in: e
-            .also_in
-            .iter()
-            .map(|r| KbSource {
-                manual: crate::config::command_index::doc_title(&cache.documents, r.document_id),
-                page_no: r.page_no,
-                name: r.name.clone(),
-                syntax: r.syntax.clone(),
-                example: r.example.clone(),
-            })
-            .collect(),
-    })
+    Ok(to_get_resp(e, &cache.documents))
 }
 
 /// 列本地缓存里的手册(能查到什么)。手册列表本身在缓存里就有,不请求服务器。
@@ -1277,5 +1294,101 @@ mod tests {
         assert_eq!(latest_b, 1);
         // seq 各自单调,不共享计数器
         assert_ne!(a.latest_seq(), b.latest_seq());
+    }
+
+    // ============ 同名指令跨手册重复 ============
+
+    fn kb_doc(id: i64, title: &str) -> ManualDocument {
+        ManualDocument {
+            id,
+            title: title.into(),
+            filename: String::new(),
+            status: "done".into(),
+            cmd_status: "done".into(),
+            cmd_count: 0,
+            category_id: 0,
+            updated_at: String::new(),
+            group_names: Vec::new(),
+        }
+    }
+
+    fn kb_cmd(id: i64, document_id: i64, command: &str) -> crate::config::command_index::ManualCommand {
+        crate::config::command_index::ManualCommand {
+            id,
+            document_id,
+            command: command.into(),
+            name: String::new(),
+            syntax: String::new(),
+            parameters: Vec::new(),
+            example: String::new(),
+            page_no: None,
+            summary: String::new(),
+        }
+    }
+
+    fn param(name: &str) -> CommandParameter {
+        CommandParameter { name: name.into(), required: true, description: String::new() }
+    }
+
+    /// kb_get 的 also_in 必须带**那本手册自己**的语法与参数表。
+    /// 拿 primary 的参数去套别本的语法 = 让 agent 发出错误指令,这是重复指令最容易踩的坑。
+    #[test]
+    fn test_kb_get_also_in_carries_each_manual_own_record() {
+        let cache = crate::config::command_index::CommandIndexCache {
+            // 文档顺序即优先级:A 在前 → primary
+            documents: vec![kb_doc(1, "手册A"), kb_doc(2, "手册B")],
+            commands: vec![
+                crate::config::command_index::ManualCommand {
+                    syntax: "AT+QCFG=<a>".into(),
+                    parameters: vec![param("a")],
+                    ..kb_cmd(10, 1, "AT+QCFG")
+                },
+                crate::config::command_index::ManualCommand {
+                    syntax: "AT+QCFG=<x>,<y>".into(),
+                    parameters: vec![param("x"), param("y")],
+                    ..kb_cmd(11, 2, "AT+QCFG")
+                },
+            ],
+            ..Default::default()
+        };
+        let entries = crate::config::command_index::merged_entries(&cache);
+        let resp = to_get_resp(&entries[0], &cache.documents);
+
+        assert_eq!(resp.manual, "手册A");
+        assert_eq!(resp.syntax, "AT+QCFG=<a>");
+        assert_eq!(resp.parameters.len(), 1, "顶层是 primary 的参数表");
+        assert_eq!(resp.also_in.len(), 1);
+        assert_eq!(resp.also_in[0].manual, "手册B");
+        assert_eq!(resp.also_in[0].syntax, "AT+QCFG=<x>,<y>");
+        assert_eq!(
+            resp.also_in[0].parameters.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+            vec!["x", "y"],
+            "also_in 带自己那本的参数表,不是 primary 的副本"
+        );
+    }
+
+    /// kb_search 每项报同名指令还在几本别的手册里(0 = 只此一处),合并后不重复出现两行。
+    #[test]
+    fn test_kb_search_item_reports_also_in_count() {
+        let cache = crate::config::command_index::CommandIndexCache {
+            documents: vec![kb_doc(1, "手册A"), kb_doc(2, "手册B"), kb_doc(3, "手册C")],
+            commands: vec![
+                kb_cmd(10, 1, "AT+CSQ"),
+                kb_cmd(11, 2, "at+csq "), // 脏数据也算同一条(去空格 + 大写后比)
+                kb_cmd(12, 3, "AT+CSQ"),
+                kb_cmd(13, 1, "AT+CGMR"),
+            ],
+            ..Default::default()
+        };
+        let entries = crate::config::command_index::merged_entries(&cache);
+        let items: Vec<KbSearchItem> =
+            entries.iter().map(|e| to_search_item(e, &cache.documents)).collect();
+
+        let cgmr = items.iter().find(|i| i.command == "AT+CGMR").unwrap();
+        assert_eq!(cgmr.also_in_count, 0, "只此一处");
+        let csq = items.iter().find(|i| i.command == "AT+CSQ").unwrap();
+        assert_eq!(csq.also_in_count, 2, "另外两本手册也有");
+        assert_eq!(csq.manual, "手册A", "manual 只代表排最前那本");
+        assert_eq!(items.len(), 2, "合并后一条指令一项");
     }
 }

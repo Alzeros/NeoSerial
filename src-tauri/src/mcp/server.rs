@@ -310,7 +310,7 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 KB_SEARCH,
-                "搜知识库手册里的 AT 指令(发指令前查语法,别凭记忆猜)。多关键词空格分隔,                 匹配指令名/中文名/摘要,大小写无关,不带 AT+ 也能命中(如 \"csq\"、\"mqtt 配置\")。                 参数: query, limit(可选,默认 10,最大 50)。返回 { ok, total, items:[{command,name,manual,page_no}] };                 total > items 长度说明还有更多,收窄 query。要完整语法/参数/示例用 kb_get。                 **只读本地缓存,不请求知识库、不耗配额**;缓存空时返回 ok:false 并说明该让用户做什么。",
+                "搜知识库手册里的 AT 指令(发指令前查语法,别凭记忆猜)。多关键词空格分隔,                 匹配指令名/中文名/摘要,大小写无关,不带 AT+ 也能命中(如 \"csq\"、\"mqtt 配置\")。                 参数: query, limit(可选,默认 10,最大 50)。返回 { ok, total, items:[{command,name,manual,page_no,also_in_count}] };                 total > items 长度说明还有更多,收窄 query。要完整语法/参数/示例用 kb_get;                 also_in_count>0 说明同名指令还在别的手册里(manual 只是排最前那本,各本语法可能不同),kb_get 的 also_in 里有各本的版本。                 **只读本地缓存,不请求知识库、不耗配额**;缓存空时返回 ok:false 并说明该让用户做什么。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -323,7 +323,7 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 KB_GET,
-                "取一条 AT 指令的完整手册记录:语法、参数表(名称/是否必选/说明)、示例、摘要、来源手册与页码;                 同名指令在别的手册里的记录进 also_in。参数: command(完整指令名,大小写无关,如 AT+MIPLCREATE)。                 找不到返回 ok:false,改用 kb_search 按关键词找。只读本地缓存,不耗配额。",
+                "取一条 AT 指令的完整手册记录:语法、参数表(名称/是否必选/说明)、示例、摘要、来源手册与页码;                 同名指令在别的手册里的记录进 also_in,各带自己的语法/参数表/示例(顶层字段只属于排最前那本手册,别拿它去套 also_in 的语法)。                 参数: command(完整指令名,大小写无关,如 AT+MIPLCREATE)。                 找不到返回 ok:false,改用 kb_search 按关键词找。只读本地缓存,不耗配额。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {

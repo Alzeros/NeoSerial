@@ -233,10 +233,21 @@
           style="height: 30px; font-size: 13px; {i === highlight ? 'background: var(--overlay-hover); box-shadow: inset 2px 0 0 var(--primary);' : ''}"
           onclick={() => acceptItem(item)}
         >
-          <span
-            class="shrink-0 rounded px-1.5 text-[10px] leading-[16px] whitespace-nowrap overflow-hidden text-ellipsis"
-            style="background: var(--border-subtle); color: var(--muted-foreground); max-width: 72px;"
-          >{item.kind === 'history' ? '历史' : shortTitle(docTitle(commandIndex.documents, item.entry.primary.document_id))}</span>
+          <span class="shrink-0 flex items-center gap-1">
+            <span
+              class="rounded px-1.5 text-[10px] leading-[16px] whitespace-nowrap overflow-hidden text-ellipsis"
+              style="background: var(--border-subtle); color: var(--muted-foreground); max-width: 72px;"
+            >{item.kind === 'history' ? '历史' : shortTitle(docTitle(commandIndex.documents, item.entry.primary.document_id))}</span>
+            {#if item.kind === 'manual' && item.entry.alsoIn.length}
+              <!-- 徽标只报排最前那本手册;同名指令还在别的手册里就标出几本,
+                   免得照着这一本的语法发指令却不知道别本写法不同(切换看版本去指令查询 tab) -->
+              <span
+                class="text-[10px] leading-[16px]"
+                style="color: var(--muted-foreground);"
+                title="另见 {item.entry.alsoIn.length} 本手册"
+              >+{item.entry.alsoIn.length}</span>
+            {/if}
+          </span>
           <span class="truncate" style="font-family: var(--font-mono); color: var(--foreground);">{before}<b>{hit}</b>{after}</span>
           {#if item.kind === 'manual'}
             <span class="truncate ml-auto text-[12px]" style="color: var(--muted-foreground); max-width: 45%;">{displayName(item.entry.primary)}</span>

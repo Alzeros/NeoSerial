@@ -125,10 +125,20 @@
             style="height: 30px; font-size: 13px; {i === selectedIndex ? 'background: var(--overlay-hover); box-shadow: inset 2px 0 0 var(--primary);' : ''}"
             onclick={() => selectRow(i)}
           >
-            <span
-              class="shrink-0 rounded px-1.5 text-[10px] leading-[16px] whitespace-nowrap overflow-hidden text-ellipsis"
-              style="background: var(--border-subtle); color: var(--muted-foreground); max-width: 72px;"
-            >{shortTitle(docTitle(commandIndex.documents, entry.primary.document_id))}</span>
+            <span class="shrink-0 flex items-center gap-1">
+              <span
+                class="rounded px-1.5 text-[10px] leading-[16px] whitespace-nowrap overflow-hidden text-ellipsis"
+                style="background: var(--border-subtle); color: var(--muted-foreground); max-width: 72px;"
+              >{shortTitle(docTitle(commandIndex.documents, entry.primary.document_id))}</span>
+              {#if entry.alsoIn.length}
+                <!-- 选中前就看得出这条在多本手册里有(选中后详情底部的"也见于"可切换来源) -->
+                <span
+                  class="text-[10px] leading-[16px]"
+                  style="color: var(--muted-foreground);"
+                  title="另见 {entry.alsoIn.length} 本手册"
+                >+{entry.alsoIn.length}</span>
+              {/if}
+            </span>
             <span class="truncate" style="font-family: var(--font-mono); color: var(--foreground);">{entry.key}</span>
             <span class="truncate ml-auto text-[12px]" style="color: var(--muted-foreground); max-width: 45%;">{displayName(entry.primary)}</span>
           </div>
