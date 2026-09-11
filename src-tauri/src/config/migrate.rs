@@ -18,6 +18,103 @@ pub fn run_once() {
     let settings_path = config.join("settings.json");
     let cred_path = config.join(super::secret::CREDENTIAL_FILE);
     move_plaintext_api_key(&settings_path, &cred_path);
+    sweep_webview_backups();
+}
+
+/// WebView2 改名留下的 profile 备份前缀。完整名形如 EBWebView.bak.1788165529(unix 秒)。
+const WEBVIEW_BACKUP_PREFIX: &str = "EBWebView.bak.";
+/// 多久以前的备份才删。留个窗口:刚产生的那份里有 WebView2 的崩溃转储,可能正要看。
+const WEBVIEW_BACKUP_KEEP_SECS: u64 = 7 * 24 * 60 * 60;
+
+/// 清理 WebView2 遗留的 profile 备份。
+///
+/// WebView2 运行时在 profile 版本回退/损坏时,会把整个 EBWebView 改名成
+/// EBWebView.bak.<unix 秒> 再另起一个新的——但它从不回收这些备份。实测一份就 332 MB
+/// (旧 HTTP/GPU 缓存 + 崩溃转储 + DevTools 扩展),而活的 profile 只有 36 MB。
+///
+/// 删掉是安全的:里面没有本应用的任何用户数据(设置/快捷指令/发送历史/凭据全在后端文件,
+/// 前端一处 localStorage/IndexedDB 都没用),丢的只是 WebView2 自己可重建的缓存。
+///
+/// 便携/自定义模式下我们会显式指定 WEBVIEW2_USER_DATA_FOLDER,但用户从标准模式切过去
+/// 之前的残留还躺在 %LOCALAPPDATA% 里,所以两处都扫。
+fn sweep_webview_backups() {
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let mut seen: Vec<std::path::PathBuf> = Vec::new();
+    for dir in [super::webview_default_parent(), super::webview2_dir()]
+        .into_iter()
+        .flatten()
+    {
+        if seen.contains(&dir) {
+            continue;
+        }
+        seen.push(dir.clone());
+        let (count, freed) = cleanup_webview_backups(&dir, now);
+        if count > 0 {
+            log::info!(
+                "清理 WebView2 残留 profile {} 个, 释放 {:.1} MB ({})",
+                count,
+                freed as f64 / 1_048_576.0,
+                dir.display()
+            );
+        }
+    }
+}
+
+/// 扫 parent 下的 EBWebView.bak.<时间戳>,够旧就整个删掉。
+/// 返回 (删掉几个, 释放多少字节)。now_secs 由调用方给,便于测试。
+fn cleanup_webview_backups(parent: &Path, now_secs: u64) -> (usize, u64) {
+    let Ok(entries) = fs::read_dir(parent) else {
+        return (0, 0);
+    };
+    let mut count = 0usize;
+    let mut freed = 0u64;
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else { continue };
+        let Some(suffix) = name.strip_prefix(WEBVIEW_BACKUP_PREFIX) else {
+            continue;
+        };
+        // 后缀不是纯时间戳就不动:宁可留着,也别顺手删了不认识的目录
+        let Ok(ts) = suffix.parse::<u64>() else { continue };
+        if now_secs.saturating_sub(ts) < WEBVIEW_BACKUP_KEEP_SECS {
+            continue;
+        }
+        let path = entry.path();
+        if !path.is_dir() {
+            continue;
+        }
+        // 先量再删:remove_dir_all 之后就没法报"释放了多少"了。多走一遍目录树的代价
+        // 只在真有残留时付一次(删完就没有了)。
+        let size = dir_size(&path);
+        match fs::remove_dir_all(&path) {
+            Ok(()) => {
+                count += 1;
+                freed += size;
+            }
+            // 正被别的进程占着(比如另一个实例刚好在用)就留到下次
+            Err(e) => log::warn!("清理 WebView2 残留 {} 失败: {}", name, e),
+        }
+    }
+    (count, freed)
+}
+
+/// 目录树总字节数。只用于日志里报个数,取不到就算 0,不影响删除。
+fn dir_size(dir: &Path) -> u64 {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    let mut total = 0u64;
+    for entry in entries.flatten() {
+        match entry.file_type() {
+            Ok(t) if t.is_dir() => total += dir_size(&entry.path()),
+            Ok(t) if t.is_file() => total += entry.metadata().map(|m| m.len()).unwrap_or(0),
+            _ => {}
+        }
+    }
+    total
 }
 
 /// 知识库缓存从旧位置(配置目录)搬到缓存目录。目标已存在就不动旧的,
@@ -115,6 +212,45 @@ mod tests {
         assert!(config.join("command-index.json").exists());
 
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 够旧的 .bak profile 删掉,新的留着,活的 EBWebView 和认不出的名字一概不碰。
+    #[test]
+    fn test_cleanup_webview_backups_only_removes_old_backups() {
+        let dir = tmp_dir("ebwv");
+        let now = 1_800_000_000u64;
+        let old = now - WEBVIEW_BACKUP_KEEP_SECS - 1;
+        let fresh = now - 60;
+
+        for name in [
+            format!("{}{}", WEBVIEW_BACKUP_PREFIX, old),
+            format!("{}{}", WEBVIEW_BACKUP_PREFIX, fresh),
+            // 后缀不是时间戳:不认识的东西不删
+            format!("{}manual", WEBVIEW_BACKUP_PREFIX),
+            "EBWebView".to_string(),
+        ] {
+            fs::create_dir_all(dir.join(&name).join("Default")).unwrap();
+            fs::write(dir.join(&name).join("Default").join("f"), b"0123456789").unwrap();
+        }
+
+        let (count, freed) = cleanup_webview_backups(&dir, now);
+        assert_eq!(count, 1, "只该删那一个够旧的");
+        assert_eq!(freed, 10, "释放字节数按目录树实际大小报");
+        assert!(!dir.join(format!("{}{}", WEBVIEW_BACKUP_PREFIX, old)).exists());
+        assert!(dir.join(format!("{}{}", WEBVIEW_BACKUP_PREFIX, fresh)).exists(), "新备份留着");
+        assert!(dir.join(format!("{}manual", WEBVIEW_BACKUP_PREFIX)).exists(), "非时间戳后缀不碰");
+        assert!(dir.join("EBWebView").exists(), "活的 profile 绝不能动");
+
+        // 重复跑无害(已经没得删了)
+        assert_eq!(cleanup_webview_backups(&dir, now), (0, 0));
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// 目录不存在(没装过 WebView2 / 便携模式还没起过窗口)不该报错
+    #[test]
+    fn test_cleanup_webview_backups_missing_dir_is_noop() {
+        let dir = tmp_dir("ebwv_none").join("not-there");
+        assert_eq!(cleanup_webview_backups(&dir, 1_800_000_000), (0, 0));
     }
 
     /// 用户手填过的明文 Key:进凭据文件、从 settings.json 消失、留备份,其他设置项不受影响。

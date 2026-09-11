@@ -17,11 +17,8 @@ fn main() {
         std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
     } else {
         #[cfg(debug_assertions)]
-        if let Ok(base) = std::env::var("LOCALAPPDATA") {
-            std::env::set_var(
-                "WEBVIEW2_USER_DATA_FOLDER",
-                format!("{}\\com.neoserial.app.dev", base),
-            );
+        if let Some(dir) = neoserial_lib::webview_default_parent() {
+            std::env::set_var("WEBVIEW2_USER_DATA_FOLDER", dir);
         }
     }
 

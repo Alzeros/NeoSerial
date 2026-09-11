@@ -16,8 +16,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
-tauri-plugin-fs = "2"
-tauri-plugin-shell = "2"
+# 没有 tauri-plugin-fs / -shell:全部文件读写与"打开外部程序"都在 Rust 侧做
+# (send_file / start_logging / import_theme_file 走 std::fs;open_url / open_data_dir
+# 走 std::process::Command),webview 一次都没用过这两个插件的 JS API。
+# 注册它们只会白占体积,并且 fs 插件还得给 webview 开 fs:allow-read-file/write-file 权限。
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
 tauri-plugin-single-instance = "2"

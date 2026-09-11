@@ -11,10 +11,6 @@
     "core:window:allow-toggle-maximize",
     "core:window:allow-set-always-on-top",
     "dialog:default",
-    "fs:default",
-    "fs:allow-read-file",
-    "fs:allow-write-file",
-    "fs:allow-read-dir",
     "updater:default",
     "process:allow-restart"
   ]

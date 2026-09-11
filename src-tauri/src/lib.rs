@@ -183,6 +183,11 @@ pub fn webview2_data_dir() -> Option<std::path::PathBuf> {
     config::webview2_dir()
 }
 
+/// 同上:dev 构建给 WebView2 单独指一个目录,免得与已安装的 release 抢同一 profile。
+pub fn webview_default_parent() -> Option<std::path::PathBuf> {
+    config::webview_default_parent()
+}
+
 pub fn run() {
     // 目录解析必须最先:之后所有读写(设置、快捷指令、缓存、凭据)都基于它。
     // 紧接着跑一次性迁移(缓存挪到 Local、明文 Key 挪进凭据文件),再让 AppState 去 load 设置。
@@ -197,8 +202,6 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_fs::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {

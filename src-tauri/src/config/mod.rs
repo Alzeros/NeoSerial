@@ -63,6 +63,24 @@ pub fn dir_mode() -> DirMode {
     dirs().mode
 }
 
+/// 应用 identifier,与 tauri.conf.json 里的保持一致。
+/// WebView2 自行推导数据目录时用它:%LOCALAPPDATA%\<identifier>\EBWebView。
+pub const APP_IDENTIFIER: &str = "com.neoserial.app";
+
+/// WebView2 自行推导的 profile 父目录(%LOCALAPPDATA%\<identifier>)。
+/// EBWebView 与它改名留下的 EBWebView.bak.<时间戳> 都落在这儿。
+/// dev 构建用 .dev 后缀,避免与已安装版抢同一 profile(见 main.rs 注释)。
+/// 注意:便携/自定义模式我们会显式设 WEBVIEW2_USER_DATA_FOLDER,这个路径当下不用,
+/// 但用户从标准模式切过去之前的残留还在里面,所以清理时照样要看。
+pub fn webview_default_parent() -> Option<PathBuf> {
+    let name = if cfg!(debug_assertions) {
+        format!("{}.dev", APP_IDENTIFIER)
+    } else {
+        APP_IDENTIFIER.to_string()
+    };
+    Some(env_path("LOCALAPPDATA")?.join(name))
+}
+
 /// 非标准模式下 WebView2 的数据目录:跟着数据走,便携版不往系统盘写这几十 MB。
 /// 标准模式返回 None(用系统默认位置)。
 pub fn webview2_dir() -> Option<PathBuf> {
