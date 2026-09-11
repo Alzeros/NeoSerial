@@ -11,7 +11,7 @@ use crate::state::AppState;
 use crate::commands::connection::resolve_port;
 use crate::commands::send::emit_tx_line;
 use crate::connection::WriteCommand;
-use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
+use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes, punct_to_halfwidth};
 
 #[derive(Clone, Serialize)]
 pub struct SequenceProgress {
@@ -145,6 +145,27 @@ pub fn sequence_run(
     let resolved = {
         let conns = state.connections.lock().map_err(|e| e.to_string())?;
         resolve_port(&conns, port)?
+    };
+    // 快捷指令是用户编辑的表格,与输入框同属"人手输入",一并做中文标点纠错。
+    // 转换只在发送这一刻做,不回写 sequence.json——用户表格里存的还是他自己敲的那份。
+    // MCP 的 sequence_run 工具直接调 sequence_run_inner,不经过这里,保持字面透传。
+    let halfwidth = state
+        .settings
+        .lock()
+        .map(|s| s.ui.send_halfwidth_punct)
+        .unwrap_or(true);
+    let commands = if halfwidth {
+        commands
+            .into_iter()
+            .map(|mut c| {
+                if !c.hex {
+                    c.command = punct_to_halfwidth(&c.command);
+                }
+                c
+            })
+            .collect()
+    } else {
+        commands
     };
     sequence_run_inner(app_handle.clone(), &state.connections, &resolved, commands, run_count, loop_interval)
 }

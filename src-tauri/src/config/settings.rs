@@ -115,6 +115,10 @@ pub struct UiSettings {
     /// 文本模式的编码方式：Ascii/Utf8/Gbk，默认 Ascii
     #[serde(default = "default_text_encoding")]
     pub text_encoding: TextEncoding,
+    /// 发送前把中文标点转半角(？→?、，→,),默认开。只作用于输入框与快捷指令这两条
+    /// 人手输入的路,引号内的内容不动;MCP 不受影响(agent 发什么就是什么)。
+    #[serde(default = "default_send_halfwidth_punct")]
+    pub send_halfwidth_punct: bool,
     /// 后台运行(托盘常驻)。开:有托盘图标,关窗口连接不断、进入后台,关最后一个窗口
     /// 应用仍在;关(默认,经典串口工具体验):无托盘,关窗口断开该窗口自己连的
     /// (agent 的交还 agent),关最后一个窗口即退出。改后即时生效。
@@ -133,6 +137,10 @@ pub struct UiSettings {
 
 fn default_text_encoding() -> TextEncoding {
     TextEncoding::Ascii
+}
+
+fn default_send_halfwidth_punct() -> bool {
+    true
 }
 
 fn default_show_suggest_tab() -> bool {
@@ -435,6 +443,7 @@ impl Settings {
                 qc_row_gap: default_qc_row_gap(),
                 qc_font_family: default_qc_font_family(),
                 text_encoding: default_text_encoding(),
+                send_halfwidth_punct: default_send_halfwidth_punct(),
                 background_mode: default_background_mode(),
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
@@ -607,6 +616,7 @@ impl LegacySettings {
                 qc_row_gap: default_qc_row_gap(),
                 qc_font_family: default_qc_font_family(),
                 text_encoding: default_text_encoding(),
+                send_halfwidth_punct: default_send_halfwidth_punct(),
                 background_mode: default_background_mode(),
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),

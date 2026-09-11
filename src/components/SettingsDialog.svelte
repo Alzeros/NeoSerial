@@ -41,6 +41,8 @@
   let editFontCJK = $state<string>('default');
   // 文本模式编码编辑副本（ASCII/UTF-8/GBK）
   let editTextEncoding = $state<'ascii' | 'utf8' | 'gbk'>('ascii');
+  // 发送前把中文标点转半角(?/,/: 等)。后端做转换,前端只管这个开关
+  let editSendHalfwidthPunct = $state(true);
   // 打开前的原值（取消时恢复，因部分预览直接改了 store）
   let origDirLabel: 'short' | 'full' = 'short';
   let origTextEncoding: 'ascii' | 'utf8' | 'gbk' = 'ascii';
@@ -140,6 +142,7 @@
   type EditValues = {
     fontSize: number; lineHeight: number; dirLabel: 'short' | 'full'; fontLatin: string; fontCJK: string;
     textEncoding: 'ascii' | 'utf8' | 'gbk';
+    sendHalfwidthPunct: boolean;
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean;
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
     baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
@@ -155,6 +158,7 @@
     return {
       fontSize: editFontSize, lineHeight: editLineHeight, dirLabel: editDirLabel, fontLatin: editFontLatin, fontCJK: editFontCJK,
       textEncoding: editTextEncoding,
+      sendHalfwidthPunct: editSendHalfwidthPunct,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
       baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, theme: editTheme, custom: { ...editCustom },
@@ -196,6 +200,7 @@
     origFontLatin = logFontLatin.value;
     origFontCJK = logFontCJK.value;
     editTextEncoding = textEncoding.value;
+    editSendHalfwidthPunct = cachedSettings.value?.ui?.send_halfwidth_punct ?? true;
     origTextEncoding = textEncoding.value;
     newBaud = '';
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
@@ -247,11 +252,12 @@
       })
       .catch(() => {});
     dataDirs().then((d) => (dirs = d)).catch(() => {});
-    // 分节折叠:每次开窗重置(通用页五节 + 指令联想子页四节)。
+    // 分节折叠:每次开窗重置(通用页六节 + 指令联想子页四节)。
     // 例外:带 anchor 跳进来的那一节要展开——连接栏"添加…"跳过来却是收起的
     // 等于什么也没发生。
     openBaud = anchor === 'baud';
     openApp = false;
+    openSend = false;
     openLogView = false;
     openLogData = false;
     openDirs = false;
@@ -395,6 +401,7 @@
     if (changed('fontLatin')) ui.log_font_latin = cur.fontLatin;
     if (changed('fontCJK')) ui.log_font_cjk = cur.fontCJK;
     if (changed('textEncoding')) ui.text_encoding = cur.textEncoding === 'utf8' ? 'Utf8' : cur.textEncoding === 'gbk' ? 'Gbk' : 'Ascii';
+    if (changed('sendHalfwidthPunct')) ui.send_halfwidth_punct = cur.sendHalfwidthPunct;
     if (changed('backgroundMode')) ui.background_mode = cur.backgroundMode;
     if (changed('showSuggestTab')) ui.show_suggest_tab = cur.showSuggestTab;
     if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
@@ -603,8 +610,9 @@
   // 知识库还没配置时改为展开知识库那节——第一次进来该被引导去填地址,而不是看一个空手册列表。
   // 展开状态只在本次开着设置页期间有效,每次 show() 重置(纯视图状态,不进 settings.json)。
   let openManuals = $state(true);
-  // 通用页四节的折叠状态:全铺开约 1100px,而内容区只有 360px
+  // 通用页各节的折叠状态:全铺开约 1100px,而内容区只有 360px
   let openBaud = $state(false);
+  let openSend = $state(false);
   let openLogView = $state(false);
   let openLogData = $state(false);
   let openApp = $state(false);
@@ -615,6 +623,7 @@
 
   /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
   const baudSummary = $derived(editBaudRates.join(' · ') || '无');
+  const sendSummary = $derived(editSendHalfwidthPunct ? '中文标点转半角' : '原样发送');
   /** 收起时看得见当前值:关窗到底会不会断连接 */
   const appSummary = $derived(editBackgroundMode ? '托盘常驻' : '关窗即退出');
   /** 收起时看得见当前值:数据落在系统标准位置还是被挪走了 */
@@ -850,6 +859,27 @@
                     onkeydown={(e) => { if (e.key === 'Enter') addBaud(); }}
                   />
                   <button class="btn btn-secondary shrink-0 whitespace-nowrap" style="padding: 6px 14px;" onclick={addBaud}>添加</button>
+                </div>
+              </Collapsible>
+              <!-- 独立成节而不是并进「日志内容」:那一节(含文本编码)全是显示/留存层的事,
+                   这里改的是真正发到线上的字节。摆在只管解码显示的「文本编码」旁边,
+                   最容易让人误以为它也只影响显示。 -->
+              <Collapsible title="发送处理" summary={sendSummary} bind:open={openSend}>
+                <!-- 说明挂在标签上(与「数据目录」同一路子):常驻在页面上的只有开关与当前状态 -->
+                <label class="switch switch-row">
+                  <input type="checkbox" bind:checked={editSendHalfwidthPunct} />
+                  <span class="switch-track"></span>
+                  <span
+                    class="switch-label cursor-help"
+                    title={'中文输入法打出的 ？，：（）等,模组一概不认——发送是纯透传,？走的是 UTF-8 三个字节,模组只认半角 ?。\n引号内不动:AT+CMGS="你好,世界" 这类引号里是要发出去的正文。\n只作用于输入框与快捷指令;MCP 收到什么发什么,不受此开关影响。\nHEX 模式不涉及。'}
+                  >中文标点转半角</span>
+                </label>
+                <div class="text-[12px] text-[var(--muted-foreground)] mt-2 leading-relaxed">
+                  {#if editSendHalfwidthPunct}
+                    <span style="font-family: var(--font-mono);">AT+CSQ？</span> 发出去的是 <span style="font-family: var(--font-mono);">AT+CSQ?</span>,日志的 Tx 行显示的就是实际发出的内容。
+                  {:else}
+                    原样透传:中文标点按 UTF-8 多字节发出去,模组通常回 ERROR。
+                  {/if}
                 </div>
               </Collapsible>
               <Collapsible title="日志显示" summary={logViewSummary} bind:open={openLogView}>

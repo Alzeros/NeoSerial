@@ -7,7 +7,7 @@ use crate::buffer::rx_history::RxHistory;
 use crate::commands::connection::resolve_port;
 use crate::connection::WriteCommand;
 use crate::buffer::log_line::{Dir, LogLine};
-use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes};
+use crate::util::codec::{LineEnding, hex_to_bytes, ascii_to_bytes, punct_to_halfwidth};
 use crate::util::log_format::{DisplayConfig, format_line_for_file};
 use crate::util::time_fmt::now_local_ts;
 
@@ -29,11 +29,21 @@ pub fn send(
         (handle.write_tx.clone(), handle.rx_history.clone(), handle.window_label.clone(), handle.line_index.clone())
     };
 
-    // 解析数据
+    // 解析数据。文本模式下按设置把中文标点转半角(见 punct_to_halfwidth):
+    // 这是"输入法纠错",只作用于人手输入的路径,MCP 的 send 不走这里,照旧字面透传。
     let mut data = if is_hex {
         hex_to_bytes(&text)?
     } else {
-        ascii_to_bytes(&text)
+        let halfwidth = state
+            .settings
+            .lock()
+            .map(|s| s.ui.send_halfwidth_punct)
+            .unwrap_or(true);
+        if halfwidth {
+            ascii_to_bytes(&punct_to_halfwidth(&text))
+        } else {
+            ascii_to_bytes(&text)
+        }
     };
 
     // 追加行尾
