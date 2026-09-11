@@ -1,7 +1,7 @@
 <script lang="ts">
   import { tick } from 'svelte';
   import { cachedSettings, suggestFillRequest } from '$lib/stores';
-  import { commandIndex } from '$lib/commandIndex';
+  import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import {
     buildManualEntries,
     defaultSuggestLimits,
@@ -37,6 +37,12 @@
   // 文本一变化就自然解除。不用 $effect 监听 query 复位,否则接受候选后会被自己触发重开。
   let dismissedFor = $state<string | null>(null);
   let listEl: HTMLDivElement | undefined;
+
+  // 启用时才把手册索引读进来,关着的窗口不占这几百 KB。
+  // 用 $effect 而非 onMount:别的窗口把开关打开时,这个窗口也要跟着补上(幂等,重复调不会重复读)。
+  $effect(() => {
+    if (enabled) ensureCommandIndexLoaded();
+  });
 
   const disabledDocIds = $derived(cachedSettings.value?.command_index?.disabled_doc_ids ?? []);
   const manualEntries = $derived(buildManualEntries(commandIndex.documents, commandIndex.commands, disabledDocIds));

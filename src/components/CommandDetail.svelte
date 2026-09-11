@@ -1,6 +1,6 @@
 <script lang="ts">
   import { tick, onMount } from 'svelte';
-  import { commandIndex } from '$lib/commandIndex.svelte';
+  import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex.svelte';
   import { cachedSettings, requestSuggestFill } from '$lib/stores';
   import {
     buildManualEntries,
@@ -87,6 +87,8 @@
 
   // 切到本 tab 时自动聚焦搜索框(便于直接开搜)。
   onMount(() => {
+    // 指令查询不受联想开关约束:开了这个面板就得有索引,这个窗口没载过就现载
+    ensureCommandIndexLoaded();
     searchEl?.focus();
   });
 </script>

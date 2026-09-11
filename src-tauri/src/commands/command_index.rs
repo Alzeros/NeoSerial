@@ -423,13 +423,23 @@ pub async fn command_index_test_connection(
     Ok(format!("连通正常 · {} 本手册", docs.len()))
 }
 
-/// setup 时调一次:有生效的地址和 Key 且 auto_refresh 开 → 后台刷新,失败只记日志。
+/// 启动时该不该刷指令库。抽成纯函数只为可测(spawn_auto_refresh 要 AppHandle)。
+/// suggest_enabled 也算一票:扩展关着还去连知识库、写缓存、广播事件,既费配额也不合
+/// "关掉的扩展就不该跑"的预期。关着仍想更新的,设置页的「刷新」按钮照常可用。
+pub fn should_auto_refresh(cfg: &CommandIndexSettings, base_url: &str, api_key: &str) -> bool {
+    cfg.suggest_enabled
+        && cfg.auto_refresh
+        && !base_url.trim().is_empty()
+        && !api_key.trim().is_empty()
+}
+
+/// setup 时调一次:该刷就后台刷(见 should_auto_refresh),失败只记日志。
 /// 进程级只跑一次,不按窗口跑(多窗口各跑一遍会撞 REFRESHING 也浪费配额)。
 /// 生效值 = 用户配置 → 编译期内置,所以内网用户装完不填也会自动刷。
 pub fn spawn_auto_refresh(handle: &tauri::AppHandle, cfg: &CommandIndexSettings) {
     let base_url = cfg.effective_base_url();
     let api_key = crate::config::secret::effective_api_key();
-    if !cfg.auto_refresh || base_url.trim().is_empty() || api_key.trim().is_empty() {
+    if !should_auto_refresh(cfg, &base_url, &api_key) {
         return;
     }
     let handle = handle.clone();
@@ -589,6 +599,21 @@ mod tests {
     fn test_client_builds_after_crypto_provider_installed() {
         ensure_crypto_provider();
         reqwest::Client::builder().build().expect("装了 provider 后建 Client 不应失败");
+    }
+
+    /// 四个条件缺一不可,尤其是 suggest_enabled:扩展关掉后启动不该再连知识库。
+    #[test]
+    fn test_should_auto_refresh_requires_every_condition() {
+        let on = CommandIndexSettings { suggest_enabled: true, auto_refresh: true, ..Default::default() };
+        assert!(should_auto_refresh(&on, "http://kb", "k"));
+        assert!(!should_auto_refresh(&on, "  ", "k"), "地址空不刷");
+        assert!(!should_auto_refresh(&on, "http://kb", " "), "Key 空不刷");
+
+        let suggest_off = CommandIndexSettings { suggest_enabled: false, ..on.clone() };
+        assert!(!should_auto_refresh(&suggest_off, "http://kb", "k"), "联想关掉不刷");
+
+        let auto_off = CommandIndexSettings { auto_refresh: false, ..on.clone() };
+        assert!(!should_auto_refresh(&auto_off, "http://kb", "k"), "自动刷新关掉不刷");
     }
 
     /// 接口 { total, items[] } 形态(items 带 created_at、page_no 有值)能解析。

@@ -5,7 +5,7 @@
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
-  import { commandIndex } from '$lib/commandIndex';
+  import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
@@ -81,6 +81,10 @@
   let editQcFontFamily = $state<string>('default');
   // 扩展页子导航:null=模块列表(文件夹视图),'suggest'/'mcp'=进入该模块设置子页
   let extModule = $state<'suggest' | 'mcp' | 'quick' | null>(null);
+  // 指令联想子页要列手册、报条数,而联想关着的窗口启动时没载索引——进这一页时现载
+  $effect(() => {
+    if (open && extModule === 'suggest') ensureCommandIndexLoaded();
+  });
   // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
   let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
   let mcpCopied = $state(false);

@@ -257,7 +257,8 @@
       if (!lastPersistedToggles && cachedSettings.value) lastPersistedToggles = ownedToggles();
     });
 
-    // 指令联想:订阅手册索引缓存 / 发送历史的变化广播,并载入初值
+    // 指令联想:订阅手册索引缓存 / 发送历史的变化广播,并载入发送历史。
+    // 手册索引那份(几百 KB)不在这儿载,由用到的地方按需要(ensureCommandIndexLoaded)。
     const cleanupCommandIndex = initCommandIndex();
 
     const unlistenRxLine = onRxLines(handleRxLines);
