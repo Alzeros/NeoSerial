@@ -7,7 +7,7 @@ use rmcp::ServerHandler;
 use tauri::Emitter;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, JsonObject, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerInfo, Tool,
+    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
@@ -70,9 +70,9 @@ impl NeoserialHandler {
 }
 
 impl ServerHandler for NeoserialHandler {
-    fn get_info(&self) -> ServerInfo {
+    fn get_info(&self) -> ServerConfig {
         // server name 设为 NeoSerial(应用名),否则 rmcp 默认用 from_build_env 显示 "rmcp"。
-        let info = ServerInfo::new(ServerCapabilities::builder().enable_tools().build());
+        let info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
         info.with_server_info(rmcp::model::Implementation::new("NeoSerial", env!("CARGO_PKG_VERSION")))
     }
 
