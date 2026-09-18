@@ -52,6 +52,12 @@ impl McpCallLog {
     pub fn snapshot(&self) -> Vec<McpCallRecord> {
         self.records.iter().cloned().collect()
     }
+
+    /// 清空(侧栏右键"清除")。进程级共享,所有窗口一起清——它只是观察窗口,不是审计日志,
+    /// 清了不影响 agent 的任何状态;之后的调用照常记录。
+    pub fn clear(&mut self) {
+        self.records.clear();
+    }
 }
 
 /// 截断文本到 max 字符:超长则保留前 max,尾部加 …(N 字符) 标注原长。供入参/错误展示。
@@ -105,6 +111,12 @@ mod tests {
         assert_eq!(snap.len(), 200, "环形上限 200,超出的挤掉");
         // snapshot 最旧在前
         assert_eq!(snap[0].duration_ms, 1);
+
+        // 清空后为空,再 push 照常记录
+        log.clear();
+        assert!(log.snapshot().is_empty());
+        log.push(rec());
+        assert_eq!(log.snapshot().len(), 1);
     }
 }
 

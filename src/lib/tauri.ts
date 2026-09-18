@@ -480,3 +480,13 @@ export async function getMcpCallLog(): Promise<McpCallRecord[]> {
 export function onMcpCall(cb: (rec: McpCallRecord) => void) {
   return getCurrentWebview().listen<McpCallRecord>('mcp-call', (e) => cb(e.payload));
 }
+
+/** 清空后端的调用记录(进程级,所有窗口一起清)。成功后后端广播 mcp-call-log-cleared。 */
+export async function clearMcpCallLog(): Promise<void> {
+  await invoke('clear_mcp_call_log');
+}
+
+/** 任一窗口清空了调用记录:各窗口的面板据此同步清掉。 */
+export function onMcpCallLogCleared(cb: () => void) {
+  return getCurrentWebview().listen('mcp-call-log-cleared', () => cb());
+}
