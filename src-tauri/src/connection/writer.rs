@@ -11,7 +11,6 @@ use crate::connection::WriteCommand;
 use crate::connection::port_wrapper::PortWriter;
 use crate::state::AppState;
 use crate::util::log_format::{DisplayConfig, format_line_for_file};
-use crate::util::time_fmt::now_local_ts;
 
 /// 启动串口写入线程。从 channel 接收命令并写入端口。
 pub fn spawn_writer(
@@ -83,7 +82,7 @@ pub fn spawn_writer(
                                 let log_send = cfg.map(|c| c.log_send).unwrap_or(true);
                                 if log_send {
                                     let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                                    let line = LogLine::new(now_local_ts(), Dir::Tx, data, &[], idx);
+                                    let line = LogLine::now(Dir::Tx, data, &[], idx);
                                     let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
                                     let _ = app_handle.emit_to(&wl, "tx-line", line.clone());
                                     rx_history.push(Dir::Tx, line.clone());

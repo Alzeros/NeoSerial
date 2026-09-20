@@ -308,6 +308,10 @@ pub struct StatusResp {
     pub rx_bytes: Option<u64>,
     /// 收发历史当前最大序号(tx+rx 共用同一计数器,per-conn)。
     pub seq: u64,
+    /// CTS/DSR 电平。只在该连接流控为 Hardware 且平台能读时有值(三线接法下电平无意义),
+    /// 否则 null。
+    pub cts: Option<bool>,
+    pub dsr: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -317,7 +321,7 @@ pub struct StatusReq {
 
 pub fn get_status(shared: &McpShared, req: StatusReq) -> StatusResp {
     let conns = shared.connections.lock().ok();
-    let (connected, port, baud, tx_bytes, rx_bytes, seq) = match conns.as_ref() {
+    let (connected, port, baud, tx_bytes, rx_bytes, seq, modem) = match conns.as_ref() {
         Some(g) => match g.get(&req.port) {
             Some(h) => (
                 true,
@@ -326,10 +330,11 @@ pub fn get_status(shared: &McpShared, req: StatusReq) -> StatusResp {
                 Some(h.tx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
                 Some(h.rx_bytes.load(std::sync::atomic::Ordering::SeqCst)),
                 h.rx_history.latest_seq(),
+                h.modem_status(),
             ),
-            None => (false, None, None, None, None, 0),
+            None => (false, None, None, None, None, 0, None),
         },
-        None => (false, None, None, None, None, 0),
+        None => (false, None, None, None, None, 0, None),
     };
     StatusResp {
         ok: true,
@@ -339,6 +344,8 @@ pub fn get_status(shared: &McpShared, req: StatusReq) -> StatusResp {
         tx_bytes,
         rx_bytes,
         seq,
+        cts: modem.map(|(c, _)| c),
+        dsr: modem.map(|(_, d)| d),
     }
 }
 
@@ -431,6 +438,10 @@ pub struct GetHistorySinceReq {
 pub struct HistoryLine {
     pub dir: String,
     pub text: String,
+    /// 到达时间 `HH:MM:SS.mmm`,与界面日志/存盘文件一致,便于 agent 写结论时引用。
+    pub ts: String,
+    /// 到达时间 Unix 毫秒,给 agent 直接做横轴/算间隔。旧数据(连接前)为 0。
+    pub ts_ms: u64,
     /// 本次连接期间的行号(tx+rx 共用,开端口=1)。
     /// 旧历史(连接前已存的,line_index=0)按返回顺序回填递增,保证连续可读。
     pub index: u64,
@@ -514,6 +525,8 @@ fn build_history_resp(
                     crate::buffer::log_line::Dir::Tx => "tx".to_string(),
                 },
                 text: if is_hex { l.hex() } else { l.ascii },
+                ts: l.ts,
+                ts_ms: l.ts_ms,
                 index: idx,
                 seq,
             }
@@ -1144,6 +1157,25 @@ mod tests {
         use super::super::build_history_resp;
         use crate::buffer::log_line::{Dir, LogLine};
         use crate::buffer::rx_history::RxHistory;
+
+        /// 每行的 ts / ts_ms 原样透传给 agent(agent 用 ts_ms 做时间轴、算命令→响应延迟)。
+        #[test]
+        fn test_history_lines_carry_timestamps() {
+            let h = RxHistory::new(10);
+            let mut tx = LogLine::new("10:12:19.740".into(), Dir::Tx, b"AT".to_vec(), &[], 1);
+            tx.ts_ms = 1_789_870_339_740;
+            let mut rx = LogLine::new("10:12:19.803".into(), Dir::Rx, b"OK".to_vec(), &[], 2);
+            rx.ts_ms = 1_789_870_339_803;
+            h.push(Dir::Tx, tx);
+            h.push(Dir::Rx, rx);
+
+            let resp = build_history_resp(&h, 0, None, false);
+            assert_eq!(resp.lines.len(), 2);
+            assert_eq!(resp.lines[0].ts, "10:12:19.740");
+            assert_eq!(resp.lines[0].ts_ms, 1_789_870_339_740);
+            assert_eq!(resp.lines[1].ts, "10:12:19.803");
+            assert_eq!(resp.lines[1].ts_ms - resp.lines[0].ts_ms, 63, "响应延迟直接相减可得");
+        }
 
         fn line(content: &[u8]) -> LogLine {
             LogLine::new("08:00:00.000".into(), Dir::Rx, content.to_vec(), &[], 0)

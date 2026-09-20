@@ -11,7 +11,6 @@ use crate::connection::line_assembler::LineAssembler;
 use crate::connection::port_wrapper::PortReader;
 use crate::state::AppState;
 use crate::util::log_format::{DisplayConfig, format_line_for_file};
-use crate::util::time_fmt::now_local_ts;
 
 /// 把积攒的行 flush 出去：emit rx-lines 批量事件给前端 + 送文件日志（若正在记录）。
 /// rx-lines 定向到该连接归属的窗口(emit_to 读 window_label RwLock),多窗口下不串流。
@@ -81,9 +80,8 @@ fn flush_pending_tail(assembler: &mut LineAssembler, app_handle: &tauri::AppHand
     if tail.is_empty() {
         return;
     }
-    let ts = now_local_ts();
     let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-    let line = LogLine::new(ts, Dir::Rx, tail, error_keywords, idx);
+    let line = LogLine::now(Dir::Rx, tail, error_keywords, idx);
     pending_lines.push(line);
     flush_lines(app_handle, pending_lines, rx_history, window_label);
 }
@@ -145,9 +143,8 @@ pub fn spawn_reader(
                     // (响应延迟、分帧间隔)。开销 ~0.5μs/行,远小于 IPC/切分成本,
                     // 批量 emit 节流收益不受影响(仍攒 16 行/5ms 一批 emit)。
                     for raw in lines {
-                        let ts = now_local_ts();
                         let idx = line_index.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
-                        let line = LogLine::new(ts, Dir::Rx, raw, &error_keywords, idx);
+                        let line = LogLine::now(Dir::Rx, raw, &error_keywords, idx);
                         pending_lines.push(line);
                     }
 

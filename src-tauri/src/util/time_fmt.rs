@@ -6,10 +6,15 @@ const TZ_OFFSET_HOURS: i64 = 8;
 
 /// 返回当前本地时间的 "HH:MM:SS.mmm" 字符串。
 pub fn now_local_ts() -> String {
+    now_local_ts_pair().0
+}
+
+/// 同一次读时钟同时给出显示用 `HH:MM:SS.mmm` 与 Unix 毫秒(供 MCP 的 ts_ms),两者严格一致。
+pub fn now_local_ts_pair() -> (String, u64) {
     let dur = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .expect("clock moved backwards");
-    format_ts(dur.as_secs() as i64, dur.subsec_millis())
+    (format_ts(dur.as_secs() as i64, dur.subsec_millis()), dur.as_millis() as u64)
 }
 
 /// 返回当前本地时间的 "YYYYMMDD_HHMMSS" 字符串（文件名友好，无冒号/点）。

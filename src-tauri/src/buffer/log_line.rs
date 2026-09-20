@@ -20,6 +20,9 @@ pub enum Dir {
 #[derive(Clone, Debug, Serialize)]
 pub struct LogLine {
     pub ts: String,
+    /// 与 ts 同一次取钟的 Unix 毫秒。MCP get_history_since 透传给 agent 做时间轴;
+    /// 0 表示旧数据/测试构造(用 `new`),生产路径一律用 `now`。
+    pub ts_ms: u64,
     pub dir: Dir,
     pub raw: Vec<u8>,
     pub ascii: String,
@@ -28,8 +31,17 @@ pub struct LogLine {
 }
 
 impl LogLine {
+    /// 以当前时间构造一行(生产路径唯一入口):ts 与 ts_ms 来自同一次取钟,严格一致。
+    pub fn now(dir: Dir, raw: Vec<u8>, error_keywords: &[String], line_index: u64) -> Self {
+        let (ts, ts_ms) = crate::util::time_fmt::now_local_ts_pair();
+        let mut line = Self::new(ts, dir, raw, error_keywords, line_index);
+        line.ts_ms = ts_ms;
+        line
+    }
+
     /// 构造一行。ts 已格式化好；raw 为原始字节；error_keywords 用于判定是否标红；
     /// line_index 为本次连接期间的行号(调用方从 per-conn 计数器 fetch_add 拿)。
+    /// ts_ms 置 0:只给测试与旧数据用,生产路径用 `now`。
     pub fn new(ts: String, dir: Dir, raw: Vec<u8>, error_keywords: &[String], line_index: u64) -> Self {
         let ascii = bytes_to_ascii(&raw);
         let is_error = match dir {
@@ -47,6 +59,7 @@ impl LogLine {
         };
         LogLine {
             ts,
+            ts_ms: 0,
             dir,
             raw,
             ascii,
@@ -67,6 +80,24 @@ mod tests {
 
     fn kws() -> Vec<String> {
         vec!["ERROR".to_string(), "+CME ERROR".to_string()]
+    }
+
+    /// now():ts_ms 是当前 Unix 毫秒,ts 是同一时刻的 HH:MM:SS.mmm,毫秒位一致;new():ts_ms=0。
+    #[test]
+    fn test_now_stamps_consistent_ts_and_ts_ms() {
+        let before = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let line = LogLine::now(Dir::Rx, b"OK".to_vec(), &kws(), 7);
+        assert!(line.ts_ms >= before && line.ts_ms <= before + 1000, "ts_ms 应是当前 Unix 毫秒: {}", line.ts_ms);
+        assert_eq!(line.ts.len(), "HH:MM:SS.mmm".len(), "ts 格式: {}", line.ts);
+        let millis_in_ts: u64 = line.ts[9..].parse().unwrap();
+        assert_eq!(millis_in_ts, line.ts_ms % 1000, "ts 的毫秒位应与 ts_ms 同一次取钟");
+        assert_eq!(line.line_index, 7);
+
+        let fixed = LogLine::new("08:00:00.000".into(), Dir::Rx, b"OK".to_vec(), &kws(), 0);
+        assert_eq!(fixed.ts_ms, 0, "手工 ts 的构造不猜 ts_ms");
     }
 
     #[test]

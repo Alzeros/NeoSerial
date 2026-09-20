@@ -1,21 +1,23 @@
 #![cfg(target_os = "windows")]
 
 use std::io;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use windows_sys::Win32::Devices::Communication::{
-    BuildCommDCBAndTimeoutsW, EscapeCommFunction, SetCommState, SetCommTimeouts,
-    COMMTIMEOUTS, DCB, SETDTR, SETRTS,
+    BuildCommDCBAndTimeoutsW, EscapeCommFunction, GetCommModemStatus, SetCommMask, SetCommState,
+    SetCommTimeouts, WaitCommEvent, COMMTIMEOUTS, DCB, EV_CTS, EV_DSR, MS_CTS_ON, MS_DSR_ON,
+    SETDTR, SETRTS,
 };
 use windows_sys::Win32::Foundation::{
     CloseHandle, DuplicateHandle, HANDLE, INVALID_HANDLE_VALUE, DUPLICATE_SAME_ACCESS, TRUE,
-    WAIT_OBJECT_0, WAIT_TIMEOUT,
+    WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
 };
 use windows_sys::Win32::Storage::FileSystem::{
     CreateFileW, ReadFile, WriteFile,
     FILE_ATTRIBUTE_NORMAL, FILE_FLAG_OVERLAPPED, FILE_SHARE_READ, FILE_SHARE_WRITE,
     OPEN_EXISTING,
 };
-use windows_sys::Win32::System::IO::{CancelIo, GetOverlappedResult, OVERLAPPED};
+use windows_sys::Win32::System::IO::{CancelIo, CancelIoEx, GetOverlappedResult, OVERLAPPED};
 use windows_sys::Win32::System::Threading::{
     CreateEventW, GetCurrentProcess, WaitForSingleObject,
 };
@@ -329,10 +331,217 @@ impl WinPort {
             Ok(WinPort { handle: cloned, baud_rate: self.baud_rate })
         }
     }
+
+    /// 读 CTS/DSR 当前电平。GetCommModemStatus 是即时驱动查询,与其他句柄上在途的
+    /// overlapped 读/写/事件等待互不干扰(驱动内部自串行化)。
+    pub fn modem_status(&self) -> io::Result<(bool, bool)> {
+        let mut status: u32 = 0;
+        if unsafe { GetCommModemStatus(self.handle, &mut status) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok((status & MS_CTS_ON != 0, status & MS_DSR_ON != 0))
+    }
+
+    /// CTS/DSR 电平变化监视:事件驱动(SetCommMask + WaitCommEvent),不轮询。
+    /// 驱动在电平变化当下把事件入队,本函数被唤醒后读 GetCommModemStatus 取当前值上抛。
+    /// 通知延迟 ≈ 线程唤醒(亚毫秒~几毫秒);两次唤醒之间的快速抖动合并为一次
+    /// (微秒级短脉冲抓不住,那是逻辑分析仪的活)。running 置 false 后 ≤100ms 退出。
+    /// 返回 Err 仅限驱动层失败(拔线/句柄失效);正常停止返回 Ok。
+    pub fn watch_modem_status(
+        &self,
+        running: &AtomicBool,
+        mut on_change: impl FnMut(bool, bool),
+    ) -> io::Result<()> {
+        if unsafe { SetCommMask(self.handle, EV_CTS | EV_DSR) } == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        // 初始状态先报一次:窗口建立/接管/刷新后不用等下一次变化就能显示
+        let (cts, dsr) = self.modem_status()?;
+        on_change(cts, dsr);
+        loop {
+            if !running.load(Ordering::SeqCst) {
+                return Ok(());
+            }
+            // 每轮新建 event/overlapped:WaitCommEvent 完成后手动复位事件保持有信号,
+            // 复用会让下一轮等待立刻假返回。每轮结束前保证在途 I/O 已收尾再 drop。
+            let event = unsafe { CreateEventW(std::ptr::null(), 1, 0, std::ptr::null()) };
+            if event.is_null() {
+                return Err(io::Error::last_os_error());
+            }
+            let mut overlapped: OVERLAPPED = unsafe { std::mem::zeroed() };
+            overlapped.hEvent = event;
+            let mut mask: u32 = 0;
+
+            let mut pending = false;
+            let outcome = unsafe { WaitCommEvent(self.handle, &mut mask, &mut overlapped) };
+            if outcome == 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(997) {
+                    // ERROR_IO_PENDING:在途,等完成
+                    pending = true;
+                } else {
+                    unsafe { CloseHandle(event) };
+                    return Err(err);
+                }
+            }
+            if pending {
+                loop {
+                    let wait = unsafe { WaitForSingleObject(event, 100) };
+                    if wait == WAIT_OBJECT_0 {
+                        break;
+                    }
+                    if wait == WAIT_FAILED {
+                        unsafe { CloseHandle(event) };
+                        return Err(io::Error::last_os_error());
+                    }
+                    // 100ms 只是停止检查周期,不影响检测精度(检测靠驱动事件入队)
+                    if !running.load(Ordering::SeqCst) {
+                        unsafe { CancelIoEx(self.handle, &overlapped) };
+                        // 等取消真正完成才关 event(overlapped 归内核所有,同 finish_overlapped)
+                        let mut got: u32 = 0;
+                        unsafe { GetOverlappedResult(self.handle, &overlapped, &mut got, TRUE) };
+                        unsafe { CloseHandle(event) };
+                        return Ok(());
+                    }
+                }
+                let mut got: u32 = 0;
+                if unsafe { GetOverlappedResult(self.handle, &overlapped, &mut got, TRUE) } == 0 {
+                    let err = io::Error::last_os_error();
+                    unsafe { CloseHandle(event) };
+                    return Err(err);
+                }
+            }
+            unsafe { CloseHandle(event) };
+            // 不区分哪个事件/边沿:直接读当前电平,连续抖动自然合并为最新值
+            if mask & (EV_CTS | EV_DSR) != 0 {
+                let (c, d) = self.modem_status()?;
+                on_change(c, d);
+            }
+        }
+    }
 }
 
 impl Drop for WinPort {
     fn drop(&mut self) {
         unsafe { CloseHandle(self.handle) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 真机测试用的端口:只认环境变量,不在仓库里写死任何 COM 号。未设则返回 None,测试自行跳过。
+    /// 注意目标口必须空闲——串口是独占打开的,NeoSerial 本身连着它时这里会报"拒绝访问"
+    /// (MCP 的复用只在 NeoSerial 进程内部成立),先在界面里断开再跑。
+    /// 几个真机测试一起跑要加 --test-threads=1:并行会同时开同一个口,后到的被拒。
+    fn test_port() -> Option<String> {
+        match std::env::var("NEOSERIAL_TEST_PORT") {
+            Ok(p) if !p.trim().is_empty() => Some(p),
+            _ => {
+                eprintln!("跳过:未设置 NEOSERIAL_TEST_PORT(如 NEOSERIAL_TEST_PORT=COM44)");
+                None
+            }
+        }
+    }
+
+    /// 真机测试用的流控:NEOSERIAL_TEST_FLOW=none|software|hardware,默认 none。
+    /// hardware 下 RTS 归驱动握手控制,可以看驱动到底把 RTS 置成什么。
+    fn test_flow() -> String {
+        std::env::var("NEOSERIAL_TEST_FLOW").unwrap_or_else(|_| "none".to_string())
+    }
+
+    /// 真机验证(默认跳过):监视线程能启动、上报初始态、按 running 干净退出。
+    /// 观察窗口默认 1.5s,NEOSERIAL_TEST_WAIT_MS 可拉长(比如 10000),期间给对端
+    /// 断电/复位,它的 RTS/DTR 会跟着变,这里就能看到 CTS/DSR 的变化与时间戳。
+    ///   NEOSERIAL_TEST_PORT=COM44 cargo test --lib test_watch_modem_status_reports_initial -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_watch_modem_status_reports_initial() {
+        let Some(name) = test_port() else { return };
+        let wait_ms: u64 = std::env::var("NEOSERIAL_TEST_WAIT_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(1500);
+        let port = WinPort::open(&name, 115200, 8, "none", 1, &test_flow())
+            .unwrap_or_else(|e| panic!("打开 {}: {}", name, e));
+        let running = std::sync::Arc::new(AtomicBool::new(true));
+        let states: std::sync::Arc<std::sync::Mutex<Vec<(bool, bool)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = states.clone();
+        let stop = running.clone();
+        let watcher = std::thread::spawn(move || {
+            port.watch_modem_status(&stop, move |c, d| {
+                sink.lock().unwrap().push((c, d));
+            })
+        });
+        std::thread::sleep(std::time::Duration::from_millis(wait_ms));
+        running.store(false, Ordering::SeqCst);
+        let res = watcher.join().unwrap();
+        assert!(res.is_ok(), "监视不应报错退出: {:?}", res.err());
+        let got = states.lock().unwrap();
+        assert!(!got.is_empty(), "应至少上报一次初始状态");
+        println!("{}ms 内上报 {} 次, 首次 {:?}", wait_ms, got.len(), got[0]);
+        for (i, s) in got.iter().enumerate().skip(1) {
+            println!("  变化 #{}: {:?}", i, s);
+        }
+    }
+
+    /// 真机验证(默认跳过):监视线程与 reader 的 overlapped 读并存时,从第三个句柄翻转
+    /// RTS/DTR 六次。断言的只有"并存不互卡 + 停得干净";CTS/DSR 是否跟随取决于板子
+    /// 有没有 RTS↔CTS / DTR↔DSR 回环跳线——有则打印每次变化的时间戳(可读出通知延迟),
+    /// 没有就只有一条初始状态。
+    ///   NEOSERIAL_TEST_PORT=COM44 cargo test --lib test_watch_modem_status_with_reader_and_rts_toggle -- --ignored --nocapture
+    #[test]
+    #[ignore]
+    fn test_watch_modem_status_with_reader_and_rts_toggle() {
+        use windows_sys::Win32::Devices::Communication::{CLRDTR, CLRRTS};
+        let Some(name) = test_port() else { return };
+        let port = WinPort::open(&name, 115200, 8, "none", 1, &test_flow())
+            .unwrap_or_else(|e| panic!("打开 {}: {}", name, e));
+        let ctl = port.try_clone().unwrap();
+        let rd = port.try_clone().unwrap();
+        let running = std::sync::Arc::new(AtomicBool::new(true));
+        let t0 = std::time::Instant::now();
+        let states: std::sync::Arc<std::sync::Mutex<Vec<(u128, bool, bool)>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+        let sink = states.clone();
+        let stop = running.clone();
+        let watcher = std::thread::spawn(move || {
+            port.watch_modem_status(&stop, move |c, d| {
+                sink.lock().unwrap().push((t0.elapsed().as_micros(), c, d));
+            })
+        });
+        let stop_r = running.clone();
+        let reader = std::thread::spawn(move || {
+            let mut buf = [0u8; 256];
+            let mut reads = 0u32;
+            while stop_r.load(Ordering::SeqCst) {
+                let _ = rd.read_overlapped(&mut buf, 20);
+                reads += 1;
+            }
+            reads
+        });
+        std::thread::sleep(std::time::Duration::from_millis(300));
+        for i in 0..6u32 {
+            let (r, d) = if i % 2 == 0 { (CLRRTS, CLRDTR) } else { (SETRTS, SETDTR) };
+            unsafe { EscapeCommFunction(ctl.handle, r); EscapeCommFunction(ctl.handle, d); }
+            println!("t={}us 置 RTS/DTR {}", t0.elapsed().as_micros(), if i % 2 == 0 { "低" } else { "高" });
+            std::thread::sleep(std::time::Duration::from_millis(150));
+        }
+        running.store(false, Ordering::SeqCst);
+        let res = watcher.join().unwrap();
+        let reads = reader.join().unwrap();
+        println!("watcher 退出: {:?}; reader 期间读了 {} 次; 直接查询 = {:?}", res, reads, ctl.modem_status());
+        let got = states.lock().unwrap();
+        for (t, c, d) in got.iter() {
+            println!("  t={}us cts={} dsr={}", t, c, d);
+        }
+        assert!(res.is_ok(), "监视不应报错退出: {:?}", res.err());
+        // 20ms 读超时,1.2s 里若被监视线程卡住读次数会远低于此
+        assert!(reads >= 20, "reader 与监视并存时读被卡住了: 只读了 {} 次", reads);
+        assert!(!got.is_empty(), "应至少上报一次初始状态");
+        if got.len() > 1 {
+            println!("检测到 {} 次电平变化(板子有回环)", got.len() - 1);
+        } else {
+            println!("未见电平变化:板子无 RTS↔CTS/DTR↔DSR 回环,变化检测本次未覆盖");
+        }
     }
 }

@@ -359,6 +359,28 @@ export function onRxUpdate(cb: (update: RxUpdate) => void) {
   return getCurrentWebview().listen<RxUpdate>('rx-update', (e) => cb(e.payload));
 }
 
+// ============ CTS/DSR 控制线状态(状态栏指示灯,后端 WaitCommEvent 事件驱动) ============
+
+/** CTS/DSR 电平事件:后端仅在电平变化时发出,定向投递到连接归属窗口。 */
+export interface ModemStatus {
+  port: string;
+  /** 本机 CTS 引脚电平(对端驱动,通常接对端 RTS) */
+  cts: boolean;
+  /** 本机 DSR 引脚电平(对端驱动) */
+  dsr: boolean;
+}
+
+/** 拉一次当前电平(窗口建立/接管/刷新后补初始态)。未连接或非 Windows 返回 null。 */
+export async function getModemStatus(port: string): Promise<{ cts: boolean; dsr: boolean } | null> {
+  const r = await invoke<{ connected: boolean; cts: boolean; dsr: boolean }>('get_modem_status', { port });
+  return r.connected ? { cts: r.cts, dsr: r.dsr } : null;
+}
+
+/** 订阅 CTS/DSR 变化(变化才发,无轮询)。 */
+export function onModemStatus(cb: (s: ModemStatus) => void) {
+  return getCurrentWebview().listen<ModemStatus>('modem-status', (e) => cb(e.payload));
+}
+
 export function onConnectionState(cb: (state: ConnectionState) => void) {
   return getCurrentWebview().listen<ConnectionState>('connection-state', (e) => cb(e.payload));
 }

@@ -9,7 +9,7 @@ mod tray;
 mod util;
 
 use tauri::{Emitter, Manager};
-use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor};
+use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor, get_modem_status};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, patch_settings, save_commands, export_theme_file, import_theme_file, data_dirs, open_data_dir};
 use commands::logging::{start_logging, stop_logging, get_logging_status};
@@ -312,6 +312,7 @@ pub fn run() {
             get_window_conn_state,
             get_window_history,
             get_mcp_only_connections,
+            get_modem_status,
             take_pending_takeover,
             exit_app,
             resolve_last_close,

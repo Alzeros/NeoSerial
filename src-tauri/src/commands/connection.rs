@@ -364,6 +364,26 @@ pub fn get_mcp_only_connections(state: State<'_, AppState>) -> Result<Vec<McpOnl
     Ok(list)
 }
 
+/// 查询某连接当前 CTS/DSR 电平。窗口建立/接管/页面刷新后前端主动拉一次初始态;
+/// 之后由 modem-status 事件推送变化(后端 WaitCommEvent 事件驱动)。
+/// 未连接、非硬件流控、非 Windows 一律 connected:false(指示灯不显示),判据在
+/// ConnectionHandle::modem_status,与 MCP get_status 一致。
+#[derive(serde::Serialize)]
+pub struct ModemStatusResp {
+    pub connected: bool,
+    pub cts: bool,
+    pub dsr: bool,
+}
+
+#[tauri::command]
+pub fn get_modem_status(state: State<'_, AppState>, port: String) -> Result<ModemStatusResp, String> {
+    let conns = state.connections.lock().map_err(|e| e.to_string())?;
+    Ok(match conns.get(&port).and_then(|h| h.modem_status()) {
+        Some((cts, dsr)) => ModemStatusResp { connected: true, cts, dsr },
+        None => ModemStatusResp { connected: false, cts: false, dsr: false },
+    })
+}
+
 /// 退出应用会掐断的 agent 连接:agent 经 MCP 建立(mcp_origin)且仍存活,不论有没有窗口挂着。
 /// 轻量模式关最后一个窗口前用它判断要不要先确认;返回按 COM 号自然排序,直接进提示文案。
 pub fn agent_connected_ports(state: &AppState) -> Vec<String> {
@@ -569,7 +589,18 @@ mod tests {
             window_label: Arc::new(std::sync::RwLock::new(format!("win-{}", port))),
             line_index: Arc::new(AtomicU64::new(0)),
             mcp_origin: Arc::new(AtomicBool::new(false)),
+            flow_control: crate::config::settings::FlowControl::None,
+            status_port: crate::connection::StatusPort::default(),
         }
+    }
+
+    /// 非硬件流控的连接没有查询句柄,CTS/DSR 一律"不可用"(界面不显示灯、MCP 给 null)。
+    #[test]
+    fn test_modem_status_unavailable_without_hardware_flow_control() {
+        let h = mock_handle("COM3");
+        assert_eq!(h.flow_control, crate::config::settings::FlowControl::None);
+        assert!(h.status_port.is_none());
+        assert_eq!(h.modem_status(), None);
     }
 
     /// 构造僵尸 handle:running=false,模拟 reader/writer 已退出(拔线等被动断开)

@@ -127,7 +127,8 @@ impl ServerHandler for NeoserialHandler {
             ),
             Tool::new(
                 GET_STATUS,
-                "查询指定端口的连接状态与 rx 序号。参数: port。返回 { ok, connected, port, baud, tx_bytes, rx_bytes, seq }。",
+                "查询指定端口的连接状态与 rx 序号。参数: port。返回 { ok, connected, port, baud, tx_bytes, rx_bytes, seq, cts, dsr }。\
+                 cts/dsr 为本机 CTS/DSR 引脚电平,只在该连接流控为 Hardware 时有值(接了 RTS/CTS 线才有意义),否则 null。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -173,7 +174,8 @@ impl ServerHandler for NeoserialHandler {
             Tool::new(
                 GET_HISTORY_SINCE,
                 "获取指定端口的收发历史(tx+rx,带方向)。参数: port, seq(基准序号), max_lines(可选,截断最旧), is_hex(可选,默认 false 返回 ascii;true 返回 hex dump,纯 hex 数据应传 true 否则 ascii 显示空)。\
-                 返回 { ok, lines: [{dir, text, index, seq}], latest_seq, truncated, dropped }。dir 为 'rx' 或 'tx'。\
+                 返回 { ok, lines: [{dir, text, ts, ts_ms, index, seq}], latest_seq, truncated, dropped }。dir 为 'rx' 或 'tx'。\
+                 ts 为到达时间 HH:MM:SS.mmm(与界面日志一致),ts_ms 为 Unix 毫秒(做时间轴/算命令→响应延迟用 rx 行与 tx 行的 ts_ms 相减;连接前的旧数据为 0)。\
                  latest_seq 是本次实际返回的最后一行序号,始终把它当下次查询的 seq。\
                  truncated=true 表示还有更多新行被 max_lines 挡住,应立即用 latest_seq 再拉一次直到 false。\
                  dropped=true 表示游标之后有行已被缓冲容量挤出、取不回来,该段历史不完整。",

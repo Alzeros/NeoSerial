@@ -82,7 +82,36 @@ pub struct ConnectionHandle {
     /// 应回退到 mcp label,连接留着);false=GUI 窗口自己 connect 新建的
     /// (关窗口应断开)。供 CloseRequested 区分回退还是断开。
     pub mcp_origin: Arc<AtomicBool>,
+    /// 连接时选的流控。CTS/DSR 监视与查询只在 Hardware 时启用:三线接法下这两根线
+    /// 悬空,读到的是芯片内部上拉的固定值,显示出来只会误导。
+    pub flow_control: FlowControl,
+    /// CTS/DSR 查询用独立句柄(读当前电平),与 reader/writer/监视线程的句柄互不干扰。
+    /// 只在 flow_control == Hardware 时为 Some;非 Windows 恒为 None。
+    pub status_port: StatusPort,
 }
+
+impl ConnectionHandle {
+    /// 当前 (CTS, DSR) 电平。不是硬件流控 / 非 Windows / 驱动读取失败 → None。
+    /// Tauri 命令 get_modem_status 与 MCP get_status 共用,判据只此一处。
+    pub fn modem_status(&self) -> Option<(bool, bool)> {
+        #[cfg(target_os = "windows")]
+        {
+            let sp = self.status_port.as_ref()?;
+            let guard = sp.lock().ok()?;
+            guard.modem_status().ok()
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
+    }
+}
+
+/// CTS/DSR 查询句柄类型:Windows 为独立 WinPort 句柄,其他平台/测试 mock 为占位。
+#[cfg(target_os = "windows")]
+pub type StatusPort = Option<Arc<std::sync::Mutex<win_port::WinPort>>>;
+#[cfg(not(target_os = "windows"))]
+pub type StatusPort = Option<()>;
 
 /// 发送给前端的 Tx 更新事件。
 #[derive(Clone, Serialize)]
@@ -96,6 +125,16 @@ pub struct TxUpdate {
 pub struct RxUpdate {
     pub total: u64,
     pub port: String,
+}
+
+/// CTS/DSR 电平事件:事件驱动(WaitCommEvent),变化才发,emit 到连接归属窗口。
+#[derive(Clone, Serialize)]
+pub struct ModemStatus {
+    pub port: String,
+    /// 本机 CTS 引脚电平(对端驱动,通常接对端 RTS)
+    pub cts: bool,
+    /// 本机 DSR 引脚电平(对端驱动)
+    pub dsr: bool,
 }
 
 /// 连接状态变化事件。
@@ -254,7 +293,7 @@ pub fn spawn_connection(
     // Windows: 用原生 overlapped I/O 打开端口（serialport 的同步 WriteFile 会阻塞数秒）。
     // 其他平台: 用 serialport crate。
     #[cfg(target_os = "windows")]
-    let (reader_port, writer_port, mode_str) = {
+    let (reader_port, writer_port, status_port, watcher_port, mode_str) = {
         let win_port = win_port::WinPort::open(
             &params.port,
             params.baud_rate,
@@ -266,13 +305,25 @@ pub fn spawn_connection(
 
         let writer = win_port.try_clone()
             .map_err(|e| format!("克隆端口失败: {}", e))?;
+        // status:CTS/DSR 查询用;watcher:变化监视线程用。只在硬件流控时才建(接了 RTS/CTS
+        // 线电平才有意义),三线用户不多开句柄、不多起线程。
+        // reader/writer/查询/监视各持独立句柄(DuplicateHandle 出的句柄独立关闭,互不影响)。
+        let (status, watcher) = if params.flow_control == FlowControl::Hardware {
+            let status = win_port.try_clone()
+                .map_err(|e| format!("克隆端口失败: {}", e))?;
+            let watcher = win_port.try_clone()
+                .map_err(|e| format!("克隆端口失败: {}", e))?;
+            (Some(status), Some(watcher))
+        } else {
+            (None, None)
+        };
 
         log::info!("[Connection] 使用 Windows 原生 overlapped I/O");
-        (win_port, writer, "overlapped".to_string())
+        (win_port, writer, status, watcher, "overlapped".to_string())
     };
 
     #[cfg(not(target_os = "windows"))]
-    let (reader_port, writer_port, mode_str) = {
+    let (reader_port, writer_port, status_port, mode_str) = {
         let port = serialport::new(&params.port, params.baud_rate)
             .data_bits(data_bits)
             .parity(parity)
@@ -290,6 +341,7 @@ pub fn spawn_connection(
                 log::info!("[Connection] 使用独立句柄模式");
                 (port_wrapper::PortReader::Owned(cloned),
                  port_wrapper::PortWriter::Owned(port),
+                 None::<()>,
                  "independent".to_string())
             }
             Err(e) => {
@@ -297,10 +349,15 @@ pub fn spawn_connection(
                 let shared = Arc::new(Mutex::new(port));
                 (port_wrapper::PortReader::Shared(shared.clone()),
                  port_wrapper::PortWriter::Shared(shared),
+                 None::<()>,
                  "shared".to_string())
             }
         }
     };
+
+    // Windows:包成共享的查询句柄(类型随 StatusPort 别名;非 Windows 分支已是占位类型)
+    #[cfg(target_os = "windows")]
+    let status_port: StatusPort = status_port.map(|p| Arc::new(std::sync::Mutex::new(p)));
 
     let running = Arc::new(AtomicBool::new(true));
     let tx_bytes = Arc::new(AtomicU64::new(0));
@@ -329,6 +386,8 @@ pub fn spawn_connection(
         window_label: window_label.clone(),
         line_index: line_index.clone(),
         mcp_origin: mcp_origin.clone(),
+        flow_control: params.flow_control,
+        status_port,
     };
 
     // 启动 reader 和 writer 线程
@@ -384,6 +443,26 @@ pub fn spawn_connection(
         (r_handle, w_handle)
     };
 
+    // CTS/DSR 监视线程(仅 Windows,仅硬件流控):事件驱动,变化即 emit modem-status 到连接归属窗口。
+    // 线程随 running 落停(≤100ms),monitor 在 join 它之后才置 exit flag,
+    // 保证 disconnect 的 wait_timeout(1s) 覆盖到它的退净。
+    #[cfg(target_os = "windows")]
+    let watcher_handle = watcher_port.map(|watcher_port| {
+        let running_w = running.clone();
+        let app_w = app_handle.clone();
+        let port_w = params.port.clone();
+        let label_w = window_label.clone();
+        std::thread::spawn(move || {
+            log::info!("[Connection] CTS/DSR 监视启动 ({}): WaitCommEvent 事件驱动", port_w);
+            if let Err(e) = watcher_port.watch_modem_status(&running_w, |cts, dsr| {
+                let label = label_w.read().map(|g| g.clone()).unwrap_or_default();
+                let _ = app_w.emit_to(&label, "modem-status", ModemStatus { port: port_w.clone(), cts, dsr });
+            }) {
+                log::info!("[Connection] CTS/DSR 监视退出: {}", e);
+            }
+        })
+    });
+
     // 发送连接模式事件
     {
         let wl = window_label.read().map_err(|e| e.to_string())?;
@@ -403,6 +482,11 @@ pub fn spawn_connection(
         let _ = reader_handle.join();
         let _ = writer_handle.join();
         running_clone.store(false, std::sync::atomic::Ordering::SeqCst);
+        // CTS/DSR 监视线程看到 running=false 后 ≤100ms 自行退出,join 住再置 exit flag
+        #[cfg(target_os = "windows")]
+        if let Some(h) = watcher_handle {
+            let _ = h.join();
+        }
         // 通知 disconnect:线程已退净,可安全返回(供下一次 connect)
         if let Ok(mut e) = exit_clone.0.lock() {
             *e = true;

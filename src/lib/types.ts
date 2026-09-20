@@ -4,6 +4,8 @@ export type Dir = 'rx' | 'tx';
 
 export interface LogLine {
   ts: string;
+  /** 到达时间 Unix 毫秒(与 ts 同一次取钟)。前端暂不使用,MCP get_history_since 用它给 agent 做时间轴。 */
+  ts_ms: number;
   dir: Dir;
   raw: number[];
   ascii: string;
