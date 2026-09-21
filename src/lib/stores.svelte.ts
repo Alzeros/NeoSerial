@@ -1,4 +1,5 @@
-import { defaultScriptCommand, defaultScriptPage, defaultScriptModule, presetScriptModules, type LogLine, type ScriptPage, type Settings } from './types';
+import { defaultScriptCommand, defaultScriptPage, presetScriptModules, type LogLine, type QuickCommandsModule, type ScriptPage, type Settings } from './types';
+import { isQuickCommandsModule } from './dataProcessing';
 import { computeCustomVars, defaultCustomTheme, isCustomDark, normalizeCustomTheme } from './customTheme';
 
 // ============ 连接状态 ============
@@ -260,9 +261,12 @@ export const scriptRunState = $state<{
   finished: '' | 'done' | 'aborted';
 }>({ round: 1, sent: 0, total: 0, startedAt: 0, finished: '' });
 
-/** 当前激活模块的 pages（便捷访问，源数据在 scriptModules[activeScriptModule].pages） */
+/** 当前激活模块的 pages（便捷访问，源数据在 scriptModules[activeScriptModule].pages）。
+ *  守卫是 boolean 而非类型谓词(它是结构判断,拿不到联合类型),所以这里显式断言;
+ *  每个元素本身就是 QuickCommandsModule,断言安全。data_processing 没有 pages,返回 []。 */
 export function currentModulePages(): ScriptPage[] {
-  return scriptModules[activeScriptModule.value]?.pages ?? [];
+  const m = scriptModules[activeScriptModule.value];
+  return m && isQuickCommandsModule(m) ? (m as QuickCommandsModule).pages : [];
 }
 
 export function toggleScriptPanel() {

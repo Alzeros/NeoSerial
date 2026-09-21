@@ -1,5 +1,8 @@
 // 与 Rust 后端对齐的前端类型定义
 
+import { defaultFrameBuilderTool, type DataTool } from './dataProcessing';
+export type { FrameConfig, DataTool, FrameBuilderTool, FrameTemplate } from './dataProcessing';
+
 export type Dir = 'rx' | 'tx';
 
 export interface LogLine {
@@ -204,13 +207,10 @@ export interface ScriptPage {
 }
 
 /** 脚本模块：右栏一个独立功能区，是 Page 之上的分组层。
- *  当前仅快捷指令一种类型，后续可扩展自动化测试等。 */
-export interface ScriptModule {
-  id: string;
-  name: string;
-  type: 'quick_commands';
-  pages: ScriptPage[];
-}
+ *  快捷指令(pages)与数据处理(tools)用联合类型区分，按 type 收窄。 */
+export interface QuickCommandsModule { id: string; name: string; type: 'quick_commands'; pages: ScriptPage[] }
+export interface DataProcessingModule { id: string; name: string; type: 'data_processing'; tools: DataTool[] }
+export type ScriptModule = QuickCommandsModule | DataProcessingModule;
 
 export function defaultScriptCommand(id: number): ScriptCommand {
   return {
@@ -231,7 +231,7 @@ export function defaultScriptPage(name: string): ScriptPage {
 }
 
 let moduleIdSeq = 0;
-export function defaultScriptModule(name = '快捷指令'): ScriptModule {
+export function defaultScriptModule(name = '快捷指令'): QuickCommandsModule {
   moduleIdSeq += 1;
   return {
     id: `module_${moduleIdSeq}`,
@@ -246,12 +246,8 @@ export function defaultScriptModule(name = '快捷指令'): ScriptModule {
  *  并在 ScriptSequencer 按 type 分发到对应子组件。 */
 export function presetScriptModules(): ScriptModule[] {
   return [
-    {
-      id: 'quick_commands',
-      name: '快捷指令',
-      type: 'quick_commands',
-      pages: [defaultScriptPage('Page0')],
-    },
+    { id: 'quick_commands', name: '快捷指令', type: 'quick_commands', pages: [defaultScriptPage('Page0')] },
+    { id: 'data_processing', name: '数据处理', type: 'data_processing', tools: [defaultFrameBuilderTool()] },
   ];
 }
 

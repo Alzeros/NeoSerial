@@ -270,7 +270,7 @@
         scriptModules.push(...modules);
         lastPersistedJson = JSON.stringify(scriptModules);
         activeScriptModule.value = Math.min(activeScriptModule.value, scriptModules.length - 1);
-        const pages = scriptModules[activeScriptModule.value]?.pages ?? [];
+        const pages = currentModulePages();
         activeScriptPage.value = Math.min(activeScriptPage.value, Math.max(0, pages.length - 1));
       }
     } catch (e) {

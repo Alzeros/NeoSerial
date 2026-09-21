@@ -1,6 +1,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { mergePresetModules, type FrameConfig } from './dataProcessing';
 import type {
   CommandIndexCache,
   CommandIndexRefreshDocResult,
@@ -21,7 +22,7 @@ import type {
   TxUpdate,
   WindowConnState,
 } from './types';
-import { defaultScriptModule } from './types';
+import { defaultScriptModule, presetScriptModules } from './types';
 
 // ============ 连接管理 ============
 
@@ -110,6 +111,15 @@ export async function send(port: string, text: string, ending: string, isHex: bo
   return await invoke<number>('send', { port, text, ending, isHex });
 }
 
+/** 帧构造:调用后端 build_frame,失败时 reject 的是 FrameBuildError { field, message }。 */
+export interface FrameResult {
+  hex: string; total_len: number;
+  breakdown: { kind: 'header' | 'length' | 'data' | 'checksum'; offset: number; len: number }[];
+}
+export async function buildFrame(config: FrameConfig): Promise<FrameResult> {
+  return await invoke<FrameResult>('build_frame', { config });
+}
+
 export async function sendFile(port: string, path: string): Promise<number> {
   return await invoke<number>('send_file', { port, path });
 }
@@ -192,20 +202,17 @@ export async function saveSequenceConfig(path: string, data: ScriptModule[]): Pr
 }
 
 /** 加载序列配置。支持 JSON(本工具导出)与 INI(旧串口工具导出,自动转换)。
- *  返回 ScriptModule[]；旧 JSON 格式(裸 ScriptPage[])自动迁移为默认模块。 */
-export async function loadSequenceConfig(path: string): Promise<ScriptModule[]> {
+ *  返回 ScriptModule[]；旧 JSON 格式(裸 ScriptPage[])自动迁移为默认模块。
+ *  「加载」按钮:多收一个 fallback = 当前 store,保住用户已有的帧模板不被空预置顶掉再随自动保存写没。
+ *  用参数注入而不是 import stores.svelte.ts,避免纯 .ts 引 .svelte.ts。 */
+export async function loadSequenceConfig(path: string, fallback: ScriptModule[] = []): Promise<ScriptModule[]> {
   const raw = await invoke<unknown[]>('load_sequence_config', { path });
-  // 迁移：元素无 pages 字段 → 视为旧裸 ScriptPage[]，包进默认"快捷指令"模块
   const isModule = (r: unknown): r is ScriptModule =>
-    typeof r === 'object' && r !== null && 'pages' in r && 'id' in r;
-  if (raw.length > 0 && isModule(raw[0])) {
-    return raw as ScriptModule[];
-  }
-  // 旧格式：整包作为默认模块的 pages
-  return [defaultScriptModule('快捷指令')].map((m) => ({
-    ...m,
-    pages: raw as unknown as ScriptPage[],
-  }));
+    typeof r === 'object' && r !== null && 'type' in r && 'id' in r;
+  const modules = (raw.length > 0 && isModule(raw[0]))
+    ? (raw as ScriptModule[])
+    : ([defaultScriptModule('快捷指令')].map((m) => ({ ...m, pages: raw as unknown as ScriptPage[] })) as ScriptModule[]);
+  return mergePresetModules(modules, fallback, presetScriptModules());
 }
 
 /** 自动保存序列配置到默认路径（%APPDATA%/neoserial/sequence.json）。 */
@@ -216,17 +223,17 @@ export async function saveSequenceAuto(data: ScriptModule[]): Promise<void> {
 /** 自动加载序列配置（从 %APPDATA%/neoserial/sequence.json）。文件不存在返回空数组。 */
 export async function loadSequenceAuto(): Promise<ScriptModule[]> {
   const raw = await invoke<unknown[]>('load_sequence_auto');
+  // 空数组早返回必须在合并之前:startup.ts 的 loadSequenceOnce 靠它判"文件不存在",
+  // 空 → 返回 null → lastPersistedJson = null → 自动保存 effect 判定不等 → 首次启动把预置写盘。
+  // 若合并提前,空文件也会返回 2 个预置,sequence.json 永远不会被创建。
   if (raw.length === 0) return [];
   const isModule = (r: unknown): r is ScriptModule =>
-    typeof r === 'object' && r !== null && 'pages' in r && 'id' in r;
-  if (isModule(raw[0])) {
-    return raw as ScriptModule[];
-  }
-  // 旧格式迁移
-  return [defaultScriptModule('快捷指令')].map((m) => ({
-    ...m,
-    pages: raw as unknown as ScriptPage[],
-  }));
+    typeof r === 'object' && r !== null && 'type' in r && 'id' in r;
+  const modules = isModule(raw[0])
+    ? (raw as ScriptModule[])
+    : ([defaultScriptModule('快捷指令')].map((m) => ({ ...m, pages: raw as unknown as ScriptPage[] })) as ScriptModule[]);
+  // 非空路径才合并:以磁盘为准,缺的预置(如老用户没有 data_processing)从代码补。
+  return mergePresetModules(modules, [], presetScriptModules());
 }
 
 // ============ 指令联想(知识库手册索引 + 发送历史) ============
