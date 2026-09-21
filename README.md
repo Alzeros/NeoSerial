@@ -191,7 +191,7 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 | 文件 | 位置 | 说明 |
 |------|------|------|
 | 设置 | 配置目录 `settings.json` | 串口默认值、UI 偏好、命令组、错误关键词、预设波特率、主题、MCP 设置、指令联想（知识库地址、参与手册、弹出门槛与条数上限、发送历史留存上限）|
-| 脚本序列 | 配置目录 `sequence.json` | 脚本模块/页签/命令（防抖自动保存）|
+| 脚本序列 | 配置目录 `sequence.json` | 脚本模块/页签/命令、数据处理(帧构造器配置与模板)(防抖自动保存)|
 | 发送历史 | 配置目录 `send-history.json` | 输入框手动发过的内容，留存上限可配 |
 | 知识库凭据 | 配置目录 `kb-credential.dat` | 用户填的 API Key，DPAPI（当前 Windows 用户）加密。**不在 settings.json 里**——那份会下发给前端、会被 agent 的 `get_settings` 读到、还整份落盘 |
 | 指令缓存 | 缓存目录 `command-index.json` | 手册指令索引，可重建（刷新指令库）|
