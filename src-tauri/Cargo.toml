@@ -30,6 +30,9 @@ serialport = "4.9"
 crossbeam-channel = "0.5"
 chrono = "0.4"
 thiserror = "2"
+# 帧构造器:CRC 用目录常量,SUM8/XOR8 手写(见 dataproc/checksum.rs)
+crc = "3"
+rand = "0.9"
 log = "0.4"
 env_logger = "0.11"
 rmcp = { version = "3.1", features = ["server", "transport-streamable-http-server"] }

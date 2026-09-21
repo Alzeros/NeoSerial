@@ -1,5 +1,6 @@
 mod buffer;
 mod commands;
+mod dataproc;
 mod config;
 mod connection;
 mod logging;
