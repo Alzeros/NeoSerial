@@ -111,13 +111,14 @@ pub fn build_frame(cfg: &FrameConfig, rng: &mut impl rand::Rng) -> Result<FrameR
     // 1. 帧头
     let header = parse_hex_field(&cfg.header_hex, BuildField::Header)?;
 
-    // 2. 数据域(内容 或 填充;填充长度按 basis 推导,先按 data_field 估,whole_frame 后面再校)
+    // 2. 数据域(内容 或 填充;填充长度按 basis 推导,上限在 build_data_field 里前置校验,
+    //    不带大 n 进 fill_bytes 分配)
     let data = build_data_field(cfg, rng, header.len())?;
 
     // 3. 长度字段字节(需要先知道校验长度才能算 data_plus_checksum/whole_frame)
     let checksum_len = checksum_byte_len(cfg.checksum.algo);
     let data_plus_cs = data.len() + checksum_len;
-    let len_field_size = match cfg.length.size { LengthSize::None => 0, LengthSize::One => 1, LengthSize::Two => 2 };
+    let len_field_size = length_field_size(cfg.length.size);
     let length_value = match cfg.length.coverage {
         LengthCoverage::Data => data.len(),
         LengthCoverage::DataPlusChecksum => data_plus_cs,
@@ -174,6 +175,11 @@ fn checksum_byte_len(algo: ChecksumAlgo) -> usize {
     }
 }
 
+/// 长度字段字节数。build_frame 算 whole_frame 口径、build_data_field 推导填充长度共用。
+fn length_field_size(size: LengthSize) -> usize {
+    match size { LengthSize::None => 0, LengthSize::One => 1, LengthSize::Two => 2 }
+}
+
 fn encode_length(size: LengthSize, endian: Endian, value: usize) -> Result<Vec<u8>, FrameBuildError> {
     match size {
         LengthSize::None => Ok(Vec::new()),
@@ -201,7 +207,7 @@ fn build_data_field(cfg: &FrameConfig, rng: &mut impl rand::Rng, header_len: usi
         },
         DataMode::Fill => {
             let checksum_len = checksum_byte_len(cfg.checksum.algo);
-            let len_field_size = match cfg.length.size { LengthSize::None => 0, LengthSize::One => 1, LengthSize::Two => 2 };
+            let len_field_size = length_field_size(cfg.length.size);
             let n = match cfg.data.length_basis {
                 LengthBasis::DataField => cfg.data.length,
                 LengthBasis::WholeFrame => {
@@ -212,6 +218,11 @@ fn build_data_field(cfg: &FrameConfig, rng: &mut impl rand::Rng, header_len: usi
                     cfg.data.length - fixed
                 }
             };
+            // 填充长度上限必须在 fill_bytes 分配之前校验:n 来自用户输入(1e11 量级也能进到这),
+            // vec![0u8; n] 分配失败是进程级 abort(不可捕获),而配置已被自动保存,会变成启动即崩循环。
+            if n > MAX_FRAME_LEN {
+                return Err(FrameBuildError::new(BuildField::Length, format!("填充长度 {} 超出单帧 64 KiB 上限", n)));
+            }
             fill_bytes(cfg, rng, n)
         }
     }
@@ -530,5 +541,33 @@ mod tests {
         let mut d = base_cfg();
         d.data.value = "6".into(); // 奇数位
         assert_eq!(build_frame(&d, &mut rng()).unwrap_err().field, Some(BuildField::Data));
+    }
+
+    /// 填充长度超 64 KiB 必须在 fill_bytes 分配之前拒绝(data_field 口径):
+    /// 1e11 量级的 vec![0u8; n] 分配失败是进程 abort,不可捕获,只能前置校验挡住。
+    #[test]
+    fn fill_data_field_huge_length_rejected() {
+        let mut c = base_cfg();
+        c.data.mode = DataMode::Fill;
+        c.data.pattern = FillPattern::Zeros;
+        c.data.length = 100_000_000;
+        let e = build_frame(&c, &mut rng()).unwrap_err();
+        assert_eq!(e.field, Some(BuildField::Length));
+        assert!(e.message.contains("64 KiB"));
+    }
+
+    /// 同上,whole_frame 口径:总长 1e8 折算出的填充长度同样前置拒绝
+    #[test]
+    fn fill_whole_frame_huge_length_rejected() {
+        let mut c = base_cfg();
+        c.header_hex = "AA".into();
+        c.length.size = LengthSize::One;
+        c.data.mode = DataMode::Fill;
+        c.data.pattern = FillPattern::Zeros;
+        c.data.length_basis = LengthBasis::WholeFrame;
+        c.data.length = 100_000_000;
+        let e = build_frame(&c, &mut rng()).unwrap_err();
+        assert_eq!(e.field, Some(BuildField::Length));
+        assert!(e.message.contains("64 KiB"));
     }
 }
