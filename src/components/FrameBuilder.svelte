@@ -602,8 +602,10 @@
         </div>
       {/if}
     </div>
-    <!-- 模板列表:单击载入,悬停右上角显删除 -->
-    <div class="flex min-w-0 flex-1 items-center justify-end gap-1.5 overflow-x-auto">
+    <!-- 模板列表:单击载入,悬停右上角显删除。
+         overflow-x-auto 会把纵向也计算成 auto 并裁剪,删除按钮 × 向项框外溢出 6px 会被切掉,
+         故留 6px padding 容纳溢出,再用负 margin 抵消,底栏高度不变。 -->
+    <div class="flex min-w-0 flex-1 items-center justify-end gap-1.5 overflow-x-auto px-1.5 py-1.5 -mx-1.5 -my-1.5">
       {#if tool.templates.length === 0}
         <span class="text-[12px] text-[var(--muted-foreground)]">暂无模板</span>
       {/if}

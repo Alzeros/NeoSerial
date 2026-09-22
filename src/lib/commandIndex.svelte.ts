@@ -53,7 +53,11 @@ export function initCommandIndex(): () => void {
   listenersReady = Promise.all([unlistenIndex, unlistenHistory]).then(() => undefined);
   listenersReady
     .then(sendHistoryLoad)
-    .then((items) => (commandIndex.history = items))
+    // 必须用块体:箭头函数隐式返回赋值表达式时,编译成 $.assign 后返回的是右值原始数组,
+    // 而非赋值后 commandIndex.history 的代理值(Svelte assignment_value_stale)
+    .then((items) => {
+      commandIndex.history = items;
+    })
     .catch((e) => console.error('加载发送历史失败:', e));
   return () => {
     unlistenIndex.then((f) => f());
