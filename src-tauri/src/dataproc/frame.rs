@@ -27,6 +27,33 @@ pub enum ContentFormat { Hex, Text }
 #[serde(rename_all = "snake_case")]
 pub enum FillPattern { Zeros, Ff, RandomBytes, RandomText, Increment, CustomLoop }
 
+/// 随机文本生成配置:勾选字符类型 + 保底约束,替代手写字符集。
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct RandomTextSpec {
+    pub upper: bool,
+    pub lower: bool,
+    pub digits: bool,
+    pub special: bool,
+    /// 特殊字符集合,预置 "!@#$%^&*",可编辑
+    pub special_chars: String,
+    pub min_digits: usize,
+    pub min_special: usize,
+}
+
+impl Default for RandomTextSpec {
+    fn default() -> Self {
+        Self {
+            upper: true,
+            lower: true,
+            digits: true,
+            special: false,
+            special_chars: "!@#$%^&*".into(),
+            min_digits: 0,
+            min_special: 0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LengthBasis { DataField, WholeFrame }
@@ -44,7 +71,11 @@ pub struct DataSpec {
     pub format: ContentFormat,
     pub value: String,
     pub pattern: FillPattern,
+    /// 旧字段,保留兼容:非空且非预置时迁移为 RandomTextSpec 的自定义特殊字符集
+    #[serde(default)]
     pub charset: String,
+    #[serde(default)]
+    pub random_text: RandomTextSpec,
     pub start: u8,
     pub custom_format: ContentFormat,
     pub custom_value: String,
@@ -111,8 +142,8 @@ pub fn build_frame(cfg: &FrameConfig, rng: &mut impl rand::Rng) -> Result<FrameR
     // 1. 帧头
     let header = parse_hex_field(&cfg.header_hex, BuildField::Header)?;
 
-    // 2. 数据域(内容 或 填充;填充长度按 basis 推导,上限在 build_data_field 里前置校验,
-    //    不带大 n 进 fill_bytes 分配)
+    // 2. 数据域(内容或填充;旧配置的 length_basis 仍由后端兼容,
+    //    上限在 build_data_field 里前置校验,不带大 n 进 fill_bytes 分配)
     let data = build_data_field(cfg, rng, header.len())?;
 
     // 3. 长度字段字节(需要先知道校验长度才能算 data_plus_checksum/whole_frame)
@@ -229,16 +260,63 @@ fn build_data_field(cfg: &FrameConfig, rng: &mut impl rand::Rng, header_len: usi
 }
 
 fn fill_bytes(cfg: &FrameConfig, rng: &mut impl rand::Rng, n: usize) -> Result<Vec<u8>, FrameBuildError> {
-    use rand::Rng;
     match cfg.data.pattern {
         FillPattern::Zeros => Ok(vec![0u8; n]),
         FillPattern::Ff => Ok(vec![0xFFu8; n]),
         FillPattern::RandomBytes => Ok((0..n).map(|_| rng.random::<u8>()).collect()),
         FillPattern::RandomText => {
-            let cs: Vec<u8> = cfg.data.charset.bytes().collect();
-            if cs.is_empty() { return Err(FrameBuildError::new(BuildField::Charset, "随机字符集为空")); }
-            if !cfg.data.charset.is_ascii() { return Err(FrameBuildError::new(BuildField::Charset, "随机字符集仅限 ASCII 字符")); }
-            Ok((0..n).map(|_| cs[rng.random_range(0..cs.len())]).collect())
+            let spec = &cfg.data.random_text;
+            // 构建字符池
+            let mut pool: Vec<u8> = Vec::new();
+            if spec.upper { pool.extend(b'A'..=b'Z'); }
+            if spec.lower { pool.extend(b'a'..=b'z'); }
+            if spec.digits { pool.extend(b'0'..=b'9'); }
+            if spec.special {
+                let sc: Vec<u8> = spec.special_chars.bytes().filter(|b| b.is_ascii()).collect();
+                if sc.is_empty() { return Err(FrameBuildError::new(BuildField::Charset, "特殊字符集为空或含非 ASCII")); }
+                pool.extend(sc);
+            }
+            if pool.is_empty() { return Err(FrameBuildError::new(BuildField::Charset, "未勾选任何字符类型")); }
+
+            // 保底字符:先放 min_digits 个数字、min_special 个特殊字符到随机位置
+            let mut result: Vec<(usize, u8)> = Vec::with_capacity(n);
+            let mut positions: Vec<usize> = (0..n).collect();
+            // Fisher-Yates 洗牌位置,取前 min_digits + min_special 个放保底
+            for i in (1..positions.len()).rev() {
+                let j = rng.random_range(0..=i);
+                positions.swap(i, j);
+            }
+            let mut pos_iter = positions.into_iter();
+
+            let digits: Vec<u8> = if spec.digits { (b'0'..=b'9').collect() } else { vec![] };
+            let specials: Vec<u8> = if spec.special {
+                spec.special_chars.bytes().filter(|b| b.is_ascii()).collect()
+            } else { vec![] };
+
+            for _ in 0..spec.min_digits.min(n) {
+                if digits.is_empty() { break; }
+                let pos = pos_iter.next().unwrap_or(0);
+                let ch = digits[rng.random_range(0..digits.len())];
+                result.push((pos, ch));
+            }
+            let placed = result.len();
+            for _ in 0..spec.min_special.min(n.saturating_sub(placed)) {
+                if specials.is_empty() { break; }
+                let pos = pos_iter.next().unwrap_or(0);
+                let ch = specials[rng.random_range(0..specials.len())];
+                result.push((pos, ch));
+            }
+
+            // 剩余位置从池子随机填充
+            let mut final_bytes = vec![0u8; n];
+            let mut filled = vec![false; n];
+            for (pos, ch) in result {
+                if pos < n { final_bytes[pos] = ch; filled[pos] = true; }
+            }
+            for i in 0..n {
+                if !filled[i] { final_bytes[i] = pool[rng.random_range(0..pool.len())]; }
+            }
+            Ok(final_bytes)
         }
         FillPattern::Increment => Ok((0..n).map(|i| cfg.data.start.wrapping_add(i as u8)).collect()),
         FillPattern::CustomLoop => {
@@ -265,8 +343,8 @@ mod tests {
             length: LengthFieldSpec { size: LengthSize::None, endian: Endian::Le, coverage: LengthCoverage::Data },
             data: DataSpec {
                 mode: DataMode::Content, format: ContentFormat::Hex, value: "61 62".into(),
-                pattern: FillPattern::Zeros, charset: "A-Za-z0-9".into(), start: 0,
-                custom_format: ContentFormat::Hex, custom_value: String::new(),
+                pattern: FillPattern::Zeros, charset: String::new(), random_text: RandomTextSpec::default(),
+                start: 0, custom_format: ContentFormat::Hex, custom_value: String::new(),
                 length_basis: LengthBasis::DataField, length: 0,
             },
             checksum: ChecksumSpec { algo: ChecksumAlgo::None, endian: Endian::Le, include_header: false, include_length: false },
@@ -510,23 +588,49 @@ mod tests {
         assert_eq!(a.total_len, 8);
         assert_eq!(a.hex, b.hex); // 同种子同结果
         c.data.pattern = FillPattern::RandomText;
-        c.data.charset = "AB".into();
+        c.data.random_text = RandomTextSpec {
+            upper: false, lower: false, digits: false, special: true,
+            special_chars: "AB".into(), min_digits: 0, min_special: 0,
+        };
         let t = build_frame(&c, &mut rng()).unwrap();
         assert_eq!(t.total_len, 8);
         assert!(t.hex.split(' ').all(|h| h == "41" || h == "42"));
     }
 
-    /// 随机字符集为空 / 含非 ASCII 报错
+    /// 随机文本:未勾选任何字符类型报错;特殊字符集为空报错
     #[test]
-    fn random_text_bad_charset() {
+    fn random_text_bad_config() {
         let mut c = base_cfg();
         c.data.mode = DataMode::Fill;
         c.data.pattern = FillPattern::RandomText;
         c.data.length = 4;
-        c.data.charset = String::new();
+        c.data.random_text = RandomTextSpec {
+            upper: false, lower: false, digits: false, special: false,
+            special_chars: String::new(), min_digits: 0, min_special: 0,
+        };
         assert_eq!(build_frame(&c, &mut rng()).unwrap_err().field, Some(BuildField::Charset));
-        c.data.charset = "中".into();
+        c.data.random_text.special = true;
+        c.data.random_text.special_chars = "中".into();
         assert_eq!(build_frame(&c, &mut rng()).unwrap_err().field, Some(BuildField::Charset));
+    }
+
+    /// 随机文本保底约束:min_digits=2 时结果至少含 2 个数字
+    #[test]
+    fn random_text_min_digits() {
+        let mut c = base_cfg();
+        c.data.mode = DataMode::Fill;
+        c.data.pattern = FillPattern::RandomText;
+        c.data.length = 10;
+        c.data.random_text = RandomTextSpec {
+            upper: true, lower: true, digits: true, special: false,
+            special_chars: String::new(), min_digits: 2, min_special: 0,
+        };
+        let r = build_frame(&c, &mut rng()).unwrap();
+        let digit_count = r.hex.split(' ').filter(|h| {
+            let b = u8::from_str_radix(h, 16).unwrap();
+            b.is_ascii_digit()
+        }).count();
+        assert!(digit_count >= 2, "expected >=2 digits, got {} in {}", digit_count, r.hex);
     }
 
     /// 自定义循环为空 / 数据域 hex 非法

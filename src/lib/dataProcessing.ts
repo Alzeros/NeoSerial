@@ -3,10 +3,18 @@
 
 export type Endian = 'le' | 'be';
 export interface LengthFieldSpec { size: 'none' | 'one' | 'two'; endian: Endian; coverage: 'data' | 'data_plus_checksum' | 'whole_frame' }
+export interface RandomTextSpec {
+  upper: boolean; lower: boolean; digits: boolean; special: boolean;
+  special_chars: string; min_digits: number; min_special: number;
+}
 export interface DataSpec {
   mode: 'content' | 'fill'; format: 'hex' | 'text'; value: string;
   pattern: 'zeros' | 'ff' | 'random_bytes' | 'random_text' | 'increment' | 'custom_loop';
-  charset: string; start: number; custom_format: 'hex' | 'text'; custom_value: string;
+  /** 旧字段,保留兼容 */
+  charset: string;
+  random_text: RandomTextSpec;
+  start: number; custom_format: 'hex' | 'text'; custom_value: string;
+  /** whole_frame 仅用于识别和迁移旧配置；新界面的 length 始终表示数据字节数。 */
   length_basis: 'data_field' | 'whole_frame'; length: number;
 }
 export interface ChecksumSpec {
@@ -19,17 +27,56 @@ export interface FrameTemplate { name: string; config: FrameConfig }
 export interface FrameBuilderTool { id: string; kind: 'frame_builder'; config: FrameConfig; templates: FrameTemplate[] }
 export type DataTool = FrameBuilderTool;
 
+export function defaultRandomTextSpec(): RandomTextSpec {
+  return { upper: true, lower: true, digits: true, special: false, special_chars: '!@#$%^&*', min_digits: 0, min_special: 0 };
+}
+
 export function defaultFrameConfig(): FrameConfig {
   return {
     header_hex: '',
     length: { size: 'none', endian: 'le', coverage: 'data' },
-    data: { mode: 'content', format: 'hex', value: '', pattern: 'zeros', charset: 'A-Za-z0-9', start: 0, custom_format: 'hex', custom_value: '', length_basis: 'data_field', length: 0 },
+    data: { mode: 'content', format: 'hex', value: '', pattern: 'zeros', charset: '', random_text: defaultRandomTextSpec(), start: 0, custom_format: 'hex', custom_value: '', length_basis: 'data_field', length: 0 },
     checksum: { algo: 'none', endian: 'le', include_header: false, include_length: false },
   };
 }
 
 export function defaultFrameBuilderTool(): FrameBuilderTool {
   return { id: 'frame_builder', kind: 'frame_builder', config: defaultFrameConfig(), templates: [] };
+}
+
+/** 就地迁移旧配置；basis 写回后再次加载不会重复扣减固定段。 */
+export function normalizeFrameConfig(config: FrameConfig): FrameConfig {
+  const data = config.data;
+  const charset = data.charset;
+  if (!data.random_text) {
+    data.random_text = charset && charset !== 'A-Za-z0-9'
+      ? { upper: false, lower: false, digits: false, special: true, special_chars: charset, min_digits: 0, min_special: 0 }
+      : defaultRandomTextSpec();
+  } else if (charset && charset !== 'A-Za-z0-9') {
+    // 过渡版本可能已经写入 random_text 默认对象,但还没清理旧 charset。
+    // 只有仍处于默认特殊字符设置时才用旧值覆盖,避免覆盖用户新配置。
+    if (!data.random_text.special && data.random_text.special_chars === defaultRandomTextSpec().special_chars) {
+      data.random_text.special = true;
+      data.random_text.special_chars = charset;
+    }
+    data.charset = '';
+  }
+
+  if (data.length_basis === 'whole_frame') {
+    const headerHex = config.header_hex.replace(/\s/gu, '');
+    const lengthWidths = { none: 0, one: 1, two: 2 };
+    const checksumWidths: Record<ChecksumSpec['algo'], number> = {
+      none: 0, sum8: 1, xor8: 1, crc16_modbus: 2, crc16_ccitt_false: 2,
+      crc16_xmodem: 2, crc16_arc: 2, crc32: 4,
+    };
+    const fixed = headerHex.length / 2 + lengthWidths[config.length.size] + checksumWidths[config.checksum.algo];
+    // 非法帧头或不足固定段的旧长度保留给后端报错，不静默裁成 0。
+    if (/^(?:[0-9a-f]{2})*$/i.test(headerHex) && Number.isSafeInteger(data.length) && Number.isSafeInteger(fixed) && data.length >= fixed) {
+      data.length -= fixed;
+      data.length_basis = 'data_field';
+    }
+  }
+  return config;
 }
 
 // ---- 类型守卫(结构化,不依赖运行时类) ----
@@ -56,6 +103,13 @@ export function mergePresetModules(loaded: any[], fallback: any[], presets: any[
     if (isDataProcessingModule(m) && !(m.tools ?? []).some(isFrameBuilderTool)) {
       m = { ...m, tools: [defaultFrameBuilderTool(), ...(m.tools ?? [])] };
     }
+    if (isDataProcessingModule(m)) {
+      for (const tool of m.tools ?? []) {
+        if (!isFrameBuilderTool(tool)) continue;
+        normalizeFrameConfig(tool.config);
+        for (const template of tool.templates) normalizeFrameConfig(template.config);
+      }
+    }
     result.push(m);
   }
   // 未知 type 的条目原样附在末尾(不渲染、照常写回,降级再升级不丢数据)
@@ -76,5 +130,5 @@ export function removeTemplate(tool: FrameBuilderTool, name: string): void {
 }
 export function loadTemplate(tool: FrameBuilderTool, name: string): void {
   const t = tool.templates.find((x) => x.name === name);
-  if (t) tool.config = JSON.parse(JSON.stringify(t.config)) as FrameConfig;
+  if (t) tool.config = normalizeFrameConfig(JSON.parse(JSON.stringify(t.config)) as FrameConfig);
 }

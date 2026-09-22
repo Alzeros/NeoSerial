@@ -469,7 +469,7 @@
   }
 }} />
 
-<div class="flex h-full flex-col">
+<div class="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
   <!-- 模块切换栏：预置功能标题，文字风格（非 tag），当前项加粗+下划线区分。
        仅多个快捷指令模块时显示;当前只有"快捷指令"一个,与顶部 view tab 重名,藏掉避免重复。
        data_processing 不在这一层出现(走顶层「数据处理」页签)。 -->

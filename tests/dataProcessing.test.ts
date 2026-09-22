@@ -8,6 +8,7 @@ import {
   mergePresetModules,
   addTemplate,
   removeTemplate,
+  loadTemplate,
 } from '../src/lib/dataProcessing.ts';
 
 const qc = (id = 'quick_commands') => ({ id, name: '快捷指令', type: 'quick_commands', pages: [{ name: 'Page0', commands: [] }] });
@@ -79,4 +80,80 @@ test('模板增删', () => {
 test('isQuickCommandsModule / isDataProcessingModule', () => {
   assert.ok(isQuickCommandsModule(qc() as any));
   assert.ok(!isDataProcessingModule(qc() as any));
+});
+
+test('加载旧整帧配置: 扣除帧头、长度字段、校验后保留数据长度,再次加载不重复扣减', () => {
+  const tool = defaultFrameBuilderTool();
+  tool.config.header_hex = 'AA\t55';
+  tool.config.length.size = 'two';
+  tool.config.length.coverage = 'whole_frame';
+  tool.config.checksum.algo = 'crc16_modbus';
+  tool.config.data.mode = 'fill';
+  tool.config.data.length_basis = 'whole_frame';
+  tool.config.data.length = 256;
+  addTemplate(tool, '旧模板');
+  const modules = mergePresetModules([qc(), dp([tool])], [], PRESETS());
+  const migrated = modules[1].tools[0];
+  assert.equal(migrated.config.data.length, 250);
+  assert.equal(migrated.config.data.length_basis, 'data_field');
+  assert.equal(migrated.config.length.coverage, 'whole_frame');
+  assert.equal(migrated.templates[0].config.data.length, 250);
+  const reloaded = mergePresetModules(JSON.parse(JSON.stringify(modules)), [], PRESETS());
+  assert.equal(reloaded[1].tools[0].config.data.length, 250);
+});
+
+test('加载旧模板: SUM8、XOR8、CRC32 的宽度正确,编辑不修改模板原件', () => {
+  for (const [algo, width] of [['none', 0], ['sum8', 1], ['xor8', 1], ['crc32', 4]] as const) {
+    const tool = defaultFrameBuilderTool();
+    const config = defaultFrameConfig();
+    config.data.mode = 'fill';
+    config.data.length_basis = 'whole_frame';
+    config.data.length = 16;
+    config.checksum.algo = algo;
+    tool.templates.push({ name: 'legacy', config });
+    loadTemplate(tool, 'legacy');
+    assert.equal(tool.config.data.length, 16 - width);
+    assert.equal(tool.config.data.length_basis, 'data_field');
+    tool.config.data.length = 100;
+    assert.equal(tool.templates[0].config.data.length, 16);
+  }
+});
+
+test('旧模板无 random_text 配置时补齐,自定义字符池不混入默认字母数字', () => {
+  const tool = defaultFrameBuilderTool();
+  const legacy = defaultFrameConfig();
+  legacy.data.mode = 'fill';
+  legacy.data.pattern = 'random_text';
+  legacy.data.charset = 'AB';
+  delete (legacy.data as any).random_text;
+  tool.templates.push({ name: 'AB', config: legacy });
+  loadTemplate(tool, 'AB');
+  assert.deepEqual(tool.config.data.random_text, {
+    upper: false, lower: false, digits: false, special: true,
+    special_chars: 'AB', min_digits: 0, min_special: 0,
+  });
+});
+
+test('过渡版本同时存在 random_text 默认值和旧 charset 时迁移 charset', () => {
+  const tool = defaultFrameBuilderTool();
+  tool.config.data.pattern = 'random_text';
+  tool.config.data.charset = 'AB';
+  const modules = mergePresetModules([dp([tool])], [], PRESETS());
+  const randomText = modules[1].tools[0].config.data.random_text;
+  assert.equal(randomText.special, true);
+  assert.equal(randomText.special_chars, 'AB');
+  assert.equal(modules[1].tools[0].config.data.charset, '');
+});
+
+test('迁移不替换非法旧整帧配置,保留原值供构帧校验报错', () => {
+  for (const header of ['AA 55', 'GG']) {
+    const tool = defaultFrameBuilderTool();
+    tool.config.header_hex = header;
+    tool.config.data.mode = 'fill';
+    tool.config.data.length_basis = 'whole_frame';
+    tool.config.data.length = 1;
+    const modules = mergePresetModules([dp([tool])], [], PRESETS());
+    assert.equal(modules[1].tools[0].config.data.length, 1);
+    assert.equal(modules[1].tools[0].config.data.length_basis, 'whole_frame');
+  }
 });

@@ -16,6 +16,9 @@
   let open = $state(false);
   let highlightIndex = $state(-1);
   let container: HTMLDivElement;
+  let triggerEl: HTMLButtonElement;
+  // fixed 定位坐标:突破父容器 overflow 裁剪
+  let fixedPos = $state<{ left: number; top: number; width: number } | null>(null);
 
   const selectedLabel = $derived(
     options.find((o) => o.value === value)?.label ?? value,
@@ -29,6 +32,11 @@
     open = !open;
     if (open) {
       highlightIndex = selectedIndex >= 0 ? selectedIndex : 0;
+      // 计算 fixed 定位:突破父容器 overflow 裁剪
+      const rect = triggerEl.getBoundingClientRect();
+      fixedPos = { left: rect.left, top: rect.bottom + 4, width: rect.width };
+    } else {
+      fixedPos = null;
     }
   }
 
@@ -96,6 +104,13 @@
   $effect(() => {
     if (open) {
       document.addEventListener('mousedown', handleClickOutside);
+      // fixed 定位不随父容器滚动:滚动时关闭,避免选项列表悬浮在错误位置
+      const closeOnScroll = () => { open = false; fixedPos = null; };
+      window.addEventListener('scroll', closeOnScroll, true);
+      return () => {
+        document.removeEventListener('mousedown', handleClickOutside);
+        window.removeEventListener('scroll', closeOnScroll, true);
+      };
     }
     return () => {
       document.removeEventListener('mousedown', handleClickOutside);
@@ -110,6 +125,7 @@
 >
   <button
     type="button"
+    bind:this={triggerEl}
     class="custom-select-trigger w-full flex items-center justify-center cursor-pointer select-none transition-[border-color,box-shadow]"
     style="height: 32px; padding: 0 28px 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background-color: var(--background-input); color: var(--foreground); font-size: 13px; font-family: var(--font-sans); box-shadow: var(--shadow-sm);"
     {disabled}
@@ -125,10 +141,10 @@
     </svg>
   </button>
 
-  {#if open && options.length > 0}
+  {#if open && options.length > 0 && fixedPos}
     <div
-      class="absolute left-0 top-full mt-0.5 z-[300] py-1 overflow-y-auto"
-      style="background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 240px; min-width: 100%;"
+      class="fixed z-[300] py-1 overflow-y-auto"
+      style="left: {fixedPos.left}px; top: {fixedPos.top}px; width: {fixedPos.width}px; background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 240px;"
     >
       {#each options as opt, i (opt.value)}
         <div

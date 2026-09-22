@@ -13,7 +13,7 @@
   });
 </script>
 
-<div class="flex h-full flex-col">
+  <div class="flex h-full min-h-0 flex-1 flex-col overflow-hidden">
   <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     <button class="text-[13px] font-medium pb-0.5 border-b-2 text-[var(--foreground)] border-[var(--primary)]">帧构造器</button>
   </div>
