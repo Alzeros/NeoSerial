@@ -492,29 +492,32 @@
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
-  <!-- 36px 按钮行 + 5px 滚动条槽；按钮显式限高，避免继承全局行高后溢出。 -->
+  <!-- 32px 分段按钮组放在 36px 行内，另留 5px 滚动条槽，避免遮挡按钮底部。 -->
   <div data-page-tabs class="h-[41px] shrink-0 overflow-x-auto overflow-y-hidden" style="box-shadow: inset 0 -1px 0 var(--border);">
-    <div data-page-tabs-row class="flex h-9 w-max min-w-full items-center gap-1 px-3">
-      {#each currentModulePages() as page, i}
+    <div data-page-tabs-row class="flex h-9 w-max min-w-full items-center px-4">
+      <div role="group" aria-label="快捷指令页签" class="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--background-deep)] p-0.5">
+        {#each currentModulePages() as page, i}
+          <button
+            type="button" data-page-tab aria-pressed={i === activeScriptPage.value}
+            class="h-7 min-w-[72px] shrink-0 whitespace-nowrap rounded-md px-3 text-[12px] leading-none font-medium transition-colors cursor-pointer {i === activeScriptPage.value
+              ? 'bg-[var(--background-input)] text-[var(--primary)] shadow-sm'
+              : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+            onclick={() => (activeScriptPage.value = i)}
+            oncontextmenu={(e) => handlePageContextMenu(e, i)}
+            title="右键可编辑此页签"
+          >
+            {page.name}
+          </button>
+        {/each}
         <button
-          data-page-tab
-          class="h-7 shrink-0 whitespace-nowrap rounded px-3 py-1 text-[13px] leading-5 font-medium transition-colors cursor-pointer {i === activeScriptPage.value
-            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-            : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
-          onclick={() => (activeScriptPage.value = i)}
-          oncontextmenu={(e) => handlePageContextMenu(e, i)}
-          title="右键可编辑此页签"
+          type="button"
+          class="h-7 w-7 shrink-0 rounded-md text-[13px] leading-none text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer"
+          onclick={addScriptPage}
+          title="新增页签" aria-label="新增页签"
         >
-          {page.name}
+          +
         </button>
-      {/each}
-      <button
-        class="h-7 shrink-0 rounded px-2 py-1 text-[13px] leading-5 text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
-        onclick={addScriptPage}
-        title="新增页签"
-      >
-        +
-      </button>
+      </div>
     </div>
   </div>
 
