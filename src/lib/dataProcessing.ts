@@ -27,6 +27,29 @@ export interface FrameTemplate { name: string; config: FrameConfig }
 export interface FrameBuilderTool { id: string; kind: 'frame_builder'; config: FrameConfig; templates: FrameTemplate[] }
 export type DataTool = FrameBuilderTool;
 
+export interface FrameSectionState {
+  header: boolean;
+  length: boolean;
+  checksum: boolean;
+}
+
+/**
+ * 普通字段编辑保持用户当前的展开状态；只有初始加载或模板替换了整个 config
+ * 引用时，才从新配置重新推导各段是否启用。
+ */
+export function resolveFrameSectionState(
+  current: FrameSectionState,
+  previousConfig: FrameConfig | null,
+  nextConfig: FrameConfig,
+): FrameSectionState {
+  if (previousConfig === nextConfig) return current;
+  return {
+    header: nextConfig.header_hex !== '',
+    length: nextConfig.length.size !== 'none',
+    checksum: nextConfig.checksum.algo !== 'none',
+  };
+}
+
 export function defaultRandomTextSpec(): RandomTextSpec {
   return { upper: true, lower: true, digits: true, special: false, special_chars: '!@#$%^&*', min_digits: 0, min_special: 0 };
 }

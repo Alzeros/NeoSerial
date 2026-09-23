@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte';
   // 帧构造器表单 + 实时预览 + 发送/填入/模板。
   // 表单直接 bind tool.config.xxx($state 深响应):ScriptSequencer 的自动保存 effect 深度
   // 订阅 scriptModules,改动即落盘,这里不做额外 clone。
@@ -9,6 +10,7 @@
     removeTemplate,
     loadTemplate,
     normalizeFrameConfig,
+    resolveFrameSectionState,
     defaultRandomTextSpec,
     type FrameBuilderTool,
     type DataSpec,
@@ -64,19 +66,22 @@
   let characterSettingsOpen = $state(false);
   const isRandomText = $derived(tool.config.data.mode === 'fill' && tool.config.data.pattern === 'random_text');
 
-  // 四段展开/收起状态:不勾 = 该段不参与构帧(数据域必勾,恒展开)
-  // 初始状态从配置推导:header_hex 非空 → 帧头开;length.size !== 'none' → 长度开;checksum.algo !== 'none' → 校验开
+  // 四段展开/收起状态:不勾 = 该段不参与构帧(数据域必勾,恒展开)。
+  // 只在初始加载/模板替换 config 时从配置推导；同一 config 内清空输入不能反向关掉模块。
   const secOpen = $state({
     header: false,
     length: false,
     checksum: false,
   });
-  // 顶部开关除了收起 UI,也必须把该段配置清零,否则"收起"等价于"还在用上次残留值"
+  let sectionConfig = $state.raw<FrameBuilderTool['config'] | null>(null);
   $effect(() => {
-    secOpen.header = tool.config.header_hex !== '';
-    secOpen.length = tool.config.length.size !== 'none';
-    secOpen.checksum = tool.config.checksum.algo !== 'none';
+    const config = tool.config;
+    const previous = untrack(() => sectionConfig);
+    const next = untrack(() => resolveFrameSectionState(secOpen, previous, config));
+    sectionConfig = config;
+    if (next !== secOpen) Object.assign(secOpen, next);
   });
+  // 顶部开关除了收起 UI,也必须把该段配置清零,否则"收起"等价于"还在用上次残留值"
   function secSet(name: 'header' | 'length' | 'checksum', on: boolean) {
     secOpen[name] = on;
     if (!on) {
