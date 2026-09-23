@@ -14,6 +14,7 @@
     defaultRandomTextSpec,
     visibleDataSourceOptions,
     visibleChecksumOptions,
+    dataTextPreview,
     type FrameBuilderTool,
     type DataSpec,
   } from '$lib/dataProcessing';
@@ -196,6 +197,11 @@
       totalBytes,
     };
   });
+  const dataText = $derived.by(() => {
+    const r = built;
+    if (!r) return null;
+    return dataTextPreview(r.hex, r.breakdown, expanded ? undefined : COLLAPSED_BYTES);
+  });
 
   // 分段四色:头/长度/数据/校验。title 供悬停核对每段字节数。
   const KIND_NAME: Record<string, string> = { header: '帧头', length: '长度', data: '数据', checksum: '校验' };
@@ -206,7 +212,7 @@
     checksum: 'var(--rx)',
   };
 
-  // 预览模式:hex 显原始字节流;text 把数据域段按 ASCII 回显(不可显字符显 ·)
+  // 结果模式:hex 显完整原始帧;text 只显示数据域字符(不可显字节显 ·)
   // 默认跟随数据域模式:文本内容/随机字符 → text,其他 → hex
   let previewMode = $state<'hex' | 'text'>('hex');
   $effect(() => {
@@ -223,14 +229,6 @@
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
   });
-
-  /** 把 hex 片段转 ASCII 回显:可显字符(0x20-0x7E)原样,其余显 · */
-  function hexToAscii(hex: string): string {
-    return hex.split(' ').map((h) => {
-      const b = parseInt(h, 16);
-      return b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '·';
-    }).join('');
-  }
 
   /** 未连接 / 构帧中 / 构帧出错 / 预览已过期 → 发送与填入都禁用 */
   const canUseFrame = $derived(!sending && !building && !!built && !buildErr && !isStale);
@@ -489,14 +487,23 @@
   {#if expanded && preview}
     <div class="flex min-h-0 flex-1 flex-col border-t border-[var(--border)] px-4 py-2.5" style="background: var(--background-deep);">
       <div class="mb-1 flex items-center gap-2">
-        <span class="text-[12px] text-[var(--muted-foreground)]">完整结果 · 共 {preview.totalBytes} 字节</span>
+        <span class="text-[12px] text-[var(--muted-foreground)]">
+          {#if previewMode === 'hex'}
+            完整结果 · 共 {preview.totalBytes} 字节
+          {:else}
+            数据域文本 · {dataText?.totalBytes ?? 0} 字节（整帧 {preview.totalBytes} 字节）
+          {/if}
+        </span>
         <button class="ml-auto px-1.5 py-0.5 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer" onclick={() => (expanded = false)}>返回设置</button>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto break-all font-mono text-[13px] leading-relaxed select-text {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
-        {#each preview.spans as s, i (i)}
-          {@const displayText = previewMode === 'text' && s.kind === 'data' ? hexToAscii(s.text) : s.text}
-          <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{displayText}</span>{' '}
-        {/each}
+        {#if previewMode === 'hex'}
+          {#each preview.spans as s, i (i)}
+            <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{s.text}</span>{' '}
+          {/each}
+        {:else if dataText}
+          <span title="数据域 {dataText.totalBytes} 字节">{dataText.text}</span>
+        {/if}
       </div>
     </div>
   {/if}
@@ -514,7 +521,7 @@
       {:else if sending}
         <span class="text-[12px] text-[var(--muted-foreground)]">发送中…</span>
       {/if}
-      <!-- Hex/文本 预览切换:文本模式把数据域段按 ASCII 回显,不可显字符显 · -->
+      <!-- Hex 显示完整帧；数据文本只显示数据域字符，避免与二进制帧头/校验混排。 -->
       {#if built}
         <button
           class="ml-auto px-1.5 py-0.5 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {copied ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
@@ -531,7 +538,7 @@
         <button
           class="px-1.5 py-0.5 rounded cursor-pointer {previewMode === 'text' ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
           onclick={() => (previewMode = 'text')}
-        >文本</button>
+        >数据文本</button>
       </div>
     </div>
     {#if buildErr}
@@ -545,12 +552,17 @@
     {/if}
     {#if preview}
       <div class="break-all font-mono text-[13px] leading-relaxed max-h-[120px] overflow-y-auto {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
-        {#each preview.spans as s, i (i)}
-          {@const displayText = previewMode === 'text' && s.kind === 'data' ? hexToAscii(s.text) : s.text}
-          <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{displayText}</span>{' '}
-        {/each}
-        {#if preview.truncated}
-          <button class="text-[var(--primary)] hover:underline cursor-pointer" onclick={() => (expanded = true)}>… 展开全部(共 {preview.totalBytes} 字节)</button>
+        {#if previewMode === 'hex'}
+          {#each preview.spans as s, i (i)}
+            <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{s.text}</span>{' '}
+          {/each}
+        {:else if dataText}
+          <span title="数据域 {dataText.totalBytes} 字节">{dataText.text}</span>
+        {/if}
+        {#if previewMode === 'hex' && preview.truncated}
+          <button class="text-[var(--primary)] hover:underline cursor-pointer" onclick={() => (expanded = true)}>… 展开全部（整帧共 {preview.totalBytes} 字节）</button>
+        {:else if previewMode === 'text' && dataText?.truncated}
+          <button class="text-[var(--primary)] hover:underline cursor-pointer" onclick={() => (expanded = true)}>… 展开全部（数据域共 {dataText.totalBytes} 字节）</button>
         {/if}
       </div>
     {:else if !buildErr}

@@ -82,6 +82,33 @@ export function visibleChecksumOptions(
   return visibleOptions(CHECKSUM_OPTIONS, hidden, current, 'none');
 }
 
+export interface FramePreviewSegment {
+  kind: string;
+  offset: number;
+  len: number;
+}
+
+/** 从完整帧中只取数据域，并按 ASCII 展示；不可打印字节显示为中点。 */
+export function dataTextPreview(
+  hex: string,
+  breakdown: readonly FramePreviewSegment[],
+  maxBytes?: number,
+): { text: string; totalBytes: number; truncated: boolean } {
+  const data = breakdown.find((segment) => segment.kind === 'data');
+  if (!data) return { text: '', totalBytes: 0, truncated: false };
+
+  const shownBytes = Math.min(data.len, maxBytes === undefined ? data.len : Math.max(0, Math.floor(maxBytes)));
+  const bytes = hex.trim() === '' ? [] : hex.trim().split(/\s+/u);
+  const text = bytes
+    .slice(data.offset, data.offset + shownBytes)
+    .map((value) => {
+      const byte = Number.parseInt(value, 16);
+      return byte >= 0x20 && byte <= 0x7e ? String.fromCharCode(byte) : '·';
+    })
+    .join('');
+  return { text, totalBytes: data.len, truncated: shownBytes < data.len };
+}
+
 export interface FrameTemplate { name: string; config: FrameConfig }
 export interface FrameBuilderTool { id: string; kind: 'frame_builder'; config: FrameConfig; templates: FrameTemplate[] }
 export type DataTool = FrameBuilderTool;
