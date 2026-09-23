@@ -110,8 +110,18 @@ export function dataTextPreview(
 }
 
 export interface FrameTemplate { name: string; config: FrameConfig }
-export interface FrameBuilderTool { id: string; kind: 'frame_builder'; config: FrameConfig; templates: FrameTemplate[] }
+export interface FrameBuilderTool {
+  id: string;
+  kind: 'frame_builder';
+  config: FrameConfig;
+  /** 缺失表示旧配置尚未执行过模板补种。 */
+  template_seed_version?: number;
+  templates: FrameTemplate[];
+}
 export type DataTool = FrameBuilderTool;
+
+export const FRAME_TEMPLATE_SEED_VERSION = 1;
+export const RANDOM_TEXT_TEMPLATE_NAME = '随机字符串';
 
 export interface FrameSectionState {
   header: boolean;
@@ -149,8 +159,33 @@ export function defaultFrameConfig(): FrameConfig {
   };
 }
 
+export function defaultRandomTextTemplate(): FrameTemplate {
+  const config = defaultFrameConfig();
+  config.data.mode = 'fill';
+  config.data.pattern = 'random_text';
+  config.data.length = 256;
+  return { name: RANDOM_TEXT_TEMPLATE_NAME, config };
+}
+
+/** 为旧工具补一次快捷示例；版本升级后即使用户删除模板也不会再次补回。 */
+export function seedFrameBuilderTemplates(tool: FrameBuilderTool): FrameBuilderTool {
+  if ((tool.template_seed_version ?? 0) >= FRAME_TEMPLATE_SEED_VERSION) return tool;
+  tool.templates ??= [];
+  if (!tool.templates.some((template) => template.name === RANDOM_TEXT_TEMPLATE_NAME)) {
+    tool.templates.push(defaultRandomTextTemplate());
+  }
+  tool.template_seed_version = FRAME_TEMPLATE_SEED_VERSION;
+  return tool;
+}
+
 export function defaultFrameBuilderTool(): FrameBuilderTool {
-  return { id: 'frame_builder', kind: 'frame_builder', config: defaultFrameConfig(), templates: [] };
+  return {
+    id: 'frame_builder',
+    kind: 'frame_builder',
+    config: defaultFrameConfig(),
+    template_seed_version: FRAME_TEMPLATE_SEED_VERSION,
+    templates: [defaultRandomTextTemplate()],
+  };
 }
 
 /** 就地迁移旧配置；basis 写回后再次加载不会重复扣减固定段。 */
@@ -215,6 +250,7 @@ export function mergePresetModules(loaded: any[], fallback: any[], presets: any[
     if (isDataProcessingModule(m)) {
       for (const tool of m.tools ?? []) {
         if (!isFrameBuilderTool(tool)) continue;
+        seedFrameBuilderTemplates(tool);
         normalizeFrameConfig(tool.config);
         for (const template of tool.templates) normalizeFrameConfig(template.config);
       }

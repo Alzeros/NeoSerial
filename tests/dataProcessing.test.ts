@@ -28,6 +28,56 @@ test('defaultFrameConfig 形状', () => {
   assert.equal(c.data.mode, 'content');
 });
 
+test('新帧构造器预置 256 字节随机字符串模板', () => {
+  const tool = defaultFrameBuilderTool();
+  assert.equal(tool.template_seed_version, 1);
+  assert.equal(tool.templates.length, 1);
+  const template = tool.templates[0];
+  assert.equal(template.name, '随机字符串');
+  assert.equal(template.config.header_hex, '');
+  assert.equal(template.config.length.size, 'none');
+  assert.equal(template.config.data.mode, 'fill');
+  assert.equal(template.config.data.pattern, 'random_text');
+  assert.equal(template.config.data.length, 256);
+  assert.deepEqual(template.config.data.random_text, {
+    upper: true, lower: true, digits: true, special: false,
+    special_chars: '!@#$%^&*', min_digits: 0, min_special: 0,
+  });
+  assert.equal(template.config.checksum.algo, 'none');
+});
+
+test('旧工具首次补随机字符串模板，删除后不再补回', () => {
+  const tool = defaultFrameBuilderTool();
+  tool.templates = [];
+  delete tool.template_seed_version;
+
+  const first = mergePresetModules([qc(), dp([tool])], [], PRESETS());
+  const seeded = first[1].tools[0];
+  assert.equal(seeded.template_seed_version, 1);
+  assert.deepEqual(seeded.templates.map((template: any) => template.name), ['随机字符串']);
+
+  removeTemplate(seeded, '随机字符串');
+  const reloaded = mergePresetModules(JSON.parse(JSON.stringify(first)), [], PRESETS());
+  assert.equal(reloaded[1].tools[0].template_seed_version, 1);
+  assert.equal(reloaded[1].tools[0].templates.length, 0);
+});
+
+test('旧工具已有同名模板时保留用户配置', () => {
+  const tool = defaultFrameBuilderTool();
+  const custom = defaultFrameConfig();
+  custom.data.mode = 'fill';
+  custom.data.pattern = 'random_text';
+  custom.data.length = 999;
+  tool.templates = [{ name: '随机字符串', config: custom }];
+  delete tool.template_seed_version;
+
+  const merged = mergePresetModules([qc(), dp([tool])], [], PRESETS());
+  const migrated = merged[1].tools[0];
+  assert.equal(migrated.template_seed_version, 1);
+  assert.equal(migrated.templates.length, 1);
+  assert.equal(migrated.templates[0].config.data.length, 999);
+});
+
 test('mergePresetModules: 老文件只有 quick_commands 追加 data_processing', () => {
   const merged = mergePresetModules([qc()] as any, [] as any, PRESETS() as any);
   assert.equal(merged.length, 2);
@@ -69,13 +119,15 @@ test('mergePresetModules: 未知 type 原样附在末尾(降级再升级不丢�
 
 test('模板增删', () => {
   const tool = defaultFrameBuilderTool();
+  const initialCount = tool.templates.length;
   addTemplate(tool, 'A');
   addTemplate(tool, 'B');
-  assert.equal(tool.templates.length, 2);
+  assert.equal(tool.templates.length, initialCount + 2);
   addTemplate(tool, 'A'); // 同名覆盖
-  assert.equal(tool.templates.length, 2);
+  assert.equal(tool.templates.length, initialCount + 2);
   removeTemplate(tool, 'A');
-  assert.equal(tool.templates[0].name, 'B');
+  assert.ok(!tool.templates.some((template) => template.name === 'A'));
+  assert.ok(tool.templates.some((template) => template.name === 'B'));
 });
 
 test('isQuickCommandsModule / isDataProcessingModule', () => {
@@ -98,7 +150,7 @@ test('加载旧整帧配置: 扣除帧头、长度字段、校验后保留数据
   assert.equal(migrated.config.data.length, 250);
   assert.equal(migrated.config.data.length_basis, 'data_field');
   assert.equal(migrated.config.length.coverage, 'whole_frame');
-  assert.equal(migrated.templates[0].config.data.length, 250);
+  assert.equal(migrated.templates.find((template: any) => template.name === '旧模板').config.data.length, 250);
   const reloaded = mergePresetModules(JSON.parse(JSON.stringify(modules)), [], PRESETS());
   assert.equal(reloaded[1].tools[0].config.data.length, 250);
 });
@@ -116,7 +168,7 @@ test('加载旧模板: SUM8、XOR8、CRC32 的宽度正确,编辑不修改模板
     assert.equal(tool.config.data.length, 16 - width);
     assert.equal(tool.config.data.length_basis, 'data_field');
     tool.config.data.length = 100;
-    assert.equal(tool.templates[0].config.data.length, 16);
+    assert.equal(tool.templates.find((template) => template.name === 'legacy')?.config.data.length, 16);
   }
 });
 

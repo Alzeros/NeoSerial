@@ -307,7 +307,28 @@
     cancelSave();
   }
 
+  // 模板删除用原位两段式确认，避免小号 × 误触后立即丢失模板。
+  let armedTemplateDelete = $state<string | null>(null);
+  function cancelTemplateDelete() {
+    armedTemplateDelete = null;
+  }
+  function armTemplateDelete(event: MouseEvent, name: string) {
+    event.stopPropagation();
+    armedTemplateDelete = name;
+  }
+  function confirmTemplateDelete(event: MouseEvent, name: string) {
+    event.stopPropagation();
+    if (armedTemplateDelete !== name) return;
+    armedTemplateDelete = null;
+    removeTemplate(tool, name);
+  }
+  function handleTemplateDeleteKeydown(event: KeyboardEvent) {
+    if (event.key === 'Escape') cancelTemplateDelete();
+  }
+
 </script>
+
+<svelte:window onclick={cancelTemplateDelete} onkeydown={handleTemplateDeleteKeydown} />
 
 <div class="relative flex h-full min-h-0 flex-1 flex-col">
   <!-- 段开关:复选框控制四段展开/收起;不勾 = 该段不参与构帧(数据域必勾) -->
@@ -629,17 +650,26 @@
       {/if}
       {#each tool.templates as t (t.name)}
         <div class="group relative shrink-0">
-          <button
-            class="max-w-32 truncate rounded border border-[var(--border)] bg-[var(--border-subtle)] px-2 py-1 text-[12px] text-[var(--foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] cursor-pointer"
-            title="载入模板「{t.name}」"
-            onclick={() => loadTemplate(tool, t.name)}
-          >{t.name}</button>
-          <button
-            class="absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none text-[var(--error)] group-hover:flex cursor-pointer"
-            style="background: var(--background-elevated); border-color: var(--error);"
-            title="删除模板「{t.name}」"
-            onclick={() => removeTemplate(tool, t.name)}
-          >×</button>
+          {#if armedTemplateDelete === t.name}
+            <button
+              class="max-w-32 truncate rounded border px-2 py-1 text-[12px] font-medium cursor-pointer"
+              style="background: var(--error); border-color: var(--error); color: white;"
+              title="再次点击确认删除「{t.name}」"
+              onclick={(event) => confirmTemplateDelete(event, t.name)}
+            >确认删除</button>
+          {:else}
+            <button
+              class="max-w-32 truncate rounded border border-[var(--border)] bg-[var(--border-subtle)] px-2 py-1 text-[12px] text-[var(--foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] cursor-pointer"
+              title="载入模板「{t.name}」"
+              onclick={() => loadTemplate(tool, t.name)}
+            >{t.name}</button>
+            <button
+              class="absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none text-[var(--error)] group-hover:flex cursor-pointer"
+              style="background: var(--background-elevated); border-color: var(--error);"
+              title="删除模板「{t.name}」"
+              onclick={(event) => armTemplateDelete(event, t.name)}
+            >×</button>
+          {/if}
         </div>
       {/each}
     </div>
