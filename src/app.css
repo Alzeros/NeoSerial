@@ -660,6 +660,11 @@ input[type="checkbox"]:not(.switch input) {
   height: 8px;
 }
 
+/* Page 横向滚动条使用独立的 5px 槽位，其他滚动条保留 8px。 */
+[data-page-tabs]::-webkit-scrollbar {
+  height: 5px;
+}
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
@@ -787,6 +792,7 @@ input[type="text"],
   max-height: calc(100vh - 150px); /* 列表过长只在内部滚动，不撑破底部 */
   overflow-y: auto;       /* 独立垂直滚动：溢出只影响自身不外溢 */
   overflow-x: hidden;
+  scrollbar-gutter: stable; /* 无滚动条时也预留槽位，切 Page 不改变表格列宽 */
   padding-right: 2px;     /* 边界加固：滚动条轨道不遮挡最右侧文字 */
 }
 

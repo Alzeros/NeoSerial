@@ -492,27 +492,30 @@
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
-  <div data-page-tabs class="flex h-11 shrink-0 items-start gap-1 border-b border-[var(--border)] px-3 pt-1 overflow-x-auto overflow-y-hidden">
-    {#each currentModulePages() as page, i}
+  <!-- 36px 按钮行 + 5px 滚动条槽；按钮显式限高，避免继承全局行高后溢出。 -->
+  <div data-page-tabs class="h-[41px] shrink-0 overflow-x-auto overflow-y-hidden" style="box-shadow: inset 0 -1px 0 var(--border);">
+    <div data-page-tabs-row class="flex h-9 w-max min-w-full items-center gap-1 px-3">
+      {#each currentModulePages() as page, i}
+        <button
+          data-page-tab
+          class="h-7 shrink-0 whitespace-nowrap rounded px-3 py-1 text-[13px] leading-5 font-medium transition-colors cursor-pointer {i === activeScriptPage.value
+            ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
+            : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+          onclick={() => (activeScriptPage.value = i)}
+          oncontextmenu={(e) => handlePageContextMenu(e, i)}
+          title="右键可编辑此页签"
+        >
+          {page.name}
+        </button>
+      {/each}
       <button
-        data-page-tab
-        class="shrink-0 rounded px-3 py-1.5 text-[13px] font-medium transition-colors cursor-pointer {i === activeScriptPage.value
-          ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-          : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
-        onclick={() => (activeScriptPage.value = i)}
-        oncontextmenu={(e) => handlePageContextMenu(e, i)}
-        title="右键可编辑此页签"
+        class="h-7 shrink-0 rounded px-2 py-1 text-[13px] leading-5 text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+        onclick={addScriptPage}
+        title="新增页签"
       >
-        {page.name}
+        +
       </button>
-    {/each}
-    <button
-      class="shrink-0 rounded px-2 py-1.5 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
-      onclick={addScriptPage}
-      title="新增页签"
-    >
-      +
-    </button>
+    </div>
   </div>
 
   <!-- 命令序列表格（独立滚动，不撑开外部布局） -->
