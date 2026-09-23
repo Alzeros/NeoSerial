@@ -660,8 +660,9 @@ input[type="checkbox"]:not(.switch input) {
   height: 8px;
 }
 
-/* Page 横向滚动条使用独立的 5px 槽位，其他滚动条保留 8px。 */
-[data-page-tabs]::-webkit-scrollbar {
+/* 两个子页签栏共用 5px 横向滚动条槽，切换时高度和按钮位置保持一致。 */
+[data-page-tabs]::-webkit-scrollbar,
+[data-data-tool-tabs-strip]::-webkit-scrollbar {
   height: 5px;
 }
 

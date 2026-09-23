@@ -494,7 +494,7 @@
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
   <!-- 32px 分段按钮组放在 36px 行内，另留 5px 滚动条槽，避免遮挡按钮底部。 -->
   <div data-page-tabs class="h-[41px] shrink-0 overflow-x-auto overflow-y-hidden" style="box-shadow: inset 0 -1px 0 var(--border);">
-    <div data-page-tabs-row class="flex h-9 w-max min-w-full items-center px-4">
+    <div data-page-tabs-row class="flex h-9 w-max min-w-full items-center px-1.5">
       <div role="group" aria-label="快捷指令页签" class="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--background-deep)] p-0.5">
         {#each currentModulePages() as page, i}
           <button

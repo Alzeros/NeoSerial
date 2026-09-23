@@ -25,17 +25,21 @@
 </script>
 
 <div class="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-  <div class="flex shrink-0 items-center border-b border-[var(--border)] px-4 py-2" style="background: var(--background-elevated);">
-    {#if visibleTools.length}
-      <div data-data-tool-tabs role="group" aria-label="数据处理工具"
-        class="inline-flex items-center gap-0.5 rounded-lg bg-[var(--background-deep)] p-0.5">
-        {#each visibleTools as tool (tool.value)}
-          <button type="button" aria-pressed={selected === tool.value}
-            class="h-7 min-w-[72px] rounded-md px-3 text-[12px] font-medium leading-none transition-colors {selected === tool.value ? 'bg-[var(--background-input)] text-[var(--primary)] shadow-sm' : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
-            onclick={() => (activeDataTool.value = tool.value)}>{tool.label}</button>
-        {/each}
-      </div>
-    {/if}
+  <!-- 与快捷指令 Page 栏一致：36px 按钮行、左右 6px 留白、5px 滚动条槽。 -->
+  <div data-data-tool-tabs-strip class="h-[41px] shrink-0 overflow-x-auto overflow-y-hidden"
+    style="background: var(--background-elevated); box-shadow: inset 0 -1px 0 var(--border);">
+    <div class="flex h-9 w-max min-w-full items-center px-1.5">
+      {#if visibleTools.length}
+        <div data-data-tool-tabs role="group" aria-label="数据处理工具"
+          class="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--background-deep)] p-0.5">
+          {#each visibleTools as tool (tool.value)}
+            <button type="button" aria-pressed={selected === tool.value}
+              class="h-7 min-w-[72px] shrink-0 whitespace-nowrap rounded-md px-3 text-[12px] font-medium leading-none transition-colors cursor-pointer {selected === tool.value ? 'bg-[var(--background-input)] text-[var(--primary)] shadow-sm' : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+              onclick={() => (activeDataTool.value = tool.value)}>{tool.label}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>
   </div>
   <!-- 保持挂载以保留切换前的结果和展开状态，隐藏面板不参与布局。 -->
   <div class="min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style:display={selected === 'frame_builder' ? 'flex' : 'none'}>
