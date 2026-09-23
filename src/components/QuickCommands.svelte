@@ -492,7 +492,7 @@
 
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
-  <div class="flex items-center gap-1 border-b border-[var(--border)] px-3 py-2 overflow-x-auto">
+  <div data-page-tabs class="flex h-11 shrink-0 items-start gap-1 border-b border-[var(--border)] px-3 pt-1 overflow-x-auto overflow-y-hidden">
     {#each currentModulePages() as page, i}
       <button
         data-page-tab
