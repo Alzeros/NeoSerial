@@ -130,6 +130,9 @@ pub struct UiSettings {
     /// 侧栏"MCP 日志"tab 是否显示(MCP 模块的展现项)。
     #[serde(default = "default_show_mcp_tab")]
     pub show_mcp_tab: bool,
+    /// 侧栏"数据处理"tab 是否显示。关闭只隐藏入口，不删除帧构造器数据。
+    #[serde(default = "default_show_data_tab")]
+    pub show_data_tab: bool,
     /// 首次收进后台的系统通知是否已发过(只提示一次)。后端写,见 merge_backend_owned。
     #[serde(default)]
     pub tray_hint_shown: bool,
@@ -149,6 +152,10 @@ fn default_show_suggest_tab() -> bool {
 
 fn default_show_mcp_tab() -> bool {
     false
+}
+
+fn default_show_data_tab() -> bool {
+    true
 }
 
 /// 后台运行的默认值,单独收在这里便于一处改。默认关:新用户拿到的是和其他串口工具
@@ -447,6 +454,7 @@ impl Settings {
                 background_mode: default_background_mode(),
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
+                show_data_tab: default_show_data_tab(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup::default_group()],
@@ -620,6 +628,7 @@ impl LegacySettings {
                 background_mode: default_background_mode(),
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
+                show_data_tab: default_show_data_tab(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup {
@@ -788,6 +797,23 @@ mod tests {
         v["ui"].as_object_mut().unwrap().remove("background_mode");
         let s: Settings = serde_json::from_value(v).unwrap();
         assert_eq!(s.ui.background_mode, default_background_mode());
+    }
+
+    #[test]
+    fn test_missing_show_data_tab_takes_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        v["ui"].as_object_mut().unwrap().remove("show_data_tab");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert!(s.ui.show_data_tab);
+    }
+
+    #[test]
+    fn test_apply_patch_updates_show_data_tab() {
+        let base = Settings::default_settings();
+        let next = base
+            .apply_patch(&serde_json::json!({ "ui": { "show_data_tab": false } }))
+            .unwrap();
+        assert!(!next.ui.show_data_tab);
     }
 
     /// 旧配置没有 qc 密度键 → 各取默认(13/28/4/default),不是 u32 默认的 0。

@@ -172,6 +172,8 @@ export interface Settings {
     show_suggest_tab: boolean;
     /** 侧栏"MCP 日志"tab 是否显示(MCP 模块)。 */
     show_mcp_tab: boolean;
+    /** 侧栏"数据处理"tab 是否显示。 */
+    show_data_tab: boolean;
     /** 首次收进后台的系统通知是否已发过。后端写,前端只透传 */
     tray_hint_shown: boolean;
   };

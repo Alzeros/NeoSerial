@@ -229,7 +229,7 @@ export const fileSendProgress = $state<{ value: number }>({ value: 0 });
  *  供 ConnectionBar 波特率下拉的"添加…"等场景使用。 */
 export const settingsRequest = $state<{
   section: string | null;
-  extModule: 'suggest' | 'mcp' | 'quick' | null;
+  extModule: 'suggest' | 'mcp' | 'quick' | 'data' | null;
   anchor: 'baud' | null;
 }>({ section: null, extModule: null, anchor: null });
 

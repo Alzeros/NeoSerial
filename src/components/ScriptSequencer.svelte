@@ -25,8 +25,10 @@
     (cachedSettings.value?.mcp?.auto_start ?? true) &&
     (cachedSettings.value?.ui?.show_mcp_tab ?? true),
   );
+  const showDataTab = $derived(cachedSettings.value?.ui?.show_data_tab ?? true);
   // 功能/tab 关掉、当前正停在该 tab 时,弹回"快捷指令"
   $effect(() => {
+    if (!showDataTab && scriptView === 'data') scriptView = 'scripts';
     if (!showSuggestTab && scriptView === 'reference') scriptView = 'scripts';
     if (!showMcpTab && scriptView === 'mcp') scriptView = 'scripts';
   });
@@ -115,15 +117,15 @@
 
   // 用类型标注而不是 $derived<...>() 泛型:标注形式对三元里的对象字面量有上下文类型,
   // module 不会被推宽成 string,也不用给每个分支加 as const。
-  type SettingsTarget = { module: 'quick' | 'suggest' | 'mcp'; title: string };
+  type SettingsTarget = { module: 'quick' | 'data' | 'suggest' | 'mcp'; title: string };
   const settingsTarget: SettingsTarget | null = $derived(
     scriptView === 'scripts'
       ? { module: 'quick', title: '快捷指令设置(字号/输入框高度/行距/字体)' }
-      : scriptView === 'reference'
-        ? { module: 'suggest', title: '指令联想设置(知识库地址/刷新/手册勾选)' }
-        : scriptView === 'mcp'
-          ? { module: 'mcp', title: 'MCP 服务设置(端口/自启/接入命令)' }
-          : null, // 'data':无设置页
+      : scriptView === 'data'
+        ? { module: 'data', title: '数据处理设置(页签显示)' }
+        : scriptView === 'reference'
+          ? { module: 'suggest', title: '指令联想设置(知识库地址/刷新/手册勾选)' }
+          : { module: 'mcp', title: 'MCP 服务设置(端口/自启/接入命令)' },
   );
 </script>
 
@@ -136,13 +138,15 @@
         : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
       onclick={() => (scriptView = 'scripts')}
     >快捷指令</button>
-    <!-- 紧接在「快捷指令」之后:数据处理页签(spec:第二项,不是加在最后) -->
-    <button
-      class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'data'
-        ? 'text-[var(--foreground)] border-[var(--primary)]'
-        : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
-      onclick={() => (scriptView = 'data')}
-    >数据处理</button>
+    {#if showDataTab}
+      <!-- 紧接在「快捷指令」之后:数据处理页签(spec:第二项,不是加在最后) -->
+      <button
+        class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'data'
+          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
+        onclick={() => (scriptView = 'data')}
+      >数据处理</button>
+    {/if}
     {#if showSuggestTab}
       <button
         class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'reference'
@@ -159,10 +163,9 @@
         onclick={() => (scriptView = 'mcp')}
       >MCP 日志</button>
     {/if}
-    <!-- 跳当前 tab 对应的扩展设置子页。三个 tab 共用这一枚、位置固定在右上角,
+    <!-- 跳当前 tab 对应的扩展设置子页。四个 tab 共用这一枚、位置固定在右上角,
          比各自在内容区里再摆一个更好找(MCP 日志那页也没有能挂按钮的表头行)。
-         22px 见方,不超过 tab 文字那行的高度,不会把这条撑高。
-         'data' 视图无设置页,滑块整枚隐藏。 -->
+         22px 见方,不超过 tab 文字那行的高度,不会把这条撑高。 -->
     {#if settingsTarget}
       <button
         type="button"

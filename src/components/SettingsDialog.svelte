@@ -76,13 +76,14 @@
   // 各模块的侧栏 tab 显隐(每模块独立设置项)。默认开(保现状)
   let editShowSuggestTab = $state(true);
   let editShowMcpTab = $state(true);
+  let editShowDataTab = $state(true);
   // 快捷指令编辑区密度编辑副本(字号 + 输入框高度 + 行间距 + 字体族)
   let editQcFontSize = $state(13);
   let editQcInputHeight = $state(28);
   let editQcRowGap = $state(4);
   let editQcFontFamily = $state<string>('default');
-  // 扩展页子导航:null=模块列表(文件夹视图),'suggest'/'mcp'=进入该模块设置子页
-  let extModule = $state<'suggest' | 'mcp' | 'quick' | null>(null);
+  // 扩展页子导航:null=模块列表,其余值进入对应模块设置子页
+  let extModule = $state<'suggest' | 'mcp' | 'quick' | 'data' | null>(null);
   // 指令联想子页要列手册、报条数,而联想关着的窗口启动时没载索引——进这一页时现载
   $effect(() => {
     if (open && extModule === 'suggest') ensureCommandIndexLoaded();
@@ -143,7 +144,7 @@
     fontSize: number; lineHeight: number; dirLabel: 'short' | 'full'; fontLatin: string; fontCJK: string;
     textEncoding: 'ascii' | 'utf8' | 'gbk';
     sendHalfwidthPunct: boolean;
-    backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean;
+    backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean; showDataTab: boolean;
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
     baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
@@ -160,6 +161,7 @@
       textEncoding: editTextEncoding,
       sendHalfwidthPunct: editSendHalfwidthPunct,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
+      showDataTab: editShowDataTab,
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
       baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, theme: editTheme, custom: { ...editCustom },
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
@@ -185,7 +187,7 @@
 
   export function show(
     section: Section = 'about',
-    extMod: 'suggest' | 'mcp' | 'quick' | null = null,
+    extMod: 'suggest' | 'mcp' | 'quick' | 'data' | null = null,
     anchor: 'baud' | null = null,
   ) {
     editBaudRates = [...presetBaudRates.value];
@@ -208,6 +210,7 @@
     editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
     editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
     editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
+    editShowDataTab = cachedSettings.value?.ui?.show_data_tab ?? true;
     editQcFontSize = cachedSettings.value?.ui?.qc_font_size ?? 13;
     editQcInputHeight = cachedSettings.value?.ui?.qc_input_height ?? 28;
     editQcRowGap = cachedSettings.value?.ui?.qc_row_gap ?? 4;
@@ -405,6 +408,7 @@
     if (changed('backgroundMode')) ui.background_mode = cur.backgroundMode;
     if (changed('showSuggestTab')) ui.show_suggest_tab = cur.showSuggestTab;
     if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
+    if (changed('showDataTab')) ui.show_data_tab = cur.showDataTab;
     if (changed('qcFontSize')) ui.qc_font_size = cur.qcFontSize;
     if (changed('qcInputHeight')) ui.qc_input_height = cur.qcInputHeight;
     if (changed('qcRowGap')) ui.qc_row_gap = cur.qcRowGap;
@@ -1170,9 +1174,9 @@
             </div>
           {:else if activeSection === 'extensions'}
             {#if extModule === null}
-              <!-- 文件夹视图:三个模块。快捷指令常驻开启(无开关),指令联想/MCP 各自独立开关 -->
+              <!-- 文件夹视图:四个模块。快捷指令常驻开启,其余模块各自独立开关 -->
               <div class="text-[12px] text-[var(--muted-foreground)] mb-4 leading-relaxed">
-                扩展功能按模块独立管理。点开进入各自设置:快捷指令常驻开启,只调密度;指令联想与 MCP 可独立开关。
+                扩展功能按模块独立管理。点开进入各自设置:快捷指令常驻开启;数据处理、指令联想与 MCP 可独立开关。
               </div>
               <button
                 class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
@@ -1181,6 +1185,15 @@
               >
                 <span class="text-[14px] font-medium text-[var(--foreground)]">快捷指令</span>
                 <span class="ml-2 text-[12px]" style="color: var(--primary);">常驻</span>
+                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
+              </button>
+              <button
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
+                style="border: 1px solid var(--border);"
+                onclick={() => (extModule = 'data')}
+              >
+                <span class="text-[14px] font-medium text-[var(--foreground)]">数据处理</span>
+                <span class="ml-2 text-[12px]" style="color: {editShowDataTab ? 'var(--primary)' : 'var(--muted-foreground)'};">{editShowDataTab ? '已启用' : '未启用'}</span>
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
               <button
@@ -1273,6 +1286,20 @@
                     </div>
                   {/each}
                 </div>
+              </div>
+            {:else if extModule === 'data'}
+              <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
+                <span>‹</span><span>返回扩展</span>
+              </button>
+              <div class="flex items-center gap-3 mb-1">
+                <div class="text-[13px] font-medium text-[var(--foreground)]">数据处理</div>
+                <label class="switch ml-auto" title={editShowDataTab ? '关闭数据处理' : '启用数据处理'}>
+                  <input type="checkbox" aria-label="启用数据处理" bind:checked={editShowDataTab} />
+                  <span class="switch-track"></span>
+                </label>
+              </div>
+              <div class="text-[12px] text-[var(--muted-foreground)]">
+                控制侧栏“数据处理”tab。关闭仅隐藏入口，帧构造器配置和模板仍会保留。
               </div>
             {:else if extModule === 'suggest'}
               <!-- 指令联想子页:分节折叠(默认只展开一节),按自然流排布,超出由外层内容区滚动 -->
