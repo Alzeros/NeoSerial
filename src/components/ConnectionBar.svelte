@@ -1,6 +1,7 @@
 <script lang="ts">
   import { availablePorts, connectionParams, connected, presetBaudRates, windowPort, settingsRequest } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
+  import { shouldPollPorts } from '$lib/connectionPorts';
   import CustomSelect from '$components/ui/CustomSelect.svelte';
 
   // 局部错误提示(端口已连接/被占用),4s 自动消失。不依赖全局 store 避免跨窗口响应性问题。
@@ -95,9 +96,10 @@
     refreshPorts();
   });
 
-  // 未连接时定时轮询串口列表（每 2 秒），检测热插拔
+  // 未连接时每 2 秒检测热插拔；已连接但启动时列表尚为空也继续补拉，避免 MCP
+  // 先恢复连接后轮询停掉，COM 下拉永久无选项。
   $effect(() => {
-    if (connected.value) return;
+    if (!shouldPollPorts(connected.value, availablePorts.value)) return;
     const timer = setInterval(refreshPorts, 2000);
     return () => clearInterval(timer);
   });
@@ -109,7 +111,7 @@
     <!-- 端口号(所有窗口都可选,连不同 port) -->
     <label class="control-group">
       <span>端口号</span>
-      <CustomSelect bind:value={connectionParams.port} options={portOptions} width="100px" disabled={connected.value} />
+      <CustomSelect bind:value={connectionParams.port} options={portOptions} width="100px" disabled={connected.value} emptyLabel="暂无可用端口" />
     </label>
 
     <!-- 波特率 -->

@@ -4,12 +4,14 @@
     options,
     width = '90px',
     disabled = false,
+    emptyLabel = '暂无选项',
     onAddOption,
   }: {
     value?: string;
     options: { label: string; value: string }[];
     width?: string;
     disabled?: boolean;
+    emptyLabel?: string;
     onAddOption?: () => void;
   } = $props();
 
@@ -141,25 +143,31 @@
     </svg>
   </button>
 
-  {#if open && options.length > 0 && fixedPos}
+  {#if open && fixedPos}
     <div
       class="fixed z-[300] py-1 overflow-y-auto"
       style="left: {fixedPos.left}px; top: {fixedPos.top}px; width: {fixedPos.width}px; background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 240px;"
     >
-      {#each options as opt, i (opt.value)}
-        <div
-          role="option"
-          tabindex="-1"
-          class="custom-select-option flex items-center justify-center cursor-pointer select-none transition-colors"
-          style="height: 30px; padding: 0 12px; font-size: 13px; line-height: 1;
-            {i === highlightIndex ? 'background: var(--overlay-hover);' : ''}
-            {opt.value === value ? 'color: var(--primary); font-weight: 600;' : 'color: var(--foreground);'}"
-          onclick={(e) => handleOptionClick(e, opt)}
-          onmouseenter={() => (highlightIndex = i)}
-        >
-          {opt.label}
+      {#if options.length === 0}
+        <div class="flex items-center justify-center px-3 text-[12px] text-[var(--muted-foreground)]" style="height: 30px;">
+          {emptyLabel}
         </div>
-      {/each}
+      {:else}
+        {#each options as opt, i (opt.value)}
+          <div
+            role="option"
+            tabindex="-1"
+            class="custom-select-option flex items-center justify-center cursor-pointer select-none transition-colors"
+            style="height: 30px; padding: 0 12px; font-size: 13px; line-height: 1;
+              {i === highlightIndex ? 'background: var(--overlay-hover);' : ''}
+              {opt.value === value ? 'color: var(--primary); font-weight: 600;' : 'color: var(--foreground);'}"
+            onclick={(e) => handleOptionClick(e, opt)}
+            onmouseenter={() => (highlightIndex = i)}
+          >
+            {opt.label}
+          </div>
+        {/each}
+      {/if}
       {#if onAddOption}
         <div class="my-1 border-t" style="border-color: var(--border);"></div>
         <div

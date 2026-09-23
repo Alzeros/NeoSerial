@@ -233,25 +233,31 @@ pub fn run() {
         .on_window_event(|window, event| {
             match event {
                 // 硬约束窗口最小尺寸：decorations:false 无边框窗口下，Windows 的 resize grip
-                // 能让窗口外框突破 set_min_size/配置的 minWidth（约少 16px），导致右栏右侧被截断。
-                // 这里在拖动 resize 结束时检测，低于阈值则强制拉回（逻辑像素）。
+                // 能让窗口突破 min_inner_size（约少 16px），导致右栏右侧被截断。
+                // 这里在尺寸变化后检测，低于下限则拉回。
+                //
+                // 必须读 inner_size 而不是 outer_size：set_size 设的是内容区
+                // (tauri-runtime-wry 里落到 set_inner_size)，而 outer_size 含无边框窗口
+                // 那圈不可见 resize 边框。读外框写内容区 = 每次触发都把内容区撑大约一圈
+                // 边框；跨缩放不同的显示器拖动时物理/逻辑比会变，来回拖就次次累积，
+                // 表现为"窗口在两个显示器间拖来拖去不断变大"。
+                // 改用 inner 对 inner 后判定与写入同口径；且 max() 不会改动已达标的那一维，
+                // 补一次即收敛，不会自喂。
                 tauri::WindowEvent::Resized(_) => {
                     // 只对串口窗口(main / win-*)生效。主题编辑器窗口有自己的最小尺寸
-                    // (720x480,见 open_theme_editor),不能在这里被统一拉到 1216x500:
-                    //   1) 拖动中 Resized -> set_size -> Resized 反复触发,窗口尺寸抖动闪烁;
-                    //   2) set_size 同时写宽和高,缩宽度会把高度顶到 500,缩高度会把宽度顶到 1216。
-                    // 后台模式的 1x1 隐藏保活 webview(tray::KEEPALIVE_LABEL)更不该被撑大。
+                    // (见 open_theme_editor)；后台模式的 1x1 隐藏保活 webview
+                    // (tray::KEEPALIVE_LABEL)更不该被撑大。
                     if tray::is_serial_window_label(window.label()) {
-                        // 目标内容区 1200，但无边框窗口下 Windows resize grip 会扣约 16px，
-                        // 故阈值取 1216：被扣后落地 1200，右栏不再被截断。
-                        let min_w = 1216.0;
-                        let min_h = 600.0;
-                        if let Ok(size) = window.outer_size() {
-                            let scale = window.scale_factor().unwrap_or(1.0);
+                        // 与 WebviewWindowBuilder 的 min_inner_size 取同一个数(逻辑像素)
+                        const MIN_W: f64 = 1216.0;
+                        const MIN_H: f64 = 600.0;
+                        let scale = window.scale_factor().unwrap_or(1.0);
+                        if let Ok(size) = window.inner_size() {
                             let w = size.width as f64 / scale;
                             let h = size.height as f64 / scale;
-                            if w < min_w || h < min_h {
-                                let _ = window.set_size(tauri::LogicalSize::new(w.max(min_w), h.max(min_h)));
+                            // 留 0.5px 容差：缩放换算的舍入误差不应触发修正
+                            if w < MIN_W - 0.5 || h < MIN_H - 0.5 {
+                                let _ = window.set_size(tauri::LogicalSize::new(w.max(MIN_W), h.max(MIN_H)));
                             }
                         }
                     }
