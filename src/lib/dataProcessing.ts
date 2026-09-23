@@ -1,5 +1,7 @@
 // 帧构造器:类型 + 默认值 + 预置合并 + 模板操作。全部纯函数,供 node 测试。
 // FrameConfig 与后端 dataproc/frame.rs 对齐(snake_case)。
+import type { CodecConfig } from './codec';
+import type { SmsConfig, SmsDefaults } from './sms';
 
 export type Endian = 'le' | 'be';
 export interface LengthFieldSpec { size: 'none' | 'one' | 'two'; endian: Endian; coverage: 'data' | 'data_plus_checksum' | 'whole_frame' }
@@ -118,7 +120,50 @@ export interface FrameBuilderTool {
   template_seed_version?: number;
   templates: FrameTemplate[];
 }
-export type DataTool = FrameBuilderTool;
+export interface CodecTool {
+  id: string;
+  kind: 'codec';
+  config: CodecConfig;
+}
+export interface SmsTool {
+  id: string;
+  kind: 'sms';
+  config: SmsConfig;
+  /** 仅新工具设为 false；旧配置缺失时视为已有草稿，避免覆盖。 */
+  defaults_applied?: boolean;
+}
+export type DataTool = FrameBuilderTool | CodecTool | SmsTool;
+
+export const DATA_TOOL_OPTIONS = [
+  { value: 'frame_builder', label: '帧构造器' },
+  { value: 'codec', label: '编解码' },
+  { value: 'sms', label: '短信' },
+] as const;
+
+export function defaultCodecTool(): CodecTool {
+  return { id: 'codec', kind: 'codec', config: { operation: 'text_to_hex', input: '', format: 'text' } };
+}
+
+export function isCodecTool(tool: unknown): tool is CodecTool {
+  return typeof tool === 'object' && tool !== null && (tool as CodecTool).kind === 'codec';
+}
+
+export function defaultSmsTool(): SmsTool {
+  return { id: 'sms', kind: 'sms', defaults_applied: false, config: {
+    mode: 'parse', pdu_input: '', recipient: '', smsc: '', text: '', encoding: 'auto', reference: 0, validity_period: null,
+  } };
+}
+
+export function initializeSmsToolDefaults(tool: SmsTool, defaults: SmsDefaults): boolean {
+  if (tool.defaults_applied !== false) return false;
+  tool.config = { ...tool.config, smsc: defaults.smsc, encoding: defaults.encoding, validity_period: defaults.validity_period };
+  tool.defaults_applied = true;
+  return true;
+}
+
+export function isSmsTool(tool: unknown): tool is SmsTool {
+  return typeof tool === 'object' && tool !== null && (tool as SmsTool).kind === 'sms';
+}
 
 export const FRAME_TEMPLATE_SEED_VERSION = 1;
 export const RANDOM_TEXT_TEMPLATE_NAME = '随机字符串';
@@ -248,6 +293,16 @@ export function mergePresetModules(loaded: any[], fallback: any[], presets: any[
       m = { ...m, tools: [defaultFrameBuilderTool(), ...(m.tools ?? [])] };
     }
     if (isDataProcessingModule(m)) {
+      // 旧文件补齐新增子工具；导入时优先保留当前工具的输入。
+      const missing = (p.tools ?? []).filter((presetTool: DataTool) =>
+        !(m.tools ?? []).some((tool: DataTool) => tool.kind === presetTool.kind),
+      );
+      if (missing.length) {
+        const fallbackTools = fallback.find((x) => x?.type === p.type)?.tools ?? [];
+        m = { ...m, tools: [...(m.tools ?? []), ...missing.map((presetTool: DataTool) =>
+          fallbackTools.find((tool: DataTool) => tool.kind === presetTool.kind) ?? presetTool,
+        )] };
+      }
       for (const tool of m.tools ?? []) {
         if (!isFrameBuilderTool(tool)) continue;
         seedFrameBuilderTemplates(tool);

@@ -25,6 +25,15 @@ pub enum TextEncoding {
     Gbk,
 }
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum SmsDefaultEncoding {
+    #[default]
+    Auto,
+    Gsm7,
+    Ucs2,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum DataBits {
@@ -133,6 +142,15 @@ pub struct UiSettings {
     /// 侧栏"数据处理"tab 是否显示。关闭只隐藏入口，不删除帧构造器数据。
     #[serde(default = "default_show_data_tab")]
     pub show_data_tab: bool,
+    /// 数据处理页签中隐藏的子工具。空 = 全部显示。
+    #[serde(default)]
+    pub hidden_data_tools: Vec<String>,
+    #[serde(default)]
+    pub sms_default_smsc: String,
+    #[serde(default)]
+    pub sms_default_encoding: SmsDefaultEncoding,
+    #[serde(default)]
+    pub sms_default_validity_period: Option<u8>,
     /// 帧构造器数据来源下拉中隐藏的自动填充模式。空 = 全部显示。
     #[serde(default)]
     pub hidden_data_fill_patterns: Vec<String>,
@@ -461,6 +479,10 @@ impl Settings {
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
+                hidden_data_tools: Vec::new(),
+                sms_default_smsc: String::new(),
+                sms_default_encoding: SmsDefaultEncoding::Auto,
+                sms_default_validity_period: None,
                 hidden_data_fill_patterns: Vec::new(),
                 hidden_checksum_algorithms: Vec::new(),
                 tray_hint_shown: false,
@@ -561,6 +583,13 @@ impl Settings {
         let mut merged = serde_json::to_value(self).map_err(|e| e.to_string())?;
         deep_merge(&mut merged, patch);
         let mut next: Settings = serde_json::from_value(merged).map_err(|e| format!("设置值无效: {}", e))?;
+        next.ui.sms_default_smsc = next.ui.sms_default_smsc.trim().to_string();
+        if !next.ui.sms_default_smsc.is_empty() {
+            let digits = next.ui.sms_default_smsc.strip_prefix('+').unwrap_or(&next.ui.sms_default_smsc);
+            if digits.is_empty() || digits.len() > 20 || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return Err("默认短信中心号码需为 1–20 位数字，可带 +，或留空使用模组设置".into());
+            }
+        }
         // 后端持有字段与版本号不由补丁改
         next.merge_backend_owned(self);
         next.version = self.version;
@@ -637,6 +666,10 @@ impl LegacySettings {
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
+                hidden_data_tools: Vec::new(),
+                sms_default_smsc: String::new(),
+                sms_default_encoding: SmsDefaultEncoding::Auto,
+                sms_default_validity_period: None,
                 hidden_data_fill_patterns: Vec::new(),
                 hidden_checksum_algorithms: Vec::new(),
                 tray_hint_shown: false,
@@ -815,6 +848,62 @@ mod tests {
         v["ui"].as_object_mut().unwrap().remove("show_data_tab");
         let s: Settings = serde_json::from_value(v).unwrap();
         assert!(s.ui.show_data_tab);
+    }
+
+    #[test]
+    fn test_data_tool_visibility_defaults_and_roundtrip() {
+        let mut old = serde_json::to_value(Settings::default_settings()).unwrap();
+        old["ui"].as_object_mut().unwrap().remove("hidden_data_tools");
+        let restored: Settings = serde_json::from_value(old).unwrap();
+        let serialized = serde_json::to_value(&restored).unwrap();
+        assert_eq!(serialized["ui"]["hidden_data_tools"], serde_json::json!([]));
+        let next = restored.apply_patch(&serde_json::json!({
+            "ui": { "hidden_data_tools": ["codec", "frame_builder"] }
+        })).unwrap();
+        let serialized = serde_json::to_value(next).unwrap();
+        assert_eq!(serialized["ui"]["hidden_data_tools"], serde_json::json!(["codec", "frame_builder"]));
+    }
+
+    #[test]
+    fn test_sms_defaults_compatibility_patch_and_clear() {
+        let mut old = serde_json::to_value(Settings::default_settings()).unwrap();
+        for key in ["sms_default_smsc", "sms_default_encoding", "sms_default_validity_period"] {
+            old["ui"].as_object_mut().unwrap().remove(key);
+        }
+        let restored: Settings = serde_json::from_value(old).unwrap();
+        let json = serde_json::to_value(&restored).unwrap();
+        assert_eq!(json["ui"]["sms_default_smsc"], "");
+        assert_eq!(json["ui"]["sms_default_encoding"], "auto");
+        assert!(json["ui"]["sms_default_validity_period"].is_null());
+        let next = restored.apply_patch(&serde_json::json!({"ui": {
+            "sms_default_smsc": " +8613800210500 ", "sms_default_encoding": "ucs2", "sms_default_validity_period": 170
+        }})).unwrap();
+        let roundtrip: Settings = serde_json::from_value(serde_json::to_value(&next).unwrap()).unwrap();
+        let json = serde_json::to_value(&roundtrip).unwrap();
+        assert_eq!(json["ui"]["sms_default_smsc"], "+8613800210500");
+        assert_eq!(json["ui"]["sms_default_encoding"], "ucs2");
+        assert_eq!(json["ui"]["sms_default_validity_period"], 170);
+        let cleared = roundtrip.apply_patch(&serde_json::json!({"ui": {"sms_default_smsc":"", "sms_default_validity_period":null}})).unwrap();
+        let json = serde_json::to_value(cleared).unwrap();
+        assert_eq!(json["ui"]["sms_default_smsc"], "");
+        assert_eq!(json["ui"]["sms_default_encoding"], "ucs2");
+        assert!(json["ui"]["sms_default_validity_period"].is_null());
+    }
+
+    #[test]
+    fn test_sms_defaults_reject_invalid_values() {
+        let base = Settings::default_settings();
+        for patch in [
+            serde_json::json!({"sms_default_smsc":"+"}),
+            serde_json::json!({"sms_default_smsc":"abc"}),
+            serde_json::json!({"sms_default_smsc":"123456789012345678901"}),
+            serde_json::json!({"sms_default_encoding":"utf8"}),
+            serde_json::json!({"sms_default_validity_period":256}),
+            serde_json::json!({"sms_default_validity_period":-1}),
+            serde_json::json!({"sms_default_validity_period":1.5}),
+        ] {
+            assert!(base.apply_patch(&serde_json::json!({"ui":patch})).is_err());
+        }
     }
 
     #[test]

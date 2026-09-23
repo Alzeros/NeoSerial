@@ -241,6 +241,8 @@ export const scriptPanelWidth = $state<{ value: number }>({ value: 500 });
 export const scriptModules = $state(presetScriptModules());
 export const activeScriptModule = $state<{ value: number }>({ value: 0 });
 export const activeScriptPage = $state<{ value: number }>({ value: 0 });
+/** 当前窗口的数据处理子页签；切换顶层页面、卸载面板后仍保留，不随序列配置同步到其他窗口。 */
+export const activeDataTool = $state<{ value: string }>({ value: 'frame_builder' });
 export const scriptRunning = $state<{ value: boolean }>({ value: false });
 export const scriptRunCount = $state<{ value: number }>({ value: 1 });
 export const scriptLoopInterval = $state<{ value: number }>({ value: 500 });

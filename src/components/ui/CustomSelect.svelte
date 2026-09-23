@@ -22,6 +22,7 @@
   let highlightIndex = $state(-1);
   let container: HTMLDivElement;
   let triggerEl: HTMLButtonElement;
+  let menuEl = $state<HTMLDivElement>();
   // fixed 定位坐标:突破父容器 overflow 裁剪
   let fixedPos = $state<{ left: number; top: number; width: number } | null>(null);
 
@@ -109,8 +110,12 @@
   $effect(() => {
     if (open) {
       document.addEventListener('mousedown', handleClickOutside);
-      // fixed 定位不随父容器滚动:滚动时关闭,避免选项列表悬浮在错误位置
-      const closeOnScroll = () => { open = false; fixedPos = null; };
+      // fixed 定位不随外层滚动；菜单自身的滚动不能触发关闭。
+      const closeOnScroll = (event: Event) => {
+        if (event.target instanceof Node && menuEl?.contains(event.target)) return;
+        open = false;
+        fixedPos = null;
+      };
       window.addEventListener('scroll', closeOnScroll, true);
       return () => {
         document.removeEventListener('mousedown', handleClickOutside);
@@ -148,7 +153,8 @@
 
   {#if open && fixedPos}
     <div
-      class="fixed z-[300] py-1 overflow-y-auto"
+      bind:this={menuEl}
+      class="fixed z-[300] py-1 overflow-y-auto overscroll-contain"
       style="left: {fixedPos.left}px; top: {fixedPos.top}px; width: {fixedPos.width}px; background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 240px;"
     >
       {#if options.length === 0}

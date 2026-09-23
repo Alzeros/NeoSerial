@@ -7,7 +7,8 @@
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
-  import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS } from '$lib/dataProcessing';
+  import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS, DATA_TOOL_OPTIONS } from '$lib/dataProcessing';
+  import { SMS_ENCODING_OPTIONS, SMS_VALIDITY_OPTIONS, smsDefaultsFromSettings, type SmsDefaults } from '$lib/sms';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import Collapsible from '$components/ui/Collapsible.svelte';
@@ -78,6 +79,10 @@
   let editShowSuggestTab = $state(true);
   let editShowMcpTab = $state(true);
   let editShowDataTab = $state(true);
+  let editHiddenDataTools = $state<string[]>([]);
+  let editSmsDefaultSmsc = $state('');
+  let editSmsDefaultEncoding = $state<SmsDefaults['encoding']>('auto');
+  let editSmsDefaultValidity = $state('none');
   let editHiddenDataFillPatterns = $state<string[]>([]);
   let editHiddenChecksumAlgorithms = $state<string[]>([]);
   // 快捷指令编辑区密度编辑副本(字号 + 输入框高度 + 行间距 + 字体族)
@@ -148,7 +153,8 @@
     textEncoding: 'ascii' | 'utf8' | 'gbk';
     sendHalfwidthPunct: boolean;
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean; showDataTab: boolean;
-    hiddenDataFillPatterns: string[]; hiddenChecksumAlgorithms: string[];
+    hiddenDataTools: string[]; hiddenDataFillPatterns: string[]; hiddenChecksumAlgorithms: string[];
+    smsDefaultSmsc: string; smsDefaultEncoding: SmsDefaults['encoding']; smsDefaultValidityPeriod: number | null;
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
     baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
@@ -166,6 +172,10 @@
       sendHalfwidthPunct: editSendHalfwidthPunct,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       showDataTab: editShowDataTab,
+      hiddenDataTools: [...editHiddenDataTools],
+      smsDefaultSmsc: editSmsDefaultSmsc.trim(),
+      smsDefaultEncoding: editSmsDefaultEncoding,
+      smsDefaultValidityPeriod: editSmsDefaultValidity === 'none' ? null : Number(editSmsDefaultValidity),
       hiddenDataFillPatterns: [...editHiddenDataFillPatterns],
       hiddenChecksumAlgorithms: [...editHiddenChecksumAlgorithms],
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
@@ -217,6 +227,11 @@
     editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
     editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
     editShowDataTab = cachedSettings.value?.ui?.show_data_tab ?? true;
+    editHiddenDataTools = [...(cachedSettings.value?.ui?.hidden_data_tools ?? [])];
+    const smsDefaults = smsDefaultsFromSettings(cachedSettings.value?.ui);
+    editSmsDefaultSmsc = smsDefaults.smsc;
+    editSmsDefaultEncoding = smsDefaults.encoding;
+    editSmsDefaultValidity = smsDefaults.validity_period === null ? 'none' : String(smsDefaults.validity_period);
     const dataFillValues = new Set<string>(DATA_SOURCE_OPTIONS.filter((option) => option.value !== 'content').map((option) => option.value));
     const checksumValues = new Set<string>(CHECKSUM_OPTIONS.filter((option) => option.value !== 'none').map((option) => option.value));
     editHiddenDataFillPatterns = (cachedSettings.value?.ui?.hidden_data_fill_patterns ?? []).filter((value) => dataFillValues.has(value));
@@ -279,6 +294,7 @@
     openBehavior = false;
     openHistory = false;
     openDataFillOptions = true;
+    openSmsDefaults = true;
     openChecksumOptions = false;
     collapsedGroups = [];
     // 记录"加载态快照",作为脏检测与补丁的基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
@@ -421,6 +437,10 @@
     if (changed('showSuggestTab')) ui.show_suggest_tab = cur.showSuggestTab;
     if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
     if (changed('showDataTab')) ui.show_data_tab = cur.showDataTab;
+    if (changed('hiddenDataTools')) ui.hidden_data_tools = cur.hiddenDataTools;
+    if (changed('smsDefaultSmsc')) ui.sms_default_smsc = cur.smsDefaultSmsc;
+    if (changed('smsDefaultEncoding')) ui.sms_default_encoding = cur.smsDefaultEncoding;
+    if (changed('smsDefaultValidityPeriod')) ui.sms_default_validity_period = cur.smsDefaultValidityPeriod;
     if (changed('hiddenDataFillPatterns')) ui.hidden_data_fill_patterns = cur.hiddenDataFillPatterns;
     if (changed('hiddenChecksumAlgorithms')) ui.hidden_checksum_algorithms = cur.hiddenChecksumAlgorithms;
     if (changed('qcFontSize')) ui.qc_font_size = cur.qcFontSize;
@@ -460,6 +480,15 @@
    *  原先失败只进 console,对话框照常关掉、界面按新值显示,重启后全部回到旧值。 */
   async function applyEdits(): Promise<boolean> {
     saveError = null;
+    if (editSmsDefaultSmsc.trim() && !/^\+?\d{1,20}$/u.test(editSmsDefaultSmsc.trim())) {
+      saveError = '默认短信中心号码需为 1–20 位数字，可带 +，或留空使用模组设置';
+      return false;
+    }
+    if (!SMS_ENCODING_OPTIONS.some(option => option.value === editSmsDefaultEncoding) ||
+      (editSmsDefaultValidity !== 'none' && (!Number.isInteger(Number(editSmsDefaultValidity)) || Number(editSmsDefaultValidity) < 0 || Number(editSmsDefaultValidity) > 255))) {
+      saveError = '请选择有效的短信默认编码和有效期';
+      return false;
+    }
     // 数字输入框清空会绑成 null,越界的端口后端也会拒;先在这里给出能看懂的原因
     if (!Number.isInteger(editMcpPort) || editMcpPort < 1024 || editMcpPort > 65535) {
       saveError = 'MCP 端口须为 1024–65535 的整数';
@@ -601,6 +630,12 @@
   }
 
   // 数据处理选项的 checkbox 表示“显示”，落盘则只记录隐藏项；固定兜底项不进入隐藏数组。
+  function setDataToolVisible(value: string, visible: boolean) {
+    editHiddenDataTools = visible
+      ? editHiddenDataTools.filter((item) => item !== value)
+      : [...new Set([...editHiddenDataTools, value])];
+  }
+
   function setDataFillPatternVisible(value: string, visible: boolean) {
     if (value === 'content') return;
     editHiddenDataFillPatterns = visible
@@ -654,6 +689,7 @@
   let openBehavior = $state(false);
   let openHistory = $state(false);
   let openDataFillOptions = $state(true);
+  let openSmsDefaults = $state(true);
   let openChecksumOptions = $state(false);
 
   /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
@@ -1336,10 +1372,24 @@
                 </label>
               </div>
               <div class="text-[12px] text-[var(--muted-foreground)]">
-                控制侧栏“数据处理”tab。关闭仅隐藏入口，帧构造器配置和模板仍会保留。
+                控制侧栏“数据处理”tab。关闭仅隐藏入口，各工具的输入、配置和模板仍会保留。
               </div>
               {#if editShowDataTab}
-                <div class="mt-3 pt-1" style="border-top: 1px solid var(--border-subtle);">
+                <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 py-1">
+                  <span class="text-[12px] text-[var(--muted-foreground)]">显示模块</span>
+                  <div class="flex flex-wrap gap-x-4 gap-y-2">
+                    {#each DATA_TOOL_OPTIONS as option (option.value)}
+                      <label class="flex cursor-pointer items-center gap-2 text-[13px]">
+                        <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]"
+                          checked={!editHiddenDataTools.includes(option.value)}
+                          onchange={(event) => setDataToolVisible(option.value, event.currentTarget.checked)} />
+                        <span>{option.label}</span>
+                      </label>
+                    {/each}
+                  </div>
+                </div>
+                <div class="mt-3">
+                  <div class="text-[12px] font-medium text-[var(--muted-foreground)]">帧构造器选项</div>
                   <Collapsible title="数据域生成方式" summary={dataFillOptionsSummary} bind:open={openDataFillOptions}>
                     <div class="grid grid-cols-2 gap-x-3 gap-y-2">
                       {#each DATA_SOURCE_OPTIONS as option (option.value)}
@@ -1373,6 +1423,32 @@
                           <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
                         </label>
                       {/each}
+                    </div>
+                  </Collapsible>
+                </div>
+                <div class="mt-3">
+                  <div class="text-[12px] font-medium text-[var(--muted-foreground)]">短信选项</div>
+                  <Collapsible title="默认参数" summary={editSmsDefaultSmsc.trim() || '使用模组短信中心'} bind:open={openSmsDefaults}>
+                    <div class="space-y-3 text-[13px]">
+                      <div>
+                        <label for="settings-sms-center" class="mb-1 block">默认短信中心号码</label>
+                        <input id="settings-sms-center" class="w-full rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                          bind:value={editSmsDefaultSmsc} placeholder="留空使用模组设置，例如 +8613800210500" />
+                      </div>
+                      <div class="flex items-center gap-3">
+                        <label for="settings-sms-encoding" class="w-24 shrink-0">默认短信编码</label>
+                        <select id="settings-sms-encoding" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editSmsDefaultEncoding}>
+                          {#each SMS_ENCODING_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}
+                        </select>
+                      </div>
+                      <div class="flex items-center gap-3">
+                        <label for="settings-sms-validity" class="w-24 shrink-0">默认有效期</label>
+                        <select id="settings-sms-validity" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editSmsDefaultValidity}>
+                          {#each SMS_VALIDITY_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}
+                          {#if !SMS_VALIDITY_OPTIONS.some(option => option.value === editSmsDefaultValidity)}<option value={editSmsDefaultValidity}>自定义（{editSmsDefaultValidity}）</option>{/if}
+                        </select>
+                      </div>
+                      <p class="text-[12px] text-[var(--muted-foreground)]">首次使用或点击“恢复默认参数”时采用这些设置，不覆盖正在编辑的内容。</p>
                     </div>
                   </Collapsible>
                 </div>

@@ -1,6 +1,6 @@
 // 与 Rust 后端对齐的前端类型定义
 
-import { defaultFrameBuilderTool, type DataTool } from './dataProcessing';
+import { defaultFrameBuilderTool, defaultCodecTool, defaultSmsTool, type DataTool } from './dataProcessing';
 export type { FrameConfig, DataTool, FrameBuilderTool, FrameTemplate } from './dataProcessing';
 
 export type Dir = 'rx' | 'tx';
@@ -174,6 +174,12 @@ export interface Settings {
     show_mcp_tab: boolean;
     /** 侧栏"数据处理"tab 是否显示。 */
     show_data_tab: boolean;
+    /** 数据处理页签中隐藏的子工具。空 = 全部显示。 */
+    hidden_data_tools: string[];
+    /** 新短信的默认参数；更改设置不覆盖当前草稿。 */
+    sms_default_smsc: string;
+    sms_default_encoding: 'auto' | 'gsm7' | 'ucs2';
+    sms_default_validity_period: number | null;
     /** 帧构造器数据来源下拉中隐藏的自动填充模式。 */
     hidden_data_fill_patterns: string[];
     /** 帧构造器校验算法下拉中隐藏的具体算法。 */
@@ -253,7 +259,7 @@ export function defaultScriptModule(name = '快捷指令'): QuickCommandsModule 
 export function presetScriptModules(): ScriptModule[] {
   return [
     { id: 'quick_commands', name: '快捷指令', type: 'quick_commands', pages: [defaultScriptPage('Page0')] },
-    { id: 'data_processing', name: '数据处理', type: 'data_processing', tools: [defaultFrameBuilderTool()] },
+    { id: 'data_processing', name: '数据处理', type: 'data_processing', tools: [defaultFrameBuilderTool(), defaultCodecTool(), defaultSmsTool()] },
   ];
 }
 
