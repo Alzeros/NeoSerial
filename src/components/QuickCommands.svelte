@@ -520,9 +520,9 @@
         {#each currentModulePages() as page, i}
           <button
             type="button" data-page-tab aria-pressed={i === activeScriptPage.value}
-            class="h-7 min-w-[72px] shrink-0 whitespace-nowrap rounded-md px-3 text-[12px] leading-none font-medium transition-colors cursor-pointer {i === activeScriptPage.value
-              ? 'bg-[var(--background-input)] text-[var(--primary)] shadow-sm'
-              : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+            class="h-7 shrink-0 whitespace-nowrap rounded-md border px-3 text-[12px] leading-none font-medium transition-colors cursor-pointer {i === activeScriptPage.value
+              ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] shadow-sm'
+              : 'border-[var(--border-strong)] text-[var(--foreground)] hover:border-[var(--primary)] hover:bg-[var(--overlay-hover)]'}"
             onclick={() => (activeScriptPage.value = i)}
             oncontextmenu={(e) => handlePageContextMenu(e, i)}
             title="右键可编辑此页签"

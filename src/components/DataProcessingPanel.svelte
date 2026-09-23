@@ -34,7 +34,7 @@
           class="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--background-deep)] p-0.5">
           {#each visibleTools as tool (tool.value)}
             <button type="button" aria-pressed={selected === tool.value}
-              class="h-7 min-w-[72px] shrink-0 whitespace-nowrap rounded-md px-3 text-[12px] font-medium leading-none transition-colors cursor-pointer {selected === tool.value ? 'bg-[var(--background-input)] text-[var(--primary)] shadow-sm' : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+              class="h-7 shrink-0 whitespace-nowrap rounded-md border px-3 text-[12px] font-medium leading-none transition-colors cursor-pointer {selected === tool.value ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] shadow-sm' : 'border-[var(--border-strong)] text-[var(--foreground)] hover:border-[var(--primary)] hover:bg-[var(--overlay-hover)]'}"
               onclick={() => (activeDataTool.value = tool.value)}>{tool.label}</button>
           {/each}
         </div>
