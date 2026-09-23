@@ -8,6 +8,7 @@ mod mcp;
 mod state;
 mod tray;
 mod util;
+mod window_sizing;
 
 use tauri::{Emitter, Manager};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor, get_modem_status};
@@ -226,42 +227,15 @@ pub fn run() {
                 commands::command_index::spawn_auto_refresh(&handle, &cfg);
             }
             tray::setup(app);
+            if let Some(window) = app.get_webview_window("main") {
+                window_sizing::install(&window)?;
+            }
             #[cfg(debug_assertions)]
             app.get_webview_window("main").unwrap().open_devtools();
             Ok(())
         })
         .on_window_event(|window, event| {
             match event {
-                // 硬约束窗口最小尺寸：decorations:false 无边框窗口下，Windows 的 resize grip
-                // 能让窗口突破 min_inner_size（约少 16px），导致右栏右侧被截断。
-                // 这里在尺寸变化后检测，低于下限则拉回。
-                //
-                // 必须读 inner_size 而不是 outer_size：set_size 设的是内容区
-                // (tauri-runtime-wry 里落到 set_inner_size)，而 outer_size 含无边框窗口
-                // 那圈不可见 resize 边框。读外框写内容区 = 每次触发都把内容区撑大约一圈
-                // 边框；跨缩放不同的显示器拖动时物理/逻辑比会变，来回拖就次次累积，
-                // 表现为"窗口在两个显示器间拖来拖去不断变大"。
-                // 改用 inner 对 inner 后判定与写入同口径；且 max() 不会改动已达标的那一维，
-                // 补一次即收敛，不会自喂。
-                tauri::WindowEvent::Resized(_) => {
-                    // 只对串口窗口(main / win-*)生效。主题编辑器窗口有自己的最小尺寸
-                    // (见 open_theme_editor)；后台模式的 1x1 隐藏保活 webview
-                    // (tray::KEEPALIVE_LABEL)更不该被撑大。
-                    if tray::is_serial_window_label(window.label()) {
-                        // 与 WebviewWindowBuilder 的 min_inner_size 取同一个数(逻辑像素)
-                        const MIN_W: f64 = 1216.0;
-                        const MIN_H: f64 = 600.0;
-                        let scale = window.scale_factor().unwrap_or(1.0);
-                        if let Ok(size) = window.inner_size() {
-                            let w = size.width as f64 / scale;
-                            let h = size.height as f64 / scale;
-                            // 留 0.5px 容差：缩放换算的舍入误差不应触发修正
-                            if w < MIN_W - 0.5 || h < MIN_H - 0.5 {
-                                let _ = window.set_size(tauri::LogicalSize::new(w.max(MIN_W), h.max(MIN_H)));
-                            }
-                        }
-                    }
-                }
                 // 窗口关闭生命周期:所有串口窗口(main / win-*)一个规则,由 tray::close_plan 决定——
                 // 后台模式:连接一律留在后台,窗口放行销毁;关的是最后一个窗口则应用留在托盘
                 //   (Tauri 随后发 ExitRequested(code=None),run 回调里拦下),并首次提示一次。

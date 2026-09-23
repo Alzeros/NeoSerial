@@ -440,14 +440,15 @@ pub async fn open_port_window(app_handle: tauri::AppHandle, port: Option<String>
             pending.insert(label.clone(), (p.clone(), baud.unwrap_or(115200)));
         }
     }
-    WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(&app_handle, &label, WebviewUrl::App("index.html".into()))
         .title("NeoSerial")
         .inner_size(1216.0, 800.0)
-        .min_inner_size(1216.0, 600.0)
+        .min_inner_size(crate::window_sizing::MIN_WIDTH as f64, crate::window_sizing::MIN_HEIGHT as f64)
         .decorations(false)
         .resizable(true)
         .build()
         .map_err(|e| format!("创建窗口失败: {}", e))?;
+    crate::window_sizing::install(&window).map_err(|e| format!("设置窗口最小尺寸失败: {}", e))?;
     Ok(())
 }
 
