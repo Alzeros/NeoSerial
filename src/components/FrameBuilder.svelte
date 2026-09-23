@@ -491,7 +491,7 @@
         <span class="text-[12px] text-[var(--muted-foreground)]">完整结果 · 共 {preview.totalBytes} 字节</span>
         <button class="ml-auto px-1.5 py-0.5 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer" onclick={() => (expanded = false)}>返回设置</button>
       </div>
-      <div class="min-h-0 flex-1 overflow-y-auto break-all font-mono text-[13px] leading-relaxed {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
+      <div class="min-h-0 flex-1 overflow-y-auto break-all font-mono text-[13px] leading-relaxed select-text {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
         {#each preview.spans as s, i (i)}
           {@const displayText = previewMode === 'text' && s.kind === 'data' ? hexToAscii(s.text) : s.text}
           <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{displayText}</span>{' '}
