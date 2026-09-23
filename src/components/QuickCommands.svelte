@@ -255,6 +255,27 @@
   // 重命名浮层
   let renameState = $state<{ open: boolean; index: number; name: string }>({ open: false, index: -1, name: '' });
 
+  // 页签只有横向内容：普通滚轮转为横滚；原生横向手势和 Ctrl 缩放保持浏览器行为。
+  function pageTabWheel(node: HTMLDivElement) {
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || node.scrollWidth <= node.clientWidth) return;
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+        closePageMenu();
+        return;
+      }
+      if (!event.deltaY) return;
+      event.preventDefault();
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? Number.parseFloat(getComputedStyle(node).lineHeight) || 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? node.clientWidth : 1;
+      node.scrollLeft += event.deltaY * unit;
+      closePageMenu();
+    };
+    // 必须显式禁用 passive，才能阻止滚轮继续带动外层页面。
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return { destroy: () => node.removeEventListener('wheel', onWheel) };
+  }
+
   function handlePageContextMenu(e: MouseEvent, index: number) {
     // 输入框右键交给 App 的全局输入菜单，不弹页签菜单
     const t = e.target as HTMLElement;
@@ -493,7 +514,7 @@
   <!-- 页签栏（当前模块的 Page0/Page1...）右键页签可删除 -->
   <!-- 不限页数:页签多到排不下时横向滚动,"+"按钮固定末尾(shrink-0)不被挤掉 -->
   <!-- 32px 分段按钮组放在 36px 行内，另留 5px 滚动条槽，避免遮挡按钮底部。 -->
-  <div data-page-tabs class="h-[41px] shrink-0 overflow-x-auto overflow-y-hidden" style="box-shadow: inset 0 -1px 0 var(--border);">
+  <div data-page-tabs use:pageTabWheel class="h-[41px] shrink-0 overflow-x-auto overflow-y-hidden" style="box-shadow: inset 0 -1px 0 var(--border);">
     <div data-page-tabs-row class="flex h-9 w-max min-w-full items-center px-1.5">
       <div role="group" aria-label="快捷指令页签" class="inline-flex shrink-0 items-center gap-0.5 rounded-lg bg-[var(--background-deep)] p-0.5">
         {#each currentModulePages() as page, i}
