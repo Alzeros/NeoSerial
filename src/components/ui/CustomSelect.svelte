@@ -5,6 +5,7 @@
     width = '90px',
     disabled = false,
     emptyLabel = '暂无选项',
+    selectedFallbackLabel,
     onAddOption,
   }: {
     value?: string;
@@ -12,6 +13,8 @@
     width?: string;
     disabled?: boolean;
     emptyLabel?: string;
+    /** 当前 value 不在 options 中时，仅用于触发按钮显示，不会加入展开菜单。 */
+    selectedFallbackLabel?: string;
     onAddOption?: () => void;
   } = $props();
 
@@ -23,7 +26,7 @@
   let fixedPos = $state<{ left: number; top: number; width: number } | null>(null);
 
   const selectedLabel = $derived(
-    options.find((o) => o.value === value)?.label ?? value,
+    options.find((o) => o.value === value)?.label ?? selectedFallbackLabel ?? value,
   );
   const selectedIndex = $derived(
     options.findIndex((o) => o.value === value),

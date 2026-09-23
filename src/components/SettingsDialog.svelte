@@ -7,6 +7,7 @@
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
+  import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS } from '$lib/dataProcessing';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import Collapsible from '$components/ui/Collapsible.svelte';
@@ -77,6 +78,8 @@
   let editShowSuggestTab = $state(true);
   let editShowMcpTab = $state(true);
   let editShowDataTab = $state(true);
+  let editHiddenDataFillPatterns = $state<string[]>([]);
+  let editHiddenChecksumAlgorithms = $state<string[]>([]);
   // 快捷指令编辑区密度编辑副本(字号 + 输入框高度 + 行间距 + 字体族)
   let editQcFontSize = $state(13);
   let editQcInputHeight = $state(28);
@@ -145,6 +148,7 @@
     textEncoding: 'ascii' | 'utf8' | 'gbk';
     sendHalfwidthPunct: boolean;
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean; showDataTab: boolean;
+    hiddenDataFillPatterns: string[]; hiddenChecksumAlgorithms: string[];
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
     baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
@@ -162,6 +166,8 @@
       sendHalfwidthPunct: editSendHalfwidthPunct,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       showDataTab: editShowDataTab,
+      hiddenDataFillPatterns: [...editHiddenDataFillPatterns],
+      hiddenChecksumAlgorithms: [...editHiddenChecksumAlgorithms],
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
       baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, theme: editTheme, custom: { ...editCustom },
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
@@ -211,6 +217,10 @@
     editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
     editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
     editShowDataTab = cachedSettings.value?.ui?.show_data_tab ?? true;
+    const dataFillValues = new Set<string>(DATA_SOURCE_OPTIONS.filter((option) => option.value !== 'content').map((option) => option.value));
+    const checksumValues = new Set<string>(CHECKSUM_OPTIONS.filter((option) => option.value !== 'none').map((option) => option.value));
+    editHiddenDataFillPatterns = (cachedSettings.value?.ui?.hidden_data_fill_patterns ?? []).filter((value) => dataFillValues.has(value));
+    editHiddenChecksumAlgorithms = (cachedSettings.value?.ui?.hidden_checksum_algorithms ?? []).filter((value) => checksumValues.has(value));
     editQcFontSize = cachedSettings.value?.ui?.qc_font_size ?? 13;
     editQcInputHeight = cachedSettings.value?.ui?.qc_input_height ?? 28;
     editQcRowGap = cachedSettings.value?.ui?.qc_row_gap ?? 4;
@@ -268,6 +278,8 @@
     openManuals = true;
     openBehavior = false;
     openHistory = false;
+    openDataFillOptions = true;
+    openChecksumOptions = false;
     collapsedGroups = [];
     // 记录"加载态快照",作为脏检测与补丁的基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
     lastAppliedEdits = currentEdits();
@@ -409,6 +421,8 @@
     if (changed('showSuggestTab')) ui.show_suggest_tab = cur.showSuggestTab;
     if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
     if (changed('showDataTab')) ui.show_data_tab = cur.showDataTab;
+    if (changed('hiddenDataFillPatterns')) ui.hidden_data_fill_patterns = cur.hiddenDataFillPatterns;
+    if (changed('hiddenChecksumAlgorithms')) ui.hidden_checksum_algorithms = cur.hiddenChecksumAlgorithms;
     if (changed('qcFontSize')) ui.qc_font_size = cur.qcFontSize;
     if (changed('qcInputHeight')) ui.qc_input_height = cur.qcInputHeight;
     if (changed('qcRowGap')) ui.qc_row_gap = cur.qcRowGap;
@@ -586,6 +600,21 @@
     editDisabledDocIds = checked ? editDisabledDocIds.filter((d) => d !== id) : [...editDisabledDocIds, id];
   }
 
+  // 数据处理选项的 checkbox 表示“显示”，落盘则只记录隐藏项；固定兜底项不进入隐藏数组。
+  function setDataFillPatternVisible(value: string, visible: boolean) {
+    if (value === 'content') return;
+    editHiddenDataFillPatterns = visible
+      ? editHiddenDataFillPatterns.filter((item) => item !== value)
+      : [...new Set([...editHiddenDataFillPatterns, value])];
+  }
+
+  function setChecksumAlgorithmVisible(value: string, visible: boolean) {
+    if (value === 'none') return;
+    editHiddenChecksumAlgorithms = visible
+      ? editHiddenChecksumAlgorithms.filter((item) => item !== value)
+      : [...new Set([...editHiddenChecksumAlgorithms, value])];
+  }
+
   // ===== 手册列表按知识库分组折叠 =====
   // 分组名来自手册列表接口的 group_names(管理员在知识库 Web 端归的组)。一本手册可属多个分组,
   // 则在每个分组下各出现一次——勾选绑的是 doc id,两处联动。排除名单存的始终是 doc id,
@@ -624,6 +653,8 @@
   let openKb = $state(false);
   let openBehavior = $state(false);
   let openHistory = $state(false);
+  let openDataFillOptions = $state(true);
+  let openChecksumOptions = $state(false);
 
   /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
   const baudSummary = $derived(editBaudRates.join(' · ') || '无');
@@ -666,6 +697,12 @@
     `${editSuggestIgnoreAtPrefix ? '忽略 AT+ · ' : ''}≥${editSuggestMinChars} 字符 · 手册 ${editSuggestMaxManual} / 历史 ${editSuggestMaxHistory}`,
   );
   const historySummary = $derived(`已记录 ${commandIndex.history.length} 条 · 上限 ${editHistoryLimit}`);
+  const dataFillOptionsSummary = $derived(
+    `已显示 ${DATA_SOURCE_OPTIONS.length - editHiddenDataFillPatterns.length}/${DATA_SOURCE_OPTIONS.length}`,
+  );
+  const checksumOptionsSummary = $derived(
+    `已显示 ${CHECKSUM_OPTIONS.length - editHiddenChecksumAlgorithms.length}/${CHECKSUM_OPTIONS.length}`,
+  );
 
   // 折叠起来的分组名。只在本次开着设置页期间有效,不落盘(分组是服务端的,记住折叠状态意义不大)
   let collapsedGroups = $state<string[]>([]);
@@ -1301,6 +1338,45 @@
               <div class="text-[12px] text-[var(--muted-foreground)]">
                 控制侧栏“数据处理”tab。关闭仅隐藏入口，帧构造器配置和模板仍会保留。
               </div>
+              {#if editShowDataTab}
+                <div class="mt-3 pt-1" style="border-top: 1px solid var(--border-subtle);">
+                  <Collapsible title="数据域生成方式" summary={dataFillOptionsSummary} bind:open={openDataFillOptions}>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {#each DATA_SOURCE_OPTIONS as option (option.value)}
+                        {@const fixed = option.value === 'content'}
+                        <label class="flex items-center gap-2 text-[13px] {fixed ? 'text-[var(--muted-foreground)]' : 'text-[var(--foreground)] cursor-pointer'}" title={fixed ? '手动输入固定保留' : undefined}>
+                          <input
+                            type="checkbox"
+                            class="h-4 w-4 rounded accent-[var(--primary)]"
+                            checked={fixed || !editHiddenDataFillPatterns.includes(option.value)}
+                            disabled={fixed}
+                            onchange={(e) => setDataFillPatternVisible(option.value, (e.target as HTMLInputElement).checked)}
+                          />
+                          <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
+                        </label>
+                      {/each}
+                    </div>
+                  </Collapsible>
+
+                  <Collapsible title="校验算法" summary={checksumOptionsSummary} bind:open={openChecksumOptions}>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {#each CHECKSUM_OPTIONS as option (option.value)}
+                        {@const fixed = option.value === 'none'}
+                        <label class="flex items-center gap-2 text-[13px] {fixed ? 'text-[var(--muted-foreground)]' : 'text-[var(--foreground)] cursor-pointer'}" title={fixed ? '无校验固定保留' : undefined}>
+                          <input
+                            type="checkbox"
+                            class="h-4 w-4 rounded accent-[var(--primary)]"
+                            checked={fixed || !editHiddenChecksumAlgorithms.includes(option.value)}
+                            disabled={fixed}
+                            onchange={(e) => setChecksumAlgorithmVisible(option.value, (e.target as HTMLInputElement).checked)}
+                          />
+                          <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
+                        </label>
+                      {/each}
+                    </div>
+                  </Collapsible>
+                </div>
+              {/if}
             {:else if extModule === 'suggest'}
               <!-- 指令联想子页:分节折叠(默认只展开一节),按自然流排布,超出由外层内容区滚动 -->
               <div>

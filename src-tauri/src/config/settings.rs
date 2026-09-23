@@ -133,6 +133,12 @@ pub struct UiSettings {
     /// 侧栏"数据处理"tab 是否显示。关闭只隐藏入口，不删除帧构造器数据。
     #[serde(default = "default_show_data_tab")]
     pub show_data_tab: bool,
+    /// 帧构造器数据来源下拉中隐藏的自动填充模式。空 = 全部显示。
+    #[serde(default)]
+    pub hidden_data_fill_patterns: Vec<String>,
+    /// 帧构造器校验算法下拉中隐藏的具体算法。空 = 全部显示。
+    #[serde(default)]
+    pub hidden_checksum_algorithms: Vec<String>,
     /// 首次收进后台的系统通知是否已发过(只提示一次)。后端写,见 merge_backend_owned。
     #[serde(default)]
     pub tray_hint_shown: bool,
@@ -455,6 +461,8 @@ impl Settings {
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
+                hidden_data_fill_patterns: Vec::new(),
+                hidden_checksum_algorithms: Vec::new(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup::default_group()],
@@ -629,6 +637,8 @@ impl LegacySettings {
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
+                hidden_data_fill_patterns: Vec::new(),
+                hidden_checksum_algorithms: Vec::new(),
                 tray_hint_shown: false,
             },
             command_groups: vec![CommandGroup {
@@ -814,6 +824,32 @@ mod tests {
             .apply_patch(&serde_json::json!({ "ui": { "show_data_tab": false } }))
             .unwrap();
         assert!(!next.ui.show_data_tab);
+    }
+
+    #[test]
+    fn test_missing_hidden_data_processing_options_take_empty_default() {
+        let mut v = serde_json::to_value(Settings::default_settings()).unwrap();
+        let ui = v["ui"].as_object_mut().unwrap();
+        ui.remove("hidden_data_fill_patterns");
+        ui.remove("hidden_checksum_algorithms");
+        let s: Settings = serde_json::from_value(v).unwrap();
+        assert!(s.ui.hidden_data_fill_patterns.is_empty());
+        assert!(s.ui.hidden_checksum_algorithms.is_empty());
+    }
+
+    #[test]
+    fn test_apply_patch_updates_hidden_data_processing_options() {
+        let base = Settings::default_settings();
+        let next = base
+            .apply_patch(&serde_json::json!({
+                "ui": {
+                    "hidden_data_fill_patterns": ["random_bytes"],
+                    "hidden_checksum_algorithms": ["crc32"]
+                }
+            }))
+            .unwrap();
+        assert_eq!(next.ui.hidden_data_fill_patterns, vec!["random_bytes"]);
+        assert_eq!(next.ui.hidden_checksum_algorithms, vec!["crc32"]);
     }
 
     /// 旧配置没有 qc 密度键 → 各取默认(13/28/4/default),不是 u32 默认的 0。

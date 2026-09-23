@@ -23,6 +23,65 @@ export interface ChecksumSpec {
 }
 export interface FrameConfig { header_hex: string; length: LengthFieldSpec; data: DataSpec; checksum: ChecksumSpec }
 
+export type DataSourceValue = 'content' | DataSpec['pattern'];
+export type ChecksumAlgorithm = ChecksumSpec['algo'];
+export interface DataProcessingOption<T extends string> { label: string; value: T }
+
+export const DATA_SOURCE_OPTIONS: DataProcessingOption<DataSourceValue>[] = [
+  { label: '随机字符', value: 'random_text' },
+  { label: '随机字节', value: 'random_bytes' },
+  { label: '手动输入', value: 'content' },
+  { label: '全 00', value: 'zeros' },
+  { label: '全 FF', value: 'ff' },
+  { label: '递增', value: 'increment' },
+  { label: '自定义循环', value: 'custom_loop' },
+];
+
+export const CHECKSUM_OPTIONS: DataProcessingOption<ChecksumAlgorithm>[] = [
+  { label: '无', value: 'none' },
+  { label: 'CRC16 Modbus', value: 'crc16_modbus' },
+  { label: 'CRC16 CCITT-FALSE', value: 'crc16_ccitt_false' },
+  { label: 'CRC16 XModem', value: 'crc16_xmodem' },
+  { label: 'CRC16 ARC', value: 'crc16_arc' },
+  { label: 'CRC32', value: 'crc32' },
+  { label: 'SUM8', value: 'sum8' },
+  { label: 'XOR8', value: 'xor8' },
+];
+
+export interface VisibleOptions<T extends string> {
+  options: DataProcessingOption<T>[];
+  currentLabel?: string;
+}
+
+function visibleOptions<T extends string>(
+  catalog: DataProcessingOption<T>[],
+  hidden: readonly string[],
+  current: T,
+  fixed: T,
+): VisibleOptions<T> {
+  const hiddenSet = new Set(hidden);
+  const options = catalog.filter(({ value }) => value === fixed || !hiddenSet.has(value));
+  const currentOption = catalog.find(({ value }) => value === current);
+  const currentLabel = current !== fixed && hiddenSet.has(current) && currentOption
+    ? `${currentOption.label}（已隐藏）`
+    : undefined;
+  return { options, currentLabel };
+}
+
+export function visibleDataSourceOptions(
+  hidden: readonly string[],
+  current: DataSourceValue,
+): VisibleOptions<DataSourceValue> {
+  return visibleOptions(DATA_SOURCE_OPTIONS, hidden, current, 'content');
+}
+
+export function visibleChecksumOptions(
+  hidden: readonly string[],
+  current: ChecksumAlgorithm,
+): VisibleOptions<ChecksumAlgorithm> {
+  return visibleOptions(CHECKSUM_OPTIONS, hidden, current, 'none');
+}
+
 export interface FrameTemplate { name: string; config: FrameConfig }
 export interface FrameBuilderTool { id: string; kind: 'frame_builder'; config: FrameConfig; templates: FrameTemplate[] }
 export type DataTool = FrameBuilderTool;

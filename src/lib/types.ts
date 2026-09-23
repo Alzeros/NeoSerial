@@ -174,6 +174,10 @@ export interface Settings {
     show_mcp_tab: boolean;
     /** 侧栏"数据处理"tab 是否显示。 */
     show_data_tab: boolean;
+    /** 帧构造器数据来源下拉中隐藏的自动填充模式。 */
+    hidden_data_fill_patterns: string[];
+    /** 帧构造器校验算法下拉中隐藏的具体算法。 */
+    hidden_checksum_algorithms: string[];
     /** 首次收进后台的系统通知是否已发过。后端写,前端只透传 */
     tray_hint_shown: boolean;
   };

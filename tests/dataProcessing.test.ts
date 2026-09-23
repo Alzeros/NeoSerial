@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import * as dataProcessing from '../src/lib/dataProcessing.ts';
 import {
   defaultFrameBuilderTool,
   defaultFrameConfig,
@@ -156,4 +157,25 @@ test('迁移不替换非法旧整帧配置,保留原值供构帧校验报错', (
     assert.equal(modules[1].tools[0].config.data.length, 1);
     assert.equal(modules[1].tools[0].config.data.length_basis, 'whole_frame');
   }
+});
+
+test('数据来源候选始终保留手动输入并过滤隐藏的填充模式', () => {
+  const visible = dataProcessing.visibleDataSourceOptions(
+    ['random_bytes'],
+    'random_bytes',
+  );
+
+  assert.deepEqual(
+    visible.options.map((option: { value: string }) => option.value),
+    ['random_text', 'content', 'zeros', 'ff', 'increment', 'custom_loop'],
+  );
+  assert.equal(visible.currentLabel, '随机字节（已隐藏）');
+});
+
+test('校验候选始终保留无并过滤隐藏算法', () => {
+  const visible = dataProcessing.visibleChecksumOptions(['crc32'], 'crc32');
+
+  assert.equal(visible.options[0].value, 'none');
+  assert.ok(!visible.options.some((option: { value: string }) => option.value === 'crc32'));
+  assert.equal(visible.currentLabel, 'CRC32（已隐藏）');
 });

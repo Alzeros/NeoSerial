@@ -12,10 +12,12 @@
     normalizeFrameConfig,
     resolveFrameSectionState,
     defaultRandomTextSpec,
+    visibleDataSourceOptions,
+    visibleChecksumOptions,
     type FrameBuilderTool,
     type DataSpec,
   } from '$lib/dataProcessing';
-  import { connected, windowPort, hexSend, requestSuggestFill } from '$lib/stores';
+  import { connected, windowPort, hexSend, requestSuggestFill, cachedSettings } from '$lib/stores';
 
   let { tool }: { tool: FrameBuilderTool } = $props();
 
@@ -38,25 +40,14 @@
     { label: 'Hex', value: 'hex' },
     { label: '文本', value: 'text' },
   ];
-  const sourceOpts = [
-    { label: '随机字符', value: 'random_text' },
-    { label: '随机字节', value: 'random_bytes' },
-    { label: '手动输入', value: 'content' },
-    { label: '全 00', value: 'zeros' },
-    { label: '全 FF', value: 'ff' },
-    { label: '递增', value: 'increment' },
-    { label: '自定义循环', value: 'custom_loop' },
-  ];
-  const algoOpts = [
-    { label: '无', value: 'none' },
-    { label: 'CRC16 Modbus', value: 'crc16_modbus' },
-    { label: 'CRC16 CCITT-FALSE', value: 'crc16_ccitt_false' },
-    { label: 'CRC16 XModem', value: 'crc16_xmodem' },
-    { label: 'CRC16 ARC', value: 'crc16_arc' },
-    { label: 'CRC32', value: 'crc32' },
-    { label: 'SUM8', value: 'sum8' },
-    { label: 'XOR8', value: 'xor8' },
-  ];
+  const sourceChoices = $derived.by(() => visibleDataSourceOptions(
+    cachedSettings.value?.ui?.hidden_data_fill_patterns ?? [],
+    tool.config.data.mode === 'content' ? 'content' : tool.config.data.pattern,
+  ));
+  const checksumChoices = $derived.by(() => visibleChecksumOptions(
+    cachedSettings.value?.ui?.hidden_checksum_algorithms ?? [],
+    tool.config.checksum.algo,
+  ));
 
   // 兼容当前内存中的旧配置和后续模板切换，迁移函数可重复调用。
   $effect(() => {
@@ -396,7 +387,12 @@
       <div class="grid grid-cols-2 gap-3">
         <div class="min-w-0 space-y-1.5">
           <div class="text-[12px] text-[var(--muted-foreground)]">生成方式</div>
-          <CustomSelect bind:value={sourceB.get, sourceB.set} options={sourceOpts} width="100%" />
+          <CustomSelect
+            bind:value={sourceB.get, sourceB.set}
+            options={sourceChoices.options}
+            selectedFallbackLabel={sourceChoices.currentLabel}
+            width="100%"
+          />
         </div>
         {#if tool.config.data.mode === 'fill'}
           <label class="min-w-0 space-y-1.5">
@@ -463,7 +459,12 @@
       <section class="rounded-md border border-[var(--border)] bg-[var(--background-elevated)] p-3 space-y-2 relative z-20">
         <div class="text-[12px] font-medium text-[var(--muted-foreground)]">校验</div>
         <div class="flex flex-wrap items-center gap-2">
-          <CustomSelect bind:value={ckAlgoB.get, ckAlgoB.set} options={algoOpts} width="170px" />
+          <CustomSelect
+            bind:value={ckAlgoB.get, ckAlgoB.set}
+            options={checksumChoices.options}
+            selectedFallbackLabel={checksumChoices.currentLabel}
+            width="170px"
+          />
           <CustomSelect
             bind:value={ckEndianB.get, ckEndianB.set}
             options={endianOpts}
