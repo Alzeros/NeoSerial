@@ -532,11 +532,11 @@
   <div class="border-t border-[var(--border)] px-4 py-2.5 relative z-0 {expanded && preview ? 'hidden' : ''}" style="background: var(--background-deep);">
     <div class="mb-1 flex items-center gap-2">
       <button
-        class="btn btn-primary h-7 px-3 leading-none text-[12px]"
+        class="btn btn-primary generate-button"
         disabled={building}
         title="按当前设置生成一帧(随机模式每次生成新样本)"
         onclick={() => doBuild()}
-      >{building ? '生成中…' : '生成'}</button>
+      ><span>{building ? '生成中…' : '生成'}</span></button>
       {#if isStale}
         <span class="text-[12px] text-[var(--warning)]">已过期 · 配置已改,请重新生成</span>
       {:else if sending}
@@ -678,6 +678,17 @@
 </div>
 
 <style>
+  .generate-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    width: 96px;
+    height: 36px;
+    padding: 0 16px;
+    font-size: 14px;
+    line-height: 20px;
+  }
   .data-input {
     width: 100%;
     min-width: 0;
