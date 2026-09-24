@@ -30,8 +30,9 @@
   function getStopBitsStr() { return String(connectionParams.stopBits); }
   function setStopBitsStr(v: string) { connectionParams.stopBits = v === '2' ? 2 : 1; }
 
-  // CustomSelect 需要 {label, value} 格式的选项
-  const portOptions = $derived(availablePorts.value.map((p) => ({ label: p, value: p })));
+  // CustomSelect 需要 {label, value} 格式的选项;tip = 设备名,下拉里 hover 选项时弹出,
+  // 选项本身仍只显示 COM 号,显示结构不变。
+  const portOptions = $derived(availablePorts.value.map((p) => ({ label: p.port, value: p.port, tip: p.device })));
   const baudOptions = $derived(baudRates.map((b) => ({ label: b, value: b })));
   const dataBitOptions = $derived(dataBitsOpts.map((o) => ({ label: o.l, value: o.v })));
   const parityOptions = $derived(parityOpts.map((o) => ({ label: o.l, value: o.v })));
@@ -50,8 +51,8 @@
       availablePorts.value = ports;
       // 默认显示一个端口:优先保持当前选的(上次连的 last_port),不在可用列表则取第一个
       if (ports.length > 0) {
-        if (!connectionParams.port || !ports.includes(connectionParams.port)) {
-          connectionParams.port = ports[0]!;
+        if (!connectionParams.port || !ports.some((p) => p.port === connectionParams.port)) {
+          connectionParams.port = ports[0]!.port;
         }
       }
     } catch (e) {

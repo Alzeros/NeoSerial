@@ -11,6 +11,7 @@ import type {
   ConnectionState,
   ErrorEvent,
   LogLine,
+  PortEntry,
   RxUpdate,
   ScriptCommand,
   ScriptModule,
@@ -41,8 +42,9 @@ export async function disconnect(port: string): Promise<void> {
   await invoke('disconnect', { port });
 }
 
-export async function listPorts(): Promise<string[]> {
-  return await invoke<string[]>('list_ports');
+/** 列可用串口:端口号 + 设备名(可空)。设备名供端口下拉 hover 提示。 */
+export async function listPorts(): Promise<PortEntry[]> {
+  return await invoke<PortEntry[]>('list_ports');
 }
 
 export async function resetStats(port: string): Promise<void> {

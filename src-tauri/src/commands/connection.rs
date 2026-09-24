@@ -327,15 +327,52 @@ pub fn disconnect_port(state: &AppState, app_handle: &tauri::AppHandle, port: &s
     Ok(())
 }
 
-/// 内部:列出可用串口名。供 Tauri command 和 MCP 工具共用。
-pub fn list_ports_inner() -> Vec<String> {
+/// 一条可用串口:端口号 + 设备名(设备名没有时为 None)。设备名取设备管理器
+/// 同款的友好名:Windows 上由 util::port_names 的 SetupAPI 枚举提供
+/// (SPDRP_FRIENDLYNAME,如 "USB-SERIAL CH340 (COM3)"),serialport 自身只对
+/// USB 设备填名字(product 字段),SetupAPI 没拿到时退回它。
+#[derive(serde::Serialize, Clone)]
+pub struct PortEntry {
+    pub port: String,
+    pub device: Option<String>,
+}
+
+/// serialport 自带信息的兜底提取:USB 设备在 Windows 上 product 即友好名,
+/// 为空退回 manufacturer;非 USB / 未知类型没有可展示的名字。
+fn device_name(port_type: &serialport::SerialPortType) -> Option<String> {
+    let non_empty = |s: &Option<String>| s.as_ref().map(|s| s.trim()).filter(|s| !s.is_empty()).map(str::to_string);
+    match port_type {
+        serialport::SerialPortType::UsbPort(usb) => {
+            non_empty(&usb.product).or_else(|| non_empty(&usb.manufacturer))
+        }
+        _ => None,
+    }
+}
+
+/// 内部:列出可用串口(端口号 + 设备名)。供 Tauri command 和 MCP 工具共用。
+pub fn list_ports_inner() -> Vec<PortEntry> {
+    // 端口集合以 serialport 为准(它还处理注册表兜底枚举);设备名优先取
+    // SetupAPI 友好名(覆盖所有设备类型,包括主板串口/蓝牙/虚拟串口),
+    // 取不到再退回 serialport 的 USB 信息。
+    let friendly_names = crate::util::port_names::friendly_names_by_port();
     serialport::available_ports()
-        .map(|ports| ports.into_iter().map(|p| p.port_name).collect())
+        .map(|ports| {
+            ports
+                .into_iter()
+                .map(|p| PortEntry {
+                    device: friendly_names
+                        .get(&p.port_name)
+                        .cloned()
+                        .or_else(|| device_name(&p.port_type)),
+                    port: p.port_name,
+                })
+                .collect()
+        })
         .unwrap_or_default()
 }
 
 #[tauri::command]
-pub async fn list_ports() -> Result<Vec<String>, String> {
+pub async fn list_ports() -> Result<Vec<PortEntry>, String> {
     // available_ports 在 Windows 走 SetupAPI/注册表枚举(可卡几十~几百 ms),
     // 不放主线程。
     let ports = tauri::async_runtime::spawn_blocking(list_ports_inner)
@@ -695,5 +732,54 @@ mod tests {
         // (确认僵尸分支靠 running 判定,不与 mcp 接管分支混淆)
         let h = mock_zombie_handle("COM3");
         assert!(!existing_label_is_mcp(&h));
+    }
+
+    // ===== 设备名提取(端口下拉 hover 提示的数据源)=====
+    // Windows 上 serialport 把 SPDRP_FRIENDLYNAME 填进 UsbPortInfo.product,
+    // SPDRP_MFG 填进 manufacturer;非 USB / 未知类型没有可展示名字。
+    fn usb_info(product: Option<&str>, manufacturer: Option<&str>) -> serialport::SerialPortType {
+        serialport::SerialPortType::UsbPort(serialport::UsbPortInfo {
+            vid: 0x1A86,
+            pid: 0x7523,
+            serial_number: None,
+            manufacturer: manufacturer.map(str::to_string),
+            product: product.map(str::to_string),
+        })
+    }
+
+    #[test]
+    fn test_device_name_prefers_usb_friendly_name() {
+        // CH340 类设备:product 是 "USB-SERIAL CH340 (COM3)"
+        assert_eq!(
+            device_name(&usb_info(Some("USB-SERIAL CH340 (COM3)"), Some("wch.cn"))),
+            Some("USB-SERIAL CH340 (COM3)".to_string())
+        );
+    }
+
+    #[test]
+    fn test_device_name_falls_back_to_manufacturer_when_product_empty() {
+        assert_eq!(
+            device_name(&usb_info(Some("  "), Some("FTDI"))),
+            Some("FTDI".to_string())
+        );
+    }
+
+    #[test]
+    fn test_device_name_none_for_unknown_port_type() {
+        // 注册表枚举出的未知类型端口没有设备名,hover 不显示提示
+        assert_eq!(device_name(&serialport::SerialPortType::Unknown), None);
+        assert_eq!(device_name(&serialport::SerialPortType::PciPort), None);
+        assert_eq!(device_name(&serialport::SerialPortType::BluetoothPort), None);
+    }
+
+    /// 手工诊断用:`cargo test --lib -- --ignored dump`:
+    /// 打印本机 list_ports_inner 的实际返回(端口 + 设备名)。用户反馈
+    /// "有的 COM 没名字"时,先跑这个看是 SetupAPI 没枚举到还是合并没接上。
+    #[test]
+    #[ignore]
+    fn dump_list_ports() {
+        for p in list_ports_inner() {
+            println!("  {} => {:?}", p.port, p.device);
+        }
     }
 }

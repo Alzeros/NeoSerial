@@ -1,11 +1,12 @@
-import { defaultScriptCommand, defaultScriptPage, presetScriptModules, type LogLine, type QuickCommandsModule, type ScriptPage, type Settings } from './types';
+import { defaultScriptCommand, defaultScriptPage, presetScriptModules, type LogLine, type PortEntry, type QuickCommandsModule, type ScriptPage, type Settings } from './types';
 import { isQuickCommandsModule } from './dataProcessing';
 import { computeCustomVars, defaultCustomTheme, isCustomDark, normalizeCustomTheme } from './customTheme';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
 export const currentPort = $state<{ value: string | null }>({ value: null });
-export const availablePorts = $state<{ value: string[] }>({ value: [] });
+/** 当前串口下拉的选项(端口号 + 设备名)。设备名可空,前端 hover 提示。 */
+export const availablePorts = $state<{ value: PortEntry[] }>({ value: [] });
 /** agent 连了但还没 GUI 窗口接管的端口(window_label 仍是 mcp- 前缀)。
  *  供 main 窗口 + 号旁渲染快捷 chip:点击 = 开窗口并接管该连接。 */
 export const mcpOnlyConnections = $state<{ value: { port: string; baud: number }[] }>({ value: [] });

@@ -64,6 +64,13 @@ export interface WindowConnState {
 
 export type Parity = 'None' | 'Odd' | 'Even';
 export type DataBits = 'Five' | 'Six' | 'Seven' | 'Eight';
+/** 一条可用串口:list_ports 命令的返回元素。
+ *  device 为设备名(Windows 上是 SetupAPI 的设备友好名,如 "USB-SERIAL CH340 (COM3)"),
+ *  非 USB / 未知类型的端口没有名字(null),界面 hover 不显示提示。 */
+export interface PortEntry {
+  port: string;
+  device: string | null;
+}
 /** connect 命令的 stopBits 参数：后端 u8（1|2）。 */
 export type StopBits = 1 | 2;
 /** settings.json 里 serial_defaults.stop_bits 的形态：后端 StopBits 枚举 serde PascalCase。

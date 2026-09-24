@@ -1,4 +1,6 @@
 <script lang="ts">
+  /** 选项:label = 触发按钮与菜单显示,value = 绑定值,tip = hover 提示(可空,如设备名)。 */
+  type SelectOption = { label: string; value: string; tip?: string | null };
   let {
     value = $bindable(''),
     options,
@@ -9,7 +11,7 @@
     onAddOption,
   }: {
     value?: string;
-    options: { label: string; value: string }[];
+    options: SelectOption[];
     width?: string;
     disabled?: boolean;
     emptyLabel?: string;
@@ -33,27 +35,63 @@
     options.findIndex((o) => o.value === value),
   );
 
-  function toggleOpen() {
-    if (disabled) return;
-    open = !open;
-    if (open) {
-      highlightIndex = selectedIndex >= 0 ? selectedIndex : 0;
-      // 计算 fixed 定位:突破父容器 overflow 裁剪
-      const rect = triggerEl.getBoundingClientRect();
-      fixedPos = { left: rect.left, top: rect.bottom + 4, width: rect.width };
-    } else {
-      fixedPos = null;
-    }
+  // 选项 hover 提示:fixed 定在选项右侧,空间不足时翻到左侧。菜单容器
+  // overflow-y-auto,提示必须渲染在菜单元素之外,否则会被裁掉;故这里独立渲染,
+  // 生命周期跟着 open/fixedPos 走。
+  const TIP_MAX_W = 240;
+  let tip = $state<{ text: string; left: number; top: number; maxW: number } | null>(null);
+
+  function showOptionTip(e: MouseEvent & { currentTarget: EventTarget & HTMLElement }, text: string) {
+    const r = e.currentTarget.getBoundingClientRect();
+    const gap = 8;
+    const rightSpace = window.innerWidth - r.right - gap;
+    const leftSpace = r.left - gap;
+    // 默认放右侧;两侧都放不下整条提示时,选空间大的一侧并按该侧空间动态收窄
+    // max-width(文字自动换行),保证既不裁切也不挡住菜单。
+    const side = rightSpace >= leftSpace ? 'right' : 'left';
+    const space = side === 'right' ? rightSpace : leftSpace;
+    const maxW = Math.max(80, Math.min(TIP_MAX_W, space));
+    const left = side === 'right'
+      ? r.right + gap
+      : Math.max(4, r.left - gap - maxW);
+    // 顶出视口上沿时贴住,底部留出约一行提示的高度
+    const top = Math.max(4, Math.min(r.top, window.innerHeight - 72));
+    tip = { text, left, top, maxW };
   }
 
-  function selectOption(opt: { label: string; value: string }) {
-    value = opt.value;
+  function hideOptionTip() {
+    tip = null;
+  }
+
+  // 所有关闭入口同步清理提示，避免下次展开时恢复上次悬停的设备名。
+  function closeMenu() {
     open = false;
+    fixedPos = null;
+    hideOptionTip();
+  }
+
+  function toggleOpen() {
+    if (disabled) return;
+    if (open) {
+      closeMenu();
+      return;
+    }
+    hideOptionTip();
+    open = true;
+    highlightIndex = selectedIndex >= 0 ? selectedIndex : 0;
+    // 计算 fixed 定位:突破父容器 overflow 裁剪
+    const rect = triggerEl.getBoundingClientRect();
+    fixedPos = { left: rect.left, top: rect.bottom + 4, width: rect.width };
+  }
+
+  function selectOption(opt: SelectOption) {
+    value = opt.value;
+    closeMenu();
   }
 
   // 选项是 div,不算交互元素:组件若放在 <label> 里(连接栏就是),点选项后 label 的默认行为
   // 会再给触发按钮补一次合成 click,把刚关掉的列表重新打开。preventDefault 取消这个默认行为。
-  function handleOptionClick(e: MouseEvent, opt: { label: string; value: string }) {
+  function handleOptionClick(e: MouseEvent, opt: SelectOption) {
     e.preventDefault();
     selectOption(opt);
   }
@@ -61,7 +99,7 @@
   function handleAddClick(e: MouseEvent) {
     e.preventDefault();
     onAddOption?.();
-    open = false;
+    closeMenu();
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -76,34 +114,36 @@
     switch (e.key) {
       case 'ArrowDown':
         e.preventDefault();
+        hideOptionTip();
         highlightIndex = Math.min(highlightIndex + 1, onAddOption ? options.length : options.length - 1);
         break;
       case 'ArrowUp':
         e.preventDefault();
+        hideOptionTip();
         highlightIndex = Math.max(highlightIndex - 1, 0);
         break;
       case 'Enter':
         e.preventDefault();
         if (highlightIndex === options.length && onAddOption) {
           onAddOption();
-          open = false;
+          closeMenu();
         } else if (highlightIndex >= 0 && highlightIndex < options.length) {
           selectOption(options[highlightIndex]);
         }
         break;
       case 'Escape':
         e.preventDefault();
-        open = false;
+        closeMenu();
         break;
       case 'Tab':
-        open = false;
+        closeMenu();
         break;
     }
   }
 
   function handleClickOutside(e: MouseEvent) {
     if (container && !container.contains(e.target as Node)) {
-      open = false;
+      closeMenu();
     }
   }
 
@@ -112,9 +152,10 @@
       document.addEventListener('mousedown', handleClickOutside);
       // fixed 定位不随外层滚动；菜单自身的滚动不能触发关闭。
       const closeOnScroll = (event: Event) => {
+        // 菜单内滚动只隐藏提示，保留菜单；外层滚动则关闭整个菜单。
+        hideOptionTip();
         if (event.target instanceof Node && menuEl?.contains(event.target)) return;
-        open = false;
-        fixedPos = null;
+        closeMenu();
       };
       window.addEventListener('scroll', closeOnScroll, true);
       return () => {
@@ -151,6 +192,16 @@
     </svg>
   </button>
 
+  {#if open && fixedPos && tip}
+    <div
+      class="custom-select-tip fixed z-[310] px-2.5 py-1.5 rounded-md text-[12px] leading-normal shadow-lg pointer-events-none"
+      style="left: {tip.left}px; top: {tip.top}px; max-width: {tip.maxW}px; white-space: normal; overflow-wrap: anywhere;
+        background: var(--background-elevated); color: var(--foreground); border: 1px solid var(--border); border-radius: var(--radius-sm); box-shadow: var(--shadow-lg);"
+    >
+      {tip.text}
+    </div>
+  {/if}
+
   {#if open && fixedPos}
     <div
       bind:this={menuEl}
@@ -171,7 +222,11 @@
               {i === highlightIndex ? 'background: var(--overlay-hover);' : ''}
               {opt.value === value ? 'color: var(--primary); font-weight: 600;' : 'color: var(--foreground);'}"
             onclick={(e) => handleOptionClick(e, opt)}
-            onmouseenter={() => (highlightIndex = i)}
+            onmouseenter={(e) => {
+              highlightIndex = i;
+              opt.tip ? showOptionTip(e, opt.tip) : hideOptionTip();
+            }}
+            onmouseleave={hideOptionTip}
           >
             {opt.label}
           </div>

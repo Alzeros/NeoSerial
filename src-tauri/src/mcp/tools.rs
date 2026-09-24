@@ -39,7 +39,12 @@ pub struct ListPortsResp {
 }
 
 pub fn list_ports(_shared: &McpShared) -> ListPortsResp {
-    let ports = crate::commands::connection::list_ports_inner();
+    // MCP 契约保持 Vec<String>(只给端口号):设备名是 GUI hover 提示用的信息,
+    // agent 按端口号 connect 即可,不掺进工具返回。
+    let ports = crate::commands::connection::list_ports_inner()
+        .into_iter()
+        .map(|p| p.port)
+        .collect();
     ListPortsResp { ok: true, ports }
 }
 

@@ -1,0 +1,14 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Port tooltip regression</title><body>
+<div id="app" style="margin:24px;width:100px"></div>
+<script type="module">
+import '/src/app.css';
+import {mount,tick} from 'svelte';
+import CustomSelect from '/src/components/ui/CustomSelect.svelte';
+mount(CustomSelect,{target:document.querySelector('#app'),props:{
+  value:'COM1',
+  options:Array.from({length:15},(_,i)=>({label:`COM${i+1}`,value:`COM${i+1}`,tip:i===14?null:`Device ${i+1}`})),
+  onAddOption:()=>{window.added=true;}
+}});
+await tick();
+window.ready=true;
+</script></body></html>
