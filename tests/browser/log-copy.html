@@ -1,0 +1,11 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Log copy regression</title><body><div id="app" style="width:700px;height:480px"></div>
+<script type="module">
+import '/src/app.css';
+import {mount,tick} from 'svelte';
+import LogView from '/src/components/LogView.svelte';
+import * as stores from '/src/lib/stores.svelte.ts';
+stores.showLineIndex.value=true;
+stores.appendLogLines(['OK','at','','+CFUN: 1','  spaced  '].map((ascii,i)=>({ascii,raw:Array.from(new TextEncoder().encode(ascii)),ts:'09:19:44.763',ts_ms:0,dir:i===1?'tx':'rx',line_index:i+3,is_error:false})));
+mount(LogView,{target:document.querySelector('#app')});
+window.logTest={stores,tick};
+</script></body></html>

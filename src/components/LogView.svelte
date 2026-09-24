@@ -2,6 +2,7 @@
   import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
   import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused } from '$lib/stores';
   import type { LogLine } from '$lib/types';
+  import { selectedLogText } from '$lib/logSelection';
 
   let scrollContainer: HTMLDivElement;
   // 同步给 App.svelte 用的容器引用（兜底 + 兼容旧调用）
@@ -143,9 +144,20 @@
   async function ctxCopy() {
     const sel = window.getSelection();
     if (sel) {
-      try { await navigator.clipboard.writeText(sel.toString()); } catch { /* 剪贴板不可用 */ }
+      const text = selectedLogText(scrollContainer, sel) ?? sel.toString();
+      try { await navigator.clipboard.writeText(text); } catch { /* 剪贴板不可用 */ }
     }
     closeCtxMenu();
+  }
+
+  function handleCopy(e: ClipboardEvent) {
+    const target = e.target;
+    if (target instanceof HTMLElement && target.closest('input, textarea, [contenteditable="true"]')) return;
+    if (!scrollContainer || !e.clipboardData) return;
+    const text = selectedLogText(scrollContainer, window.getSelection());
+    if (text === null) return;
+    e.clipboardData.setData('text/plain', text);
+    e.preventDefault();
   }
 
   function ctxClear() {
@@ -368,7 +380,7 @@
   }
 </script>
 
-<svelte:window on:keydown={handleGlobalKeydown} />
+<svelte:window on:keydown={handleGlobalKeydown} on:copy={handleCopy} />
 
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
 <div class="relative h-full overflow-hidden flex flex-col" data-theme-target="background-data" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
@@ -438,6 +450,7 @@
     {#each logLines as line, i (i)}
       <div
         data-idx={i}
+        data-log-row
         class="flex px-1 py-px {matchSet.has(i)
           ? (isCurrentMatch(i)
             ? 'bg-[rgba(196,138,46,0.18)]'
@@ -446,7 +459,7 @@
       >
         <!-- 行号(本次连接期间 index,最左列,等宽数字右对齐) -->
         {#if showLineIndex.value}
-          <div class="shrink-0 pr-2 mr-2 border-r border-[var(--border)] text-right tabular-nums text-[var(--muted-foreground)]" style="min-width: 3em;">
+          <div data-log-field class="shrink-0 pr-2 mr-2 border-r border-[var(--border)] text-right tabular-nums text-[var(--muted-foreground)]" style="min-width: 3em;">
             {line.line_index || ''}
           </div>
         {/if}
@@ -454,17 +467,17 @@
         {#if logSendContent.value || showTimestamp.value}
           <div class="flex items-baseline gap-2 shrink-0 pr-2 mr-2 border-r border-[var(--border)]">
             {#if logSendContent.value}
-              <span class="text-right font-bold {dirColor(line.dir)}">
+              <span data-log-field class="text-right font-bold {dirColor(line.dir)}">
                 {dirLabel(line.dir)}
               </span>
             {/if}
             {#if showTimestamp.value}
-              <span class="text-[var(--muted-foreground)] tabular-nums">{line.ts}</span>
+              <span data-log-field class="text-[var(--muted-foreground)] tabular-nums">{line.ts}</span>
             {/if}
           </div>
         {/if}
         <!-- 内容：搜索匹配时高亮关键词片段 -->
-        <span class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
+        <span data-log-field class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
           {#if searchQuery && matchSet.has(i) && searchMatcher}
             {#each highlightSegments(renderLine(line), searchMatcher.globalRe) as seg}
               {#if seg.match}
