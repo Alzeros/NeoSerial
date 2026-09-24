@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
+  import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { emit } from '@tauri-apps/api/event';
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
-  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
+  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
   import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS, DATA_TOOL_OPTIONS } from '$lib/dataProcessing';
@@ -16,7 +18,33 @@
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
 
+  let { standalone = false }: { standalone?: boolean } = $props();
   let open = $state(false);
+  const appWindow = getCurrentWindow();
+  let closingStandalone = false;
+
+  function emitPreview() {
+    if (!standalone) return;
+    emit('settings-preview', {
+      theme: editTheme,
+      custom: { ...editCustom },
+      log_font_size: editFontSize,
+      log_line_height: editLineHeight,
+      log_font_latin: editFontLatin,
+      log_font_cjk: editFontCJK,
+      log_dir_label: editDirLabel,
+      text_encoding: editTextEncoding,
+    });
+  }
+
+  async function closeWindow() {
+    if (!standalone) {
+      open = false;
+      return;
+    }
+    closingStandalone = true;
+    await appWindow.close();
+  }
 
   // 左侧导航：当前激活的设置项
   type Section = 'about' | 'general' | 'appearance' | 'extensions';
@@ -320,10 +348,42 @@
     }
   }
 
+  function showRequest(request: { section: string; ext_module: string | null; anchor: string | null }) {
+    show(
+      request.section as Section,
+      request.ext_module as 'suggest' | 'mcp' | 'quick' | 'data' | null,
+      request.anchor as 'baud' | null,
+    );
+  }
+
+  onMount(() => {
+    if (!standalone) return;
+    show();
+    let unlistenClose: (() => void) | null = null;
+    appWindow.onCloseRequested((event) => {
+      if (closingStandalone) return;
+      event.preventDefault();
+      handleCancel();
+    }).then((unlisten) => {
+      unlistenClose = unlisten;
+    });
+    const unlistenRequest = onSettingsOpenRequest(showRequest);
+    takePendingSettings()
+      .then((request) => {
+        if (request) showRequest(request);
+      })
+      .catch((e) => console.error('读取设置窗口打开请求失败:', e));
+    return () => {
+      unlistenRequest.then((unlisten) => unlisten());
+      unlistenClose?.();
+    };
+  });
+
   // 选中主题：即时预览（应用到 <html>），但不落盘；取消则恢复原值
   function selectTheme(value: string) {
     editTheme = value;
     applyTheme(value, editCustom);
+    emitPreview();
   }
 
   // 打开独立主题编辑器窗口（单例，已存在则聚焦）
@@ -337,7 +397,7 @@
     customTheme.value = { ...editCustom };
     applyTheme('custom', editCustom);
     // 关闭设置弹窗，避免两层叠加
-    open = false;
+    await closeWindow();
     try {
       await openThemeEditor();
     } catch (e) {
@@ -349,25 +409,35 @@
   function changeFontSize(v: number) {
     editFontSize = v;
     applyLogFont(v, editLineHeight, editFontLatin, editFontCJK);
+    emitPreview();
   }
   function changeLineHeight(v: number) {
     editLineHeight = v;
     applyLogFont(editFontSize, v, editFontLatin, editFontCJK);
+    emitPreview();
   }
   // 方向标签样式：即时预览
   function changeDirLabel(v: 'short' | 'full') {
     editDirLabel = v;
     logDirLabelStyle.value = v;
+    emitPreview();
   }
   // 英文字体：选预设即时预览
   function selectFontLatin(value: string) {
     editFontLatin = value;
     applyLogFont(editFontSize, editLineHeight, value, editFontCJK);
+    emitPreview();
   }
   // 中文字体：选预设即时预览
   function selectFontCJK(value: string) {
     editFontCJK = value;
     applyLogFont(editFontSize, editLineHeight, editFontLatin, value);
+    emitPreview();
+  }
+
+  function selectTextEncoding(value: 'ascii' | 'utf8' | 'gbk') {
+    editTextEncoding = value;
+    emitPreview();
   }
 
   function addBaud() {
@@ -551,7 +621,7 @@
 
   /** 保存:应用 + 关窗;保存失败留在对话框里让用户看到原因。 */
   async function handleSave() {
-    if (await applyEdits()) open = false;
+    if (await applyEdits()) await closeWindow();
   }
 
   // 一键复制 MCP 连接指令到剪贴板
@@ -818,7 +888,15 @@
     return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
   }
 
-  function handleCancel() {
+  async function handleMinimize() {
+    await appWindow.minimize();
+  }
+
+  async function handleToggleMaximize() {
+    await appWindow.toggleMaximize();
+  }
+
+  async function handleCancel() {
     // 取消：恢复打开前的主题与字体（撤销预览，含自定义色板改动）
     applyTheme(theme.value, customTheme.value);
     applyLogFont(logFontSize.value, logLineHeight.value, logFontLatin.value, logFontCJK.value);
@@ -826,7 +904,10 @@
     logFontLatin.value = origFontLatin;
     logFontCJK.value = origFontCJK;
     textEncoding.value = origTextEncoding;
-    open = false;
+    if (standalone) {
+      await emit('settings-preview', null);
+    }
+    await closeWindow();
   }
 </script>
 
@@ -837,26 +918,35 @@
 
 {#if open}
   <div
-    class="fixed inset-0 z-[100] flex items-center justify-center"
-    style="background: rgba(0,0,0,0.35);"
+    class={standalone ? 'flex h-screen w-screen overflow-hidden' : 'fixed inset-0 z-[100] flex items-center justify-center'}
+    style={standalone ? 'background: var(--background);' : 'background: rgba(0,0,0,0.35);'}
   >
     <div
-      class="rounded-lg shadow-xl w-[600px] border flex flex-col"
+      class={standalone ? 'h-full w-full border flex flex-col' : 'rounded-lg shadow-xl w-[600px] border flex flex-col'}
       style="background: var(--background-elevated); border-color: var(--border);"
       onclick={(e) => e.stopPropagation()}
     >
       <!-- 标题 + 关闭按钮 -->
-      <div class="flex items-center justify-between px-5 py-2 border-b border-[var(--border)]">
-        <div class="text-[15px] font-semibold text-[var(--foreground)]">设置</div>
-        <button
-          class="flex items-center justify-center w-6 h-6 -mr-1.5 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
-          onclick={handleCancel}
-          title="关闭 (Esc)"
-        ><X size={15} /></button>
+      <div class="flex items-center h-8 shrink-0 border-b border-[var(--border)]">
+        {#if standalone}
+          <div data-tauri-drag-region class="flex h-full flex-1 items-center px-3 text-[13px] font-medium text-[var(--muted-foreground)] select-none">设置</div>
+          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer" onclick={handleMinimize} title="最小化">−</button>
+          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer" onclick={handleToggleMaximize} title="最大化/还原">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" stroke-width="1" fill="none" rx="1" /></svg>
+          </button>
+          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--error)] hover:text-white cursor-pointer" onclick={handleCancel} title="关闭 (Esc)"><X size={14} /></button>
+        {:else}
+          <div class="flex-1 px-5 text-[15px] font-semibold text-[var(--foreground)]">设置</div>
+          <button
+            class="flex items-center justify-center w-6 h-6 mr-3 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+            onclick={handleCancel}
+            title="关闭 (Esc)"
+          ><X size={15} /></button>
+        {/if}
       </div>
 
       <!-- 左右分栏：左导航 + 右内容（固定高度，内容多时右栏独立滚动） -->
-      <div class="flex" style="height: 400px;">
+      <div class={standalone ? 'flex flex-1 min-h-0' : 'flex'} style={standalone ? undefined : 'height: 400px;'}>
         <!-- 左侧导航 -->
         <nav class="w-[120px] flex-shrink-0 border-r border-[var(--border)] py-2">
           {#each sections as s}
@@ -1062,7 +1152,7 @@
                         class="px-3 py-1 rounded-md border text-[13px] transition-colors {editTextEncoding === enc.v
                           ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
                           : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
-                        onclick={() => (editTextEncoding = enc.v as 'ascii' | 'utf8' | 'gbk')}
+                        onclick={() => selectTextEncoding(enc.v as 'ascii' | 'utf8' | 'gbk')}
                       >{enc.l}</button>
                     {/each}
                   </div>

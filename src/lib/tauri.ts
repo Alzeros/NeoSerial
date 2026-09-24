@@ -64,6 +64,26 @@ export async function openThemeEditor(): Promise<void> {
   await invoke('open_theme_editor');
 }
 
+export interface SettingsOpenRequest {
+  section: string;
+  ext_module: 'suggest' | 'mcp' | 'quick' | 'data' | null;
+  anchor: 'baud' | null;
+}
+
+export async function openSettingsWindow(
+  request: Partial<SettingsOpenRequest> = {},
+): Promise<void> {
+  await invoke('open_settings_window', {
+    section: request.section ?? null,
+    ext_module: request.ext_module ?? null,
+    anchor: request.anchor ?? null,
+  });
+}
+
+export async function takePendingSettings(): Promise<SettingsOpenRequest | null> {
+  return await invoke<SettingsOpenRequest | null>('take_pending_settings');
+}
+
 /** 窗口 onMount 调:查归属本窗口的连接状态(dev 重载后恢复 UI 用)。 */
 export async function getWindowConnState(): Promise<WindowConnState> {
   return await invoke<WindowConnState>('get_window_conn_state');
@@ -433,6 +453,25 @@ export interface ThemeHighlightEvent {
 }
 export function onThemeHighlight(cb: (e: ThemeHighlightEvent) => void) {
   return getCurrentWebview().listen<ThemeHighlightEvent>('theme-highlight', (e) => cb(e.payload));
+}
+
+export interface SettingsPreviewEvent {
+  theme: string;
+  custom: Record<string, string>;
+  log_font_size: number;
+  log_line_height: number;
+  log_font_latin: string;
+  log_font_cjk: string;
+  log_dir_label: 'short' | 'full';
+  text_encoding: 'ascii' | 'utf8' | 'gbk';
+}
+
+export function onSettingsPreview(cb: (e: SettingsPreviewEvent | null) => void) {
+  return getCurrentWebview().listen<SettingsPreviewEvent | null>('settings-preview', (e) => cb(e.payload));
+}
+
+export function onSettingsOpenRequest(cb: (e: SettingsOpenRequest) => void) {
+  return getCurrentWebview().listen<SettingsOpenRequest>('settings-open-request', (e) => cb(e.payload));
 }
 
 /** sequence-changed 事件:其他窗口改了快捷指令,本窗口收到后 reload 同步。

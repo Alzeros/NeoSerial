@@ -53,7 +53,10 @@ export function takeSequencePreload(): Promise<string | null> | null {
  *  到内容就位那一秒无感。
  *  主题编辑器窗口不预取:它自己加载设置并强制切到 custom 主题,先套一遍保存的主题反而多闪一次。 */
 export async function preloadBeforeMount(): Promise<void> {
-  if (getCurrentWebview().label === 'theme-editor') return;
-  const loads = Promise.all([loadSettingsOnce(), loadSequenceOnce()]);
+  const label = getCurrentWebview().label;
+  if (label === 'theme-editor') return;
+  const loads = label === 'settings'
+    ? loadSettingsOnce()
+    : Promise.all([loadSettingsOnce(), loadSequenceOnce()]);
   await Promise.race([loads, new Promise((resolve) => setTimeout(resolve, PRELOAD_TIMEOUT_MS))]);
 }

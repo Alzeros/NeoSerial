@@ -10,7 +10,7 @@ mod tray;
 mod util;
 mod window_sizing;
 
-use tauri::{Emitter, Manager};
+use tauri::{Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor, get_modem_status};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, patch_settings, save_commands, export_theme_file, import_theme_file, data_dirs, open_data_dir};
@@ -20,11 +20,88 @@ use commands::command_index::{command_index_refresh, command_index_refresh_doc, 
 use commands::mcp_log::{get_mcp_call_log, clear_mcp_call_log};
 use commands::data_processing::build_frame;
 
-use state::AppState;
+use state::{AppState, SettingsOpenRequest};
+
+const SETTINGS_WINDOW_LABEL: &str = "settings";
+const SETTINGS_MIN_WIDTH: f64 = 680.0;
+const SETTINGS_MIN_HEIGHT: f64 = 500.0;
 
 #[tauri::command]
 fn greet(name: &str) -> String {
     format!("Hello, {}! You've been greeted from Rust!", name)
+}
+
+/// 打开设置独立窗口。固定 label 保证设置页只存在一个实例；窗口尚未加载时
+/// 将跳转位置暂存，设置页挂载后主动取走，避免 IPC 事件竞态。
+#[tauri::command]
+async fn open_settings_window(
+    app_handle: tauri::AppHandle,
+    webview_window: tauri::WebviewWindow,
+    section: Option<String>,
+    ext_module: Option<String>,
+    anchor: Option<String>,
+) -> Result<(), String> {
+    let request = SettingsOpenRequest {
+        section: section.unwrap_or_else(|| "about".to_string()),
+        ext_module,
+        anchor,
+    };
+    if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        window.show().map_err(|e| e.to_string())?;
+        window.set_focus().map_err(|e| e.to_string())?;
+        window
+            .emit("settings-open-request", request)
+            .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let state = app_handle
+        .try_state::<AppState>()
+        .ok_or("无法访问应用状态")?;
+    *state.pending_settings.lock().map_err(|e| e.to_string())? = Some(request);
+
+    // 设置窗口首次打开时放在调用窗口正中间。这里使用物理像素计算，
+    // 适配 Windows 不同缩放比例的显示器；创建后再 set_position，避免系统随机放置。
+    let centered_position = match (
+        webview_window.outer_position(),
+        webview_window.outer_size(),
+        webview_window.scale_factor(),
+    ) {
+        (Ok(origin), Ok(size), Ok(scale)) => Some(PhysicalPosition::new(
+            origin.x + ((size.width as f64 - SETTINGS_MIN_WIDTH * scale) / 2.0).round() as i32,
+            origin.y + ((size.height as f64 - SETTINGS_MIN_HEIGHT * scale) / 2.0).round() as i32,
+        )),
+        _ => None,
+    };
+
+    let window = WebviewWindowBuilder::new(
+        &app_handle,
+        SETTINGS_WINDOW_LABEL,
+        WebviewUrl::App("index.html".into()),
+    )
+    .title("设置")
+    .inner_size(SETTINGS_MIN_WIDTH, SETTINGS_MIN_HEIGHT)
+    .min_inner_size(SETTINGS_MIN_WIDTH, SETTINGS_MIN_HEIGHT)
+    .decorations(false)
+    .resizable(true)
+    .build()
+    .map_err(|e| format!("创建设置窗口失败: {}", e))?;
+    if let Some(position) = centered_position {
+        let _ = window.set_position(position);
+    }
+    Ok(())
+}
+
+/// 设置窗口挂载后取走一次性跳转请求。
+#[tauri::command]
+fn take_pending_settings(
+    state: tauri::State<'_, AppState>,
+) -> Result<Option<SettingsOpenRequest>, String> {
+    state
+        .pending_settings
+        .lock()
+        .map_err(|e| e.to_string())
+        .map(|mut request| request.take())
 }
 
 /// 用系统默认浏览器打开 URL(关于页 GitHub 链接)。
@@ -296,6 +373,8 @@ pub fn run() {
             get_mcp_only_connections,
             get_modem_status,
             take_pending_takeover,
+            open_settings_window,
+            take_pending_settings,
             exit_app,
             resolve_last_close,
             send,

@@ -3,8 +3,7 @@
   import { onMount } from 'svelte';
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
   import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
-  import { openPortWindow, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
-  import SettingsDialog from '$components/SettingsDialog.svelte';
+  import { openPortWindow, openSettingsWindow, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
 
   const appWindow = getCurrentWindow();
   // 窗口一律平等(没有"主窗口"):标题只按本窗口的连接显示
@@ -13,7 +12,6 @@
   );
 
   let alwaysOnTop = $state<{ value: boolean }>({ value: false });
-  let settingsDialog: SettingsDialog;
 
   async function handleMinimize() {
     await appWindow.minimize();
@@ -39,8 +37,12 @@
   }
 
   // 点击设置按钮：直接打开设置面板（默认停在"关于"页）
-  function handleOpenSettings() {
-    settingsDialog?.show();
+  async function handleOpenSettings() {
+    try {
+      await openSettingsWindow();
+    } catch (e) {
+      console.error('打开设置窗口失败:', e);
+    }
   }
 
   // 新窗口按钮:开一个完整串口界面的复制品(空白,用户进去自己选端口连接)。
@@ -103,7 +105,9 @@
     if (section) {
       const extMod = settingsRequest.extModule;
       const anchor = settingsRequest.anchor;
-      settingsDialog?.show(section as 'about' | 'general' | 'appearance' | 'extensions', extMod, anchor);
+      openSettingsWindow({ section, ext_module: extMod, anchor }).catch((e) => {
+        console.error('打开设置窗口失败:', e);
+      });
       settingsRequest.section = null;
       settingsRequest.extModule = null;
       settingsRequest.anchor = null;
@@ -251,5 +255,3 @@
     </svg>
   </button>
 </div>
-
-<SettingsDialog bind:this={settingsDialog} />

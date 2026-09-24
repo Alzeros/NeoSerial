@@ -8,6 +8,7 @@
   import StatusBar from '$components/StatusBar.svelte';
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
   import ThemeEditor from '$components/ThemeEditor.svelte';
+  import SettingsDialog from '$components/SettingsDialog.svelte';
   import {
     appendLogLines,
     insertLogLines,
@@ -24,6 +25,9 @@
     theme,
     customTheme,
     applyTheme,
+    applyLogFont,
+    logDirLabelStyle,
+    textEncoding,
     rxBytes,
     scriptPanelOpen,
     scriptPanelWidth,
@@ -61,6 +65,7 @@
     onThemeChanged,
     onThemePreview,
     onThemeHighlight,
+    onSettingsPreview,
   } from '$lib/tauri';
   import { connect as connectPort } from '$lib/tauri';
 
@@ -105,7 +110,9 @@
   }
 
   // 主题编辑器窗口(label=theme-editor)只渲染 ThemeEditor,不跑串口逻辑
-  const isThemeEditorWindow = getCurrentWebview().label === 'theme-editor';
+  const currentWindowLabel = getCurrentWebview().label;
+  const isThemeEditorWindow = currentWindowLabel === 'theme-editor';
+  const isSettingsWindow = currentWindowLabel === 'settings';
 
   // ============ 主界面开关的持久化 ============
   // 主界面上直接拨的开关(HEX 显示/时间戳/行号/回车换行/记录发送)改了就回写,防抖 200ms:
@@ -134,7 +141,7 @@
   let toggleFlushTimer: ReturnType<typeof setTimeout> | null = null;
 
   $effect(() => {
-    if (isThemeEditorWindow) return;
+    if (isThemeEditorWindow || isSettingsWindow) return;
     const now = ownedToggles();
     // 只依赖开关 store 本身:cachedSettings 变(别的窗口保存)不该触发回写,不然两个窗口来回覆盖
     untrack(() => {
@@ -354,6 +361,20 @@
           .catch((e) => console.error('重载主题失败:', e));
       }
     });
+    // 设置窗口的即时预览：改动只作用于当前界面，不写入持久化设置；
+    // 取消/关闭时收到 null，再从后端恢复已保存值。
+    const unlistenSettingsPreview = onSettingsPreview((data) => {
+      if (data) {
+        applyTheme(data.theme, data.custom);
+        applyLogFont(data.log_font_size, data.log_line_height, data.log_font_latin, data.log_font_cjk);
+        logDirLabelStyle.value = data.log_dir_label;
+        textEncoding.value = data.text_encoding;
+      } else {
+        getSettings()
+          .then((s) => applySharedSettings(s))
+          .catch((e) => console.error('恢复设置预览失败:', e));
+      }
+    });
     // 主题编辑器悬停高亮：主窗口给用到该色的元素加虚线框
     const unlistenHighlight = onThemeHighlight((data) => {
       if (data.field) {
@@ -398,6 +419,7 @@
       unlistenTheme.then((f) => f());
       unlistenPreview.then((f) => f());
       unlistenHighlight.then((f) => f());
+      unlistenSettingsPreview.then((f) => f());
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
       window.removeEventListener('resize', handleResize);
@@ -528,6 +550,7 @@
    *     tabindex="-1",点一下即可聚焦)→ 只选那一块;
    *   - 焦点不在任何可选块(刚启动、点在空白处)→ 清掉选区,什么都不选。 */
   function handleSelectAll(e: KeyboardEvent) {
+    if (isThemeEditorWindow || isSettingsWindow) return;
     if (!(e.ctrlKey || e.metaKey) || (e.key !== 'a' && e.key !== 'A')) return;
     const t = e.target as HTMLElement | null;
     if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
@@ -560,6 +583,8 @@
 
 {#if isThemeEditorWindow}
   <ThemeEditor />
+{:else if isSettingsWindow}
+  <SettingsDialog standalone={true} />
 {:else}
 {#if showModeNotification.value && connectionMode.mode === 'shared'}
   <div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-md text-[13px] font-medium shadow-lg flex items-center gap-2"

@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capabilities for NeoSerial (main + 多窗口 win-*)",
-  "windows": ["main", "win-*", "theme-editor"],
+  "description": "Default capabilities for NeoSerial (main + 多窗口 win-* + theme/settings)",
+  "windows": ["main", "win-*", "theme-editor", "settings"],
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",

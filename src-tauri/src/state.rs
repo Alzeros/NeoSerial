@@ -9,6 +9,13 @@ use crate::logging::file_logger::FileLogger;
 use crate::mcp::call_log::McpCallLog;
 use crate::mcp::registry::RegistryHandle;
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub struct SettingsOpenRequest {
+    pub section: String,
+    pub ext_module: Option<String>,
+    pub anchor: Option<String>,
+}
+
 /// 应用全局状态。
 pub struct AppState {
     /// 多连接句柄表:port → ConnectionHandle。Arc<Mutex<>> 是为与 MCP handler 共享**同一**连接状态
@@ -40,6 +47,7 @@ pub struct AppState {
     /// 新窗口 onMount 调 take_pending_takeover 取走后自动 connect 接管。
     /// 用 pending 而非 emit 事件:窗口 JS 加载有先后,事件可能早于监听注册丢失。
     pub pending_takeover: Mutex<std::collections::HashMap<String, (String, u32)>>,
+    pub pending_settings: Mutex<Option<SettingsOpenRequest>>,
     #[allow(dead_code)]
     pub handle: AppHandle,
 }
@@ -58,6 +66,7 @@ impl AppState {
             registry: None,
             call_log: Arc::new(Mutex::new(McpCallLog::new())),
             pending_takeover: Mutex::new(std::collections::HashMap::new()),
+            pending_settings: Mutex::new(None),
             handle,
         }
     }
