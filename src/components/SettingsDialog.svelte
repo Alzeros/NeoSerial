@@ -10,6 +10,7 @@
   import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
   import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS, DATA_TOOL_OPTIONS } from '$lib/dataProcessing';
+  import { CODEC_ENCODINGS, CODEC_OPERATIONS, codecDefaultEncoding, codecEncodingLabel, isFixedCodecOperation, type CodecEncoding } from '$lib/codec';
   import { SMS_ENCODING_OPTIONS, SMS_VALIDITY_OPTIONS, smsDefaultsFromSettings, type SmsDefaults } from '$lib/sms';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
@@ -108,6 +109,8 @@
   let editShowMcpTab = $state(true);
   let editShowDataTab = $state(true);
   let editHiddenDataTools = $state<string[]>([]);
+  let editCodecDefaultEncoding = $state<CodecEncoding>('utf8');
+  let editHiddenCodecOperations = $state<string[]>([]);
   let editSmsDefaultSmsc = $state('');
   let editSmsDefaultEncoding = $state<SmsDefaults['encoding']>('auto');
   let editSmsDefaultValidity = $state('none');
@@ -182,6 +185,7 @@
     sendHalfwidthPunct: boolean;
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean; showDataTab: boolean;
     hiddenDataTools: string[]; hiddenDataFillPatterns: string[]; hiddenChecksumAlgorithms: string[];
+    codecDefaultEncoding: CodecEncoding; hiddenCodecOperations: string[];
     smsDefaultSmsc: string; smsDefaultEncoding: SmsDefaults['encoding']; smsDefaultValidityPeriod: number | null;
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
     baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
@@ -201,6 +205,8 @@
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       showDataTab: editShowDataTab,
       hiddenDataTools: [...editHiddenDataTools],
+      codecDefaultEncoding: editCodecDefaultEncoding,
+      hiddenCodecOperations: [...editHiddenCodecOperations],
       smsDefaultSmsc: editSmsDefaultSmsc.trim(),
       smsDefaultEncoding: editSmsDefaultEncoding,
       smsDefaultValidityPeriod: editSmsDefaultValidity === 'none' ? null : Number(editSmsDefaultValidity),
@@ -256,6 +262,9 @@
     editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
     editShowDataTab = cachedSettings.value?.ui?.show_data_tab ?? true;
     editHiddenDataTools = [...(cachedSettings.value?.ui?.hidden_data_tools ?? [])];
+    editCodecDefaultEncoding = codecDefaultEncoding(cachedSettings.value?.ui);
+    const optionalOperations = new Set<string>(CODEC_OPERATIONS.filter(option => !isFixedCodecOperation(option.value)).map(option => option.value));
+    editHiddenCodecOperations = (cachedSettings.value?.ui?.hidden_codec_operations ?? []).filter(value => optionalOperations.has(value));
     const smsDefaults = smsDefaultsFromSettings(cachedSettings.value?.ui);
     editSmsDefaultSmsc = smsDefaults.smsc;
     editSmsDefaultEncoding = smsDefaults.encoding;
@@ -297,18 +306,10 @@
     saveError = null;
     // 凭据状态与数据目录:后端说了才算(内置值不下发,前端自己看不出配没配)
     kbCredentialStatus()
-      .then((s) => {
-        kbCred = s;
-        // 真的什么都没有(没内置、没存过、也没填地址)才展开知识库那节做引导。
-        // 默认按"已配置"排布,内置用户(常见情况)开窗就不会看到多余的展开
-        if (!s.builtin_api_key && s.user_key === 'unset' && !editKbBaseUrl.trim()) {
-          openKb = true;
-          openManuals = false;
-        }
-      })
+      .then((s) => (kbCred = s))
       .catch(() => {});
     dataDirs().then((d) => (dirs = d)).catch(() => {});
-    // 分节折叠:每次开窗重置(通用页六节 + 指令联想子页四节)。
+    // 所有设置分组每次开窗默认收起，不持久化展开状态。
     // 例外:带 anchor 跳进来的那一节要展开——连接栏"添加…"跳过来却是收起的
     // 等于什么也没发生。
     openBaud = anchor === 'baud';
@@ -318,13 +319,15 @@
     openLogData = false;
     openDirs = false;
     openKb = false;
-    openManuals = true;
+    openManuals = false;
     openBehavior = false;
     openHistory = false;
-    openDataFillOptions = true;
-    openSmsDefaults = true;
+    openDataFillOptions = false;
+    openSmsDefaults = false;
     openChecksumOptions = false;
-    collapsedGroups = [];
+    openCodecDefaults = false;
+    openCodecOperations = false;
+    expandedGroups = [];
     // 记录"加载态快照",作为脏检测与补丁的基准:之后编辑副本变 ≠ 此快照 = 有未应用改动
     lastAppliedEdits = currentEdits();
     activeSection = section;
@@ -503,6 +506,8 @@
     if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
     if (changed('showDataTab')) ui.show_data_tab = cur.showDataTab;
     if (changed('hiddenDataTools')) ui.hidden_data_tools = cur.hiddenDataTools;
+    if (changed('codecDefaultEncoding')) ui.codec_default_encoding = cur.codecDefaultEncoding;
+    if (changed('hiddenCodecOperations')) ui.hidden_codec_operations = cur.hiddenCodecOperations;
     if (changed('smsDefaultSmsc')) ui.sms_default_smsc = cur.smsDefaultSmsc;
     if (changed('smsDefaultEncoding')) ui.sms_default_encoding = cur.smsDefaultEncoding;
     if (changed('smsDefaultValidityPeriod')) ui.sms_default_validity_period = cur.smsDefaultValidityPeriod;
@@ -545,6 +550,10 @@
    *  原先失败只进 console,对话框照常关掉、界面按新值显示,重启后全部回到旧值。 */
   async function applyEdits(): Promise<boolean> {
     saveError = null;
+    if (!CODEC_ENCODINGS.some(option => option.value === editCodecDefaultEncoding)) {
+      saveError = '请选择有效的编解码默认文本编码';
+      return false;
+    }
     if (editSmsDefaultSmsc.trim() && !/^\+?\d{1,20}$/u.test(editSmsDefaultSmsc.trim())) {
       saveError = '默认短信中心号码需为 1–20 位数字，可带 +，或留空使用模组设置';
       return false;
@@ -701,6 +710,13 @@
       : [...new Set([...editHiddenDataTools, value])];
   }
 
+  function setCodecOperationVisible(value: string, visible: boolean) {
+    if (isFixedCodecOperation(value)) return;
+    editHiddenCodecOperations = visible
+      ? editHiddenCodecOperations.filter(item => item !== value)
+      : [...new Set([...editHiddenCodecOperations, value])];
+  }
+
   function setDataFillPatternVisible(value: string, visible: boolean) {
     if (value === 'content') return;
     editHiddenDataFillPatterns = visible
@@ -739,10 +755,9 @@
 
   // ===== 指令联想子页的分节折叠 =====
   // 子页有 4 节(手册/知识库/联想行为/发送历史),铺开约 800px 而内容区只有 400px。
-  // 默认只展开"参与联想的手册"(最常回来动的那节),其余收起、头部显示当前值摘要;
-  // 知识库还没配置时改为展开知识库那节——第一次进来该被引导去填地址,而不是看一个空手册列表。
+  // 默认全部收起，头部显示当前值摘要；未配置知识库也不自动展开。
   // 展开状态只在本次开着设置页期间有效,每次 show() 重置(纯视图状态,不进 settings.json)。
-  let openManuals = $state(true);
+  let openManuals = $state(false);
   // 通用页各节的折叠状态:全铺开约 1100px,而内容区只有 360px
   let openBaud = $state(false);
   let openSend = $state(false);
@@ -753,8 +768,13 @@
   let openKb = $state(false);
   let openBehavior = $state(false);
   let openHistory = $state(false);
-  let openDataFillOptions = $state(true);
-  let openSmsDefaults = $state(true);
+  let openDataFillOptions = $state(false);
+  let openCodecDefaults = $state(false);
+  let openCodecOperations = $state(false);
+  const codecOperationsSummary = $derived(
+    '显示 ' + CODEC_OPERATIONS.filter(option => isFixedCodecOperation(option.value) || !editHiddenCodecOperations.includes(option.value)).length + ' / ' + CODEC_OPERATIONS.length + ' 项',
+  );
+  let openSmsDefaults = $state(false);
   let openChecksumOptions = $state(false);
 
   /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
@@ -805,12 +825,12 @@
     `已显示 ${CHECKSUM_OPTIONS.length - editHiddenChecksumAlgorithms.length}/${CHECKSUM_OPTIONS.length}`,
   );
 
-  // 折叠起来的分组名。只在本次开着设置页期间有效,不落盘(分组是服务端的,记住折叠状态意义不大)
-  let collapsedGroups = $state<string[]>([]);
+  // 仅记录本次手动展开的手册分组；后续加载的新分组也默认收起，不落盘。
+  let expandedGroups = $state<string[]>([]);
   function toggleGroupCollapsed(name: string) {
-    collapsedGroups = collapsedGroups.includes(name)
-      ? collapsedGroups.filter((n) => n !== name)
-      : [...collapsedGroups, name];
+    expandedGroups = expandedGroups.includes(name)
+      ? expandedGroups.filter((n) => n !== name)
+      : [...expandedGroups, name];
   }
 
   /** 分组头勾选框的三态依据:该组里可勾选(cmd_status=done)的有几本、已勾了几本。
@@ -1512,6 +1532,31 @@
                   </Collapsible>
                 </div>
                 <div class="mt-3">
+                  <div class="text-[12px] font-medium text-[var(--muted-foreground)]">编解码选项</div>
+                  <Collapsible title="默认参数" summary={codecEncodingLabel(editCodecDefaultEncoding)} bind:open={openCodecDefaults}>
+                    <div class="flex items-center gap-3 text-[13px]">
+                      <label for="settings-codec-encoding" class="w-24 shrink-0">默认文本编码</label>
+                      <select id="settings-codec-encoding" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editCodecDefaultEncoding}>
+                        {#each CODEC_ENCODINGS as option}<option value={option.value}>{option.label}</option>{/each}
+                      </select>
+                    </div>
+                    <p class="mt-2 text-[11px] text-[var(--muted-foreground)]">首次使用时生效；已有草稿可在工具中点击“使用默认编码”。</p>
+                  </Collapsible>
+                  <Collapsible title="处理方式" summary={codecOperationsSummary} bind:open={openCodecOperations}>
+                    <div class="grid grid-cols-2 gap-x-3 gap-y-2">
+                      {#each CODEC_OPERATIONS as option (option.value)}
+                        {@const fixed = isFixedCodecOperation(option.value)}
+                        <label class="flex items-center gap-2 text-[13px] {fixed ? 'text-[var(--muted-foreground)]' : 'cursor-pointer'}">
+                          <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]"
+                            disabled={fixed} checked={fixed || !editHiddenCodecOperations.includes(option.value)}
+                            onchange={(event) => setCodecOperationVisible(option.value, event.currentTarget.checked)} />
+                          <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
+                        </label>
+                      {/each}
+                    </div>
+                  </Collapsible>
+                </div>
+                <div class="mt-3">
                   <div class="text-[12px] font-medium text-[var(--muted-foreground)]">短信选项</div>
                   <Collapsible title="默认参数" summary={editSmsDefaultSmsc.trim() || '使用模组短信中心'} bind:open={openSmsDefaults}>
                     <div class="space-y-3 text-[13px]">
@@ -1714,7 +1759,7 @@
                           {#if docGroups}
                             {#each docGroups as g (g.name)}
                               {@const st = groupCheck(g.docs)}
-                              {@const collapsed = collapsedGroups.includes(g.name)}
+                              {@const collapsed = !expandedGroups.includes(g.name)}
                               <!-- 分组头同样不做成 <label>:点折叠按钮会连带切换该组勾选 -->
                               <div class="flex items-center gap-2">
                                 <input

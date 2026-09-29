@@ -142,6 +142,10 @@ export async function buildFrame(config: FrameConfig): Promise<FrameResult> {
   return await invoke<FrameResult>('build_frame', { config });
 }
 
+export async function encodeGbkTexts(texts: string[]): Promise<number[][]> {
+  return await invoke<number[][]>('encode_gbk_texts', { texts });
+}
+
 export async function sendFile(port: string, path: string): Promise<number> {
   return await invoke<number>('send_file', { port, path });
 }

@@ -7,7 +7,7 @@ const presets = () => [moduleOf([dp.defaultFrameBuilderTool(), dp.defaultCodecTo
 
 test('新编解码工具默认使用 UTF-8 文本转 Hex', () => {
   assert.deepEqual(dp.defaultCodecTool(), {
-    id: 'codec', kind: 'codec', config: { operation: 'text_to_hex', input: '', format: 'text' },
+    id: 'codec', kind: 'codec', defaults_applied: false, config: { operation: 'text_to_hex', input: '', format: 'text', encoding: 'utf8' },
   });
 });
 
@@ -27,6 +27,7 @@ test('配置加载保留编解码输入；旧导入文件从当前配置补齐�
   const codec = dp.defaultCodecTool();
   codec.config.input = '你好';
   codec.config.operation = 'base64_encode';
+  codec.config.encoding = 'gbk';
   const current = [moduleOf([dp.defaultFrameBuilderTool(), codec])];
   const merged = dp.mergePresetModules([moduleOf([dp.defaultFrameBuilderTool()])], current, presets());
   assert.deepEqual(merged[0].tools.find(dp.isCodecTool), codec);

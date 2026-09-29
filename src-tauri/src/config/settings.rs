@@ -9,6 +9,16 @@ pub use crate::util::codec::LineEnding;
 
 const CONFIG_VERSION: u32 = 1;
 
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CodecTextEncoding {
+    #[default]
+    Utf8,
+    Gbk,
+    Utf16le,
+    Utf16be,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "PascalCase")]
 pub enum DisplayMode {
@@ -145,6 +155,10 @@ pub struct UiSettings {
     /// 数据处理页签中隐藏的子工具。空 = 全部显示。
     #[serde(default)]
     pub hidden_data_tools: Vec<String>,
+    #[serde(default)]
+    pub codec_default_encoding: CodecTextEncoding,
+    #[serde(default)]
+    pub hidden_codec_operations: Vec<String>,
     #[serde(default)]
     pub sms_default_smsc: String,
     #[serde(default)]
@@ -480,6 +494,8 @@ impl Settings {
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
                 hidden_data_tools: Vec::new(),
+                codec_default_encoding: CodecTextEncoding::Utf8,
+                hidden_codec_operations: Vec::new(),
                 sms_default_smsc: String::new(),
                 sms_default_encoding: SmsDefaultEncoding::Auto,
                 sms_default_validity_period: None,
@@ -667,6 +683,8 @@ impl LegacySettings {
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
                 hidden_data_tools: Vec::new(),
+                codec_default_encoding: CodecTextEncoding::Utf8,
+                hidden_codec_operations: Vec::new(),
                 sms_default_smsc: String::new(),
                 sms_default_encoding: SmsDefaultEncoding::Auto,
                 sms_default_validity_period: None,
@@ -888,6 +906,30 @@ mod tests {
         assert_eq!(json["ui"]["sms_default_smsc"], "");
         assert_eq!(json["ui"]["sms_default_encoding"], "ucs2");
         assert!(json["ui"]["sms_default_validity_period"].is_null());
+    }
+
+    #[test]
+    fn test_codec_defaults_compatibility_and_patch() {
+        let mut old = serde_json::to_value(Settings::default_settings()).unwrap();
+        for key in ["codec_default_encoding", "hidden_codec_operations"] {
+            old["ui"].as_object_mut().unwrap().remove(key);
+        }
+        let restored: Settings = serde_json::from_value(old).unwrap();
+        let json = serde_json::to_value(&restored).unwrap();
+        assert_eq!(json["ui"]["codec_default_encoding"], "utf8");
+        assert_eq!(json["ui"]["hidden_codec_operations"], serde_json::json!([]));
+        for encoding in ["utf8", "gbk", "utf16le", "utf16be"] {
+            let next = restored.apply_patch(&serde_json::json!({"ui": {
+                "codec_default_encoding": encoding,
+                "hidden_codec_operations": ["base64_encode", "base64_decode"]
+            }})).unwrap();
+            let roundtrip: Settings = serde_json::from_str(&serde_json::to_string(&next).unwrap()).unwrap();
+            let json = serde_json::to_value(roundtrip).unwrap();
+            assert_eq!(json["ui"]["codec_default_encoding"], encoding);
+            assert_eq!(json["ui"]["hidden_codec_operations"], serde_json::json!(["base64_encode", "base64_decode"]));
+        }
+        assert!(restored.apply_patch(&serde_json::json!({"ui":{"codec_default_encoding":"unknown"}})).is_err());
+        assert!(restored.apply_patch(&serde_json::json!({"ui":{"codec_default_encoding":null}})).is_err());
     }
 
     #[test]

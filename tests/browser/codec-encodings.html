@@ -1,0 +1,8 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Codec regression</title>
+<body><div id="codec-root"></div>
+<script type="module">
+import '/src/app.css';
+import {mount} from 'svelte';
+import Harness from './CodecHarness.svelte';
+mount(Harness,{target:document.querySelector('#codec-root')});
+</script></body></html>

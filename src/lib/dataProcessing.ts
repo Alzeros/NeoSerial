@@ -1,6 +1,6 @@
 // 帧构造器:类型 + 默认值 + 预置合并 + 模板操作。全部纯函数,供 node 测试。
 // FrameConfig 与后端 dataproc/frame.rs 对齐(snake_case)。
-import type { CodecConfig } from './codec';
+import type { CodecConfig, CodecEncoding } from './codec';
 import type { SmsConfig, SmsDefaults } from './sms';
 
 export type Endian = 'le' | 'be';
@@ -124,6 +124,8 @@ export interface CodecTool {
   id: string;
   kind: 'codec';
   config: CodecConfig;
+  /** 新工具首次进入时应用默认编码，旧工具缺失此标记则保留草稿。 */
+  defaults_applied?: boolean;
 }
 export interface SmsTool {
   id: string;
@@ -141,7 +143,14 @@ export const DATA_TOOL_OPTIONS = [
 ] as const;
 
 export function defaultCodecTool(): CodecTool {
-  return { id: 'codec', kind: 'codec', config: { operation: 'text_to_hex', input: '', format: 'text' } };
+  return { id: 'codec', kind: 'codec', defaults_applied: false, config: { operation: 'text_to_hex', input: '', format: 'text', encoding: 'utf8' } };
+}
+
+export function initializeCodecToolDefaults(tool: CodecTool, encoding: CodecEncoding): boolean {
+  if (tool.defaults_applied !== false) return false;
+  tool.config = { ...tool.config, encoding };
+  tool.defaults_applied = true;
+  return true;
 }
 
 export function isCodecTool(tool: unknown): tool is CodecTool {

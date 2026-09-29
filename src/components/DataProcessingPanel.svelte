@@ -1,6 +1,7 @@
 <script lang="ts">
   import { scriptModules, cachedSettings, settingsRequest, activeDataTool } from '$lib/stores';
-  import { DATA_TOOL_OPTIONS, isFrameBuilderTool, isCodecTool, isSmsTool, initializeSmsToolDefaults } from '$lib/dataProcessing';
+  import { DATA_TOOL_OPTIONS, isFrameBuilderTool, isCodecTool, isSmsTool, initializeSmsToolDefaults, initializeCodecToolDefaults } from '$lib/dataProcessing';
+  import { codecDefaultEncoding } from '$lib/codec';
   import { smsDefaultsFromSettings } from '$lib/sms';
   import FrameBuilder from './FrameBuilder.svelte';
   import CodecTool from './CodecTool.svelte';
@@ -20,6 +21,11 @@
   $effect(() => {
     if (selected === 'sms' && smsTool?.defaults_applied === false && cachedSettings.value) {
       initializeSmsToolDefaults(smsTool, smsDefaultsFromSettings(cachedSettings.value.ui));
+    }
+  });
+  $effect(() => {
+    if (selected === 'codec' && codecTool?.defaults_applied === false && cachedSettings.value) {
+      initializeCodecToolDefaults(codecTool, codecDefaultEncoding(cachedSettings.value.ui));
     }
   });
 </script>
@@ -47,7 +53,12 @@
   </div>
   <div class="min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style:display={selected === 'codec' ? 'flex' : 'none'}>
     {#if codecTool}
-      <CodecTool config={codecTool.config} onconfigchange={(config) => { if (codecTool) codecTool.config = config; }} />
+      <CodecTool config={codecTool.config} onconfigchange={(config) => {
+        if (codecTool) {
+          codecTool.defaults_applied = true;
+          codecTool.config = config;
+        }
+      }} />
     {:else}<p class="p-4 text-[13px] text-[var(--muted-foreground)]">编解码工具未就绪</p>{/if}
   </div>
   <div class="min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style:display={selected === 'sms' ? 'flex' : 'none'}>

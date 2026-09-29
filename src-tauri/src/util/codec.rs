@@ -27,6 +27,15 @@ pub fn ascii_to_bytes(s: &str) -> Vec<u8> {
     s.as_bytes().to_vec()
 }
 
+/// GBK 编码用于数据处理工具。无法表示的字符必须报错，不输出替换字符或 HTML 实体。
+pub fn text_to_gbk(text: &str) -> Result<Vec<u8>, String> {
+    let (bytes, _, had_errors) = encoding_rs::GBK.encode(text);
+    if had_errors {
+        return Err("文本含 GBK 无法表示的字符，请使用 UTF-8 或 UTF-16。".to_string());
+    }
+    Ok(bytes.into_owned())
+}
+
 /// 中文标点转半角。中文输入法下顺手打出的 ？，：等,模组一概不认——发送是纯透传,
 /// ？走的是 UTF-8 的 EF BC 9F 三个字节,而模组只认半角 ?(0x3F)。这些符号出现在
 /// AT 指令的骨架里基本都是打错了,所以转掉。
@@ -108,6 +117,19 @@ pub fn bytes_to_ascii(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_gbk_known_bytes_and_controls() {
+        assert_eq!(text_to_gbk("你好€").unwrap(), vec![0xC4, 0xE3, 0xBA, 0xC3, 0x80]);
+        assert_eq!(text_to_gbk("AT\r\n\0\\").unwrap(), b"AT\r\n\0\\");
+        assert!(text_to_gbk("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_gbk_rejects_unrepresentable_characters() {
+        assert!(text_to_gbk("你好🙂").unwrap_err().contains("GBK"));
+        assert!(text_to_gbk("\u{FEFF}").is_err());
+    }
 
     #[test]
     fn test_line_ending_append() {

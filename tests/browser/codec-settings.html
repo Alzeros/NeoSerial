@@ -1,0 +1,26 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Codec settings regression</title>
+<body><div id="tools" style="height:640px;width:500px;display:flex;flex-direction:column"></div><div id="settings"></div>
+<script type="module">
+import '/src/app.css';
+import {mount,tick} from 'svelte';
+import Panel from '/src/components/DataProcessingPanel.svelte';
+import SettingsDialog from '/src/components/SettingsDialog.svelte';
+import {scriptModules,cachedSettings,activeDataTool,applySharedSettings} from '/src/lib/stores.svelte.ts';
+import {defaultCodecTool} from '/src/lib/dataProcessing.ts';
+import {getSettings,patchSettings} from '/src/lib/tauri.ts';
+applySharedSettings(await getSettings());
+activeDataTool.value='frame_builder';
+const module=scriptModules.find(m=>m.type==='data_processing');
+const index=()=>module.tools.findIndex(t=>t.kind==='codec');
+mount(Panel,{target:document.querySelector('#tools')});
+const dialog=mount(SettingsDialog,{target:document.querySelector('#settings')});
+window.codecSettingsTest={
+  async fresh(legacy=false){activeDataTool.value='frame_builder';await tick();const t=defaultCodecTool();if(legacy){delete t.defaults_applied;t.config.encoding='utf16le';t.config.input='legacy';}module.tools[index()]=t;await tick();activeDataTool.value='codec';await tick();},
+  config:()=>JSON.parse(JSON.stringify(module.tools[index()].config)),
+  async configPatch(p){module.tools[index()].config={...module.tools[index()].config,...p};await tick();},
+  async defaults(encoding){applySharedSettings(await patchSettings({ui:{codec_default_encoding:encoding}}));await tick();},
+  async show(section='extensions',extModule='data',anchor=null){applySharedSettings(await getSettings());dialog.show(section,extModule,anchor);await tick();},
+  ui:()=>JSON.parse(JSON.stringify(cachedSettings.value.ui)),
+  tick
+};
+</script></body></html>

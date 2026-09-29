@@ -183,6 +183,9 @@ export interface Settings {
     show_data_tab: boolean;
     /** 数据处理页签中隐藏的子工具。空 = 全部显示。 */
     hidden_data_tools: string[];
+    /** 编解码首次使用的默认编码，已有草稿保持其选择。 */
+    codec_default_encoding: 'utf8' | 'gbk' | 'utf16le' | 'utf16be';
+    hidden_codec_operations: string[];
     /** 新短信的默认参数；更改设置不覆盖当前草稿。 */
     sms_default_smsc: string;
     sms_default_encoding: 'auto' | 'gsm7' | 'ucs2';
