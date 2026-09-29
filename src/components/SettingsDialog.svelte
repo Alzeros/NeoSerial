@@ -388,20 +388,15 @@
 
   // 打开独立主题编辑器窗口（单例，已存在则聚焦）
   async function openThemeEditorWindow() {
-    // 先把当前选中的 custom 落到 store（编辑器窗口会读 settings 初始化）
-    // 这样在弹窗里选了 custom 卡片后再开编辑器，编辑器看到的是最新色板
-    editTheme = 'custom';
-    // theme.value 必须同步为 custom：<html> 已切到 custom，若 store 仍记 preset-1，
-    // 后续任何 applyTheme(theme.value)（取消设置、theme-changed 广播）都会跳回预设
-    theme.value = 'custom';
-    customTheme.value = { ...editCustom };
-    applyTheme('custom', editCustom);
-    // 关闭设置弹窗，避免两层叠加
-    await closeWindow();
+    saveError = null;
     try {
+      // 独立窗口关闭后 JS 上下文会销毁，必须先等目标窗口创建/聚焦成功。
+      // 主题编辑器自行读取已保存色板；打开失败时保留本页草稿与取消基准。
       await openThemeEditor();
+      await closeWindow();
     } catch (e) {
       console.error('打开主题编辑器失败:', e);
+      saveError = `打开主题编辑器失败:${e}`;
     }
   }
 
