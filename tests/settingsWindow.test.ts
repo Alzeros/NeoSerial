@@ -1,10 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 
 async function source(path: string): Promise<string> {
   return await readFile(path, 'utf8');
 }
+
+test('设置窗口的关闭监听获准执行最后的 destroy，且权限不扩展到串口窗口', async () => {
+  const files = (await readdir('src-tauri/capabilities')).filter(file => file.endsWith('.json'));
+  const capabilities = await Promise.all(files.map(async file =>
+    JSON.parse(await source(`src-tauri/capabilities/${file}`)) as { windows: string[]; permissions: string[] }
+  ));
+  const destroyGrants = capabilities.filter(capability => capability.permissions.includes('core:window:allow-destroy'));
+  assert.ok(destroyGrants.some(capability => capability.windows.includes('settings')),
+    'Tauri onCloseRequested calls destroy after the handler allows closing');
+  assert.ok(destroyGrants.every(capability => capability.windows.every(label => label === 'settings')),
+    'serial window close guards must not be bypassed');
+});
 
 test('设置窗口使用固定单例并保存跨加载跳转请求', async () => {
   const rust = await source('src-tauri/src/lib.rs');

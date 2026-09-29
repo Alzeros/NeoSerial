@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "settings-window",
+  "description": "Allow the settings onCloseRequested listener to finish closing its window after save or cancel.",
+  "windows": ["settings"],
+  "permissions": ["core:window:allow-destroy"]
+}

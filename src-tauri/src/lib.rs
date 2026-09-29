@@ -61,7 +61,7 @@ async fn open_settings_window(
     *state.pending_settings.lock().map_err(|e| e.to_string())? = Some(request);
 
     // 设置窗口首次打开时放在调用窗口正中间。这里使用物理像素计算，
-    // 适配 Windows 不同缩放比例的显示器；创建后再 set_position，避免系统随机放置。
+    // 使用物理像素适配缩放；在隐藏状态下完成定位，避免默认位置的窗口先闪现。
     let centered_position = match (
         webview_window.outer_position(),
         webview_window.outer_size(),
@@ -84,11 +84,14 @@ async fn open_settings_window(
     .min_inner_size(SETTINGS_MIN_WIDTH, SETTINGS_MIN_HEIGHT)
     .decorations(false)
     .resizable(true)
+    .visible(false)
     .build()
     .map_err(|e| format!("创建设置窗口失败: {}", e))?;
     if let Some(position) = centered_position {
         let _ = window.set_position(position);
     }
+    window.show().map_err(|e| format!("显示设置窗口失败: {}", e))?;
+    window.set_focus().map_err(|e| format!("聚焦设置窗口失败: {}", e))?;
     Ok(())
 }
 
