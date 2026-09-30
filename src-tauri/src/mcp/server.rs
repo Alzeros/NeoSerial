@@ -24,6 +24,13 @@ fn schema(json: serde_json::Value) -> Arc<JsonObject> {
     Arc::new(map)
 }
 
+fn tool_list_response(tools: Vec<Tool>) -> ListToolsResult {
+    // 2026-07-28 的客户端要求这两个字段；0 表示不缓存，保留原来的即时获取行为。
+    ListToolsResult { tools, ..Default::default() }
+        .with_ttl_ms(0)
+        .with_cache_scope(rmcp::model::CacheScope::Private)
+}
+
 /// 从 start_port 起递增找空闲端口,上限 start_port+20。
 /// 默认端口用没规律的值(34594)降低冲突概率;被占才递增兜底。
 /// 成功返回 (端口号, 已绑定的 TcpListener);全被占返回错误。
@@ -345,7 +352,7 @@ impl ServerHandler for NeoserialHandler {
                 })),
             ),
         ];
-        async move { Ok(ListToolsResult { tools, ..Default::default() }) }
+        async move { Ok(tool_list_response(tools)) }
     }
 
     fn call_tool(
@@ -703,4 +710,20 @@ pub async fn run_server(shared: Arc<McpShared>, listener: std::net::TcpListener)
         .await
         .map_err(|e| format!("axum serve 失败: {}", e))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod protocol_tests {
+    use super::*;
+
+    #[test]
+    fn tool_list_has_cache_metadata_for_strict_clients() {
+        let tool = Tool::new("sample", "sample tool", schema(serde_json::json!({"type":"object"})));
+        let value = serde_json::to_value(tool_list_response(vec![tool])).unwrap();
+        assert_eq!(value["ttlMs"], 0);
+        assert_eq!(value["cacheScope"], "private");
+        assert_eq!(value["tools"][0]["name"], "sample");
+        // 旧客户端仍可以读取原有 tools；缓存字段是附加信息。
+        assert_eq!(value["tools"].as_array().unwrap().len(), 1);
+    }
 }

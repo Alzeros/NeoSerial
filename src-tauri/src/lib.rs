@@ -157,7 +157,7 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     // 从设置读首选端口(默认 34594)。被占时 bind_port 向上递增最多 20 个找空闲
     // (单实例后只剩"别的程序占了端口"这种情况),实际端口写进 registry,
     // agent 经 registry(或从 34594 起逐端口探测)找到实际端口。
-    // 固定 URL 配置(claude mcp add http://localhost:34594/mcp)只命中绑到首选端口的情况。
+    // 客户端的固定 URL 只命中配置的端口，接入页始终展示实际端口。
     let port = state.settings.lock().ok().map(|s| s.mcp.port).unwrap_or(34594);
     let (port, listener) = match mcp::server::bind_port(port) {
         Ok(p) => p,
@@ -365,6 +365,7 @@ pub fn run() {
             greet,
             open_url,
             get_mcp_status,
+            mcp::diagnostics::check_mcp_connection,
             connect,
             disconnect,
             list_ports,

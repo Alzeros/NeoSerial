@@ -7,7 +7,7 @@
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
   import { LOG_MIB, DEFAULT_MAX_LOG_BYTES, MIN_LOG_BYTES, MAX_LOG_BYTES_LIMIT, resolveLogLimits } from '$lib/logRetention';
-  import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
+  import { patchSettings, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
   import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS, DATA_TOOL_OPTIONS } from '$lib/dataProcessing';
@@ -15,6 +15,7 @@
   import { SMS_ENCODING_OPTIONS, SMS_VALIDITY_OPTIONS, smsDefaultsFromSettings, type SmsDefaults } from '$lib/sms';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
+  import McpSetup from '$components/McpSetup.svelte';
   import Collapsible from '$components/ui/Collapsible.svelte';
   import type { ManualDocument, Settings, SettingsPatch } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
@@ -102,7 +103,7 @@
   let exitArmTimer: ReturnType<typeof setTimeout> | null = null;
   // MCP 自动启动编辑副本（从 cachedSettings 拷贝；改后重启生效）
   let editMcpAutoStart = $state(true);
-  // MCP 端口编辑副本（默认 34594;被占自动递增。改后需重新 claude mcp add）
+  // MCP 首选端口编辑副本（默认 34594；改后需更新客户端连接地址）
   let editMcpPort = $state(34594);
   // "后台运行"编辑副本（从 cachedSettings 拷贝;兜底值与后端 default_background_mode 一致=关）
   let editBackgroundMode = $state(false);
@@ -129,9 +130,6 @@
   $effect(() => {
     if (open && extModule === 'suggest') ensureCommandIndexLoaded();
   });
-  // MCP server 当前运行状态（打开设置页/切到 MCP 页时拉取,显示实际端口）
-  let mcpStatus = $state<{ running: boolean; port: number | null }>({ running: false, port: null });
-  let mcpCopied = $state(false);
   // 指令联想编辑副本(从 cachedSettings.command_index 拷贝;保存后立即生效,不需重启)
   let editSuggestEnabled = $state(true);
   let editKbBaseUrl = $state('');
@@ -280,7 +278,6 @@
     editQcInputHeight = cachedSettings.value?.ui?.qc_input_height ?? 28;
     editQcRowGap = cachedSettings.value?.ui?.qc_row_gap ?? 4;
     editQcFontFamily = cachedSettings.value?.ui?.qc_font_family ?? 'default';
-    mcpCopied = false;
     // 去空白项 + 去重:列表按关键词本身做 key,手改配置文件塞进重复项会让 {#each} 报错
     editErrorKeywords = [...new Set((cachedSettings.value?.error_keywords ?? []).map((k) => k.trim()).filter(Boolean))];
     newKeyword = '';
@@ -338,8 +335,6 @@
     activeSection = section;
     // 外部触发可带子模块:指令查询面板的齿轮按钮 → 直接进指令联想子页
     extModule = extMod;
-    // 拉取 MCP 运行状态(显示实际端口)
-    getMcpStatus().then((s) => (mcpStatus = s)).catch(() => {});
     open = true;
     // 展开的那一节渲染出来之后再聚焦,省得用户还要自己点输入框
     if (anchor === 'baud') {
@@ -632,19 +627,6 @@
   /** 保存:应用 + 关窗;保存失败留在对话框里让用户看到原因。 */
   async function handleSave() {
     if (await applyEdits()) await closeWindow();
-  }
-
-  // 一键复制 MCP 连接指令到剪贴板
-  async function copyMcpCommand() {
-    if (!mcpStatus.port) return;
-    const cmd = `claude mcp add --transport http neoserial http://localhost:${mcpStatus.port}/mcp`;
-    try {
-      await navigator.clipboard.writeText(cmd);
-      mcpCopied = true;
-      setTimeout(() => (mcpCopied = false), 1500);
-    } catch {
-      // 剪贴板不可用时静默
-    }
   }
 
   // 刷新指令库:用编辑框里的地址/Key(不必先保存)。缓存更新后后端广播,commandIndex store 自己重载。
@@ -1922,7 +1904,7 @@
                 </label>
               </div>
               <div class="text-[12px] text-[var(--muted-foreground)]">
-                内嵌 MCP server,Claude Code 等 agent 经由它操作串口。开关与端口改后重启生效。
+                支持 MCP Streamable HTTP 的客户端可接入并操作串口。开关与端口改后重启生效。
               </div>
 
               {#if editMcpAutoStart}
@@ -1933,44 +1915,14 @@
                   <span class="switch-label">显示"MCP 日志"tab</span>
                 </label>
 
-                <!-- 常驻状态行:纯文字 + 上边框收口,位置与指令联想页的"上次更新…"一致。
-                     开着却没跑(端口被占/还没重启)用警示色,那是需要用户注意的状态。 -->
-                <div
-                  class="text-[12px] mt-3 pt-2 mb-3"
-                  style="border-top: 1px solid var(--border-subtle); color: {mcpStatus.running ? 'var(--muted-foreground)' : 'var(--warning)'};"
-                >
-                  {#if mcpStatus.running && mcpStatus.port}
-                    服务运行中 · 端口 {mcpStatus.port}
-                  {:else}
-                    未运行:端口 {editMcpPort} 被占或尚未启动,保存后重启生效。
-                  {/if}
-                </div>
-
-                <div class="flex items-center gap-3 mb-3">
+                <div class="flex items-center gap-3 mt-3 mb-3">
                   <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">端口</span>
                   <input type="number" class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-input)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
                   <span class="ml-auto text-[12px] text-[var(--muted-foreground)]">被占时自动向上找空闲端口</span>
                 </div>
 
-                {#if mcpStatus.running && mcpStatus.port}
-                  <div class="text-[12px] text-[var(--muted-foreground)] mb-2">
-                    在 Claude Code 里粘贴执行,或在终端运行:
-                  </div>
-                  <div class="flex items-center gap-2">
-                    <!-- select-text:除了右边的复制按钮,也允许手动选一段(全局默认不可选) -->
-                    <code class="flex-1 text-[12px] px-2.5 py-1.5 rounded bg-[var(--border-subtle)] text-[var(--foreground)] overflow-x-auto whitespace-nowrap select-text">
-                      claude mcp add --transport http neoserial http://localhost:{mcpStatus.port}/mcp
-                    </code>
-                    <button
-                      class="shrink-0 px-2.5 py-1.5 rounded text-[12px] font-medium transition-colors {mcpCopied
-                        ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                        : 'bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--border)]'}"
-                      onclick={copyMcpCommand}
-                      title="复制到剪贴板"
-                    >{mcpCopied ? '已复制' : '复制'}</button>
-                  </div>
-                {/if}
               {/if}
+              <McpSetup />
             {/if}
           {/if}
         </div>

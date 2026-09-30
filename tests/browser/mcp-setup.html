@@ -1,0 +1,29 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>MCP client setup regression</title>
+<body><div style="width:440px;height:540px;overflow:auto;padding:16px" id="setup"></div>
+<script type="module">
+import '/src/app.css';
+import {mount,unmount,tick} from 'svelte';
+import {mockIPC} from '@tauri-apps/api/mocks';
+import McpSetup from '/src/components/McpSetup.svelte';
+window.mcpSetupTest={status:{running:true,port:34601},error:'',delay:0,calls:[],clipboard:'',copyFails:false,tick};
+// Isolate OS clipboard ownership in headless mode; native harness checks real clipboard.
+Object.defineProperty(navigator,'clipboard',{configurable:true,value:{
+  async writeText(text){if(mcpSetupTest.copyFails)throw Error('clipboard unavailable');mcpSetupTest.clipboard=text;},
+  async readText(){return mcpSetupTest.clipboard;}
+}});
+mockIPC(async(command,args)=>{
+  const test=window.mcpSetupTest;
+  test.calls.push(command);
+  if(command==='get_mcp_status')return {...test.status};
+  if(command==='check_mcp_connection'){
+    const port=test.status.port;
+    if(test.delay)await new Promise(r=>setTimeout(r,test.delay));
+    if(test.error)throw test.error;
+    return {port,server_name:'NeoSerial',protocol_version:'2026-07-28',tool_count:19};
+  }
+  if(command==='open_url'){test.link=args.url;return;}
+  throw Error('Unexpected IPC: '+command);
+});
+let instance=mount(McpSetup,{target:document.querySelector('#setup')});
+mcpSetupTest.remount=async()=>{await unmount(instance);instance=mount(McpSetup,{target:document.querySelector('#setup')});await tick();};
+</script></body></html>

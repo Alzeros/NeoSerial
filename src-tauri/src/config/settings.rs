@@ -305,7 +305,7 @@ pub struct McpSettings {
     /// MCP server **首选**监听端口（默认 34594）。
     /// 被占时(别的程序占了该端口)自动向上递增(最多 +20)找空闲绑定。
     /// 实际绑定端口见设置页(get_mcp_status)与 registry。
-    /// claude mcp add 的固定 URL 只命中绑到首选端口的实例;改端口后需重新配置。
+    /// 客户端的固定 URL 需与实际端口一致；端口变化后需更新客户端配置。
     #[serde(default = "default_mcp_port")]
     pub port: u16,
 }

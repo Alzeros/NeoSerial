@@ -1,0 +1,13 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>MCP settings native regression</title>
+<body style="margin:0"><div id="settings" style="width:100vw;height:100vh"></div>
+<script type="module">
+import '/src/app.css';
+import {mount,tick} from 'svelte';
+import SettingsDialog from '/src/components/SettingsDialog.svelte';
+import {getSettings} from '/src/lib/tauri.ts';
+import {applySharedSettings} from '/src/lib/stores.svelte.ts';
+applySharedSettings(await getSettings());
+const dialog=mount(SettingsDialog,{target:document.querySelector('#settings'),props:{standalone:true}});
+window.mcpSettingsTest={async show(){dialog.show('extensions','mcp');await tick();},tick};
+await mcpSettingsTest.show();
+</script></body></html>

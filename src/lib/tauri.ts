@@ -142,6 +142,18 @@ export async function buildFrame(config: FrameConfig): Promise<FrameResult> {
   return await invoke<FrameResult>('build_frame', { config });
 }
 
+export interface McpCheckResult {
+  port: number;
+  server_name: string;
+  protocol_version: string;
+  tool_count: number;
+}
+
+/** 检查本应用 MCP 的协议发现和工具清单，不操作串口。 */
+export async function checkMcpConnection(): Promise<McpCheckResult> {
+  return await invoke<McpCheckResult>('check_mcp_connection');
+}
+
 export async function encodeGbkTexts(texts: string[]): Promise<number[][]> {
   return await invoke<number[][]>('encode_gbk_texts', { texts });
 }

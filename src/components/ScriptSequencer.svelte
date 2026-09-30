@@ -125,7 +125,7 @@
         ? { module: 'data', title: '数据处理设置(页签显示)' }
         : scriptView === 'reference'
           ? { module: 'suggest', title: '指令联想设置(知识库地址/刷新/手册勾选)' }
-          : { module: 'mcp', title: 'MCP 服务设置(端口/自启/接入命令)' },
+                : { module: 'mcp', title: 'MCP 服务设置(端口/自启/客户端接入)' },
   );
 </script>
 

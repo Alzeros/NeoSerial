@@ -1,0 +1,72 @@
+import assert from 'node:assert/strict';
+const base=process.env.VITE_URL??'http://localhost:5173';
+const pages=await(await fetch((process.env.CHROME_DEBUG_URL??'http://localhost:9335')+'/json/list')).json();
+const ws=new WebSocket(pages.find(p=>p.type==='page').webSocketDebuggerUrl);
+await new Promise(r=>ws.addEventListener('open',r,{once:true}));
+let id=0;const pending=new Map();
+ws.addEventListener('message',e=>{const m=JSON.parse(e.data);if(!m.id)return;const p=pending.get(m.id);pending.delete(m.id);m.error?p.reject(Error(JSON.stringify(m.error))):p.resolve(m.result);});
+const call=(method,params={})=>new Promise((resolve,reject)=>{const next=++id;pending.set(next,{resolve,reject});ws.send(JSON.stringify({id:next,method,params}));});
+async function ev(expression){const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true,userGesture:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
+async function until(expression){for(let i=0;i<100;i++){if(await ev(expression))return;await new Promise(r=>setTimeout(r,50));}assert.fail(expression);}
+const btn=text=>"[...document.querySelectorAll('button')].find(b=>b.textContent.trim()==="+JSON.stringify(text)+")";
+const select=(id,value)=>ev(`(()=>{const e=document.querySelector('#${id}');e.value=${JSON.stringify(value)};e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+const timeout=setTimeout(()=>{console.error('MCP setup timed out');process.exit(1);},60000);
+try{
+  await call('Page.navigate',{url:base+'/tests/browser/mcp-setup.html'});
+  await until("Boolean(document.querySelector('#mcp-client'))");
+  assert.equal(await ev("document.querySelector('#mcp-client').value"),'generic');
+  assert.equal(await ev("document.querySelector('input[aria-label=\"MCP 服务地址\"]').value"),'http://127.0.0.1:34601/mcp');
+  assert.equal(await ev("document.querySelectorAll('textarea').length"),0);
+  await call('Browser.grantPermissions',{origin:base,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
+  await call('Emulation.setFocusEmulationEnabled',{enabled:true});
+  await ev(btn('复制地址')+'.click()');
+  await until("document.body.textContent.includes('已复制')");
+  assert.equal(await ev('navigator.clipboard.readText()'),'http://127.0.0.1:34601/mcp');
+  await ev('mcpSetupTest.copyFails=true');
+  await ev(btn('已复制')+'.click()');
+  await until("document.body.textContent.includes('复制失败')");
+  await ev('mcpSetupTest.copyFails=false');
+  await select('mcp-client','claude');
+  await until("document.querySelector('textarea')?.value.includes('--scope user')");
+  await select('mcp-scope','project');
+  await until("document.querySelector('textarea').value.includes('--scope local')");
+  await ev("document.querySelector('button[aria-label=\"复制终端命令\"]').click()");
+  await until("document.body.textContent.includes('已复制')");
+  assert.equal(await ev('navigator.clipboard.readText()'),'claude mcp add --scope local --transport http neoserial http://127.0.0.1:34601/mcp');
+  await select('mcp-client','codex');
+  await until("document.querySelectorAll('textarea').length===1");
+  assert.match(await ev("document.querySelector('textarea').value"),/^\[mcp_servers.neoserial\]/);
+  await select('mcp-scope','user');
+  await until("document.querySelectorAll('textarea').length===2");
+  await select('mcp-client','cursor');
+  await until("document.querySelectorAll('textarea').length===1");
+  assert.equal(JSON.parse(await ev("document.querySelector('textarea').value")).mcpServers.neoserial.url,'http://127.0.0.1:34601/mcp');
+  await select('mcp-client','vscode');
+  await until("document.querySelector('textarea').value.includes('servers')");
+  assert.equal(JSON.parse(await ev("document.querySelector('textarea').value")).servers.neoserial.type,'http');
+  await ev(btn('检测服务')+'.click()');
+  await until("document.body.textContent.includes('19 个工具可读取')");
+  await ev("mcpSetupTest.error='mock connection unavailable'");
+  await ev(btn('检测服务')+'.click()');
+  await until("document.body.textContent.includes('检测失败')");
+  assert.ok(await ev("document.body.textContent.includes('mock connection unavailable')"));
+  await ev('mcpSetupTest.status={running:true,port:34609}');
+  await ev(btn('刷新状态')+'.click()');
+  await until("document.querySelector('textarea').value.includes(':34609/')");
+  assert.ok(await ev("!document.body.textContent.includes('检测失败')"));
+  await ev("mcpSetupTest.status={running:false,port:null}");
+  await ev(btn('刷新状态')+'.click()');
+  await until("document.body.textContent.includes('服务未运行')");
+  assert.equal(await ev("document.querySelectorAll('textarea').length"),0);
+  assert.equal(await ev("document.querySelector('input[aria-label=\"MCP 服务地址\"]')"),null);
+
+  // Completion from an unmounted page must not overwrite the newly mounted state.
+  await ev("mcpSetupTest.status={running:true,port:34609};mcpSetupTest.error='';mcpSetupTest.delay=400;mcpSetupTest.remount()");
+  await until("Boolean(document.querySelector('#mcp-client'))");
+  await ev(btn('检测服务')+'.click()');
+  await ev("mcpSetupTest.status={running:false,port:null};mcpSetupTest.remount()");
+  await new Promise(r=>setTimeout(r,500));
+  assert.ok(await ev("document.body.textContent.includes('服务未运行')"));
+  assert.ok(await ev("!document.body.textContent.includes('检测通过')"));
+  console.log('PASS: generic default, actual ports, all client/scope templates, copy payload/failure, check results, stopped service and stale reply guard.');
+}finally{clearTimeout(timeout);ws.close();}
