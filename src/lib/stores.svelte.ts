@@ -1,6 +1,9 @@
 import { defaultScriptCommand, defaultScriptPage, presetScriptModules, type LogLine, type PortEntry, type QuickCommandsModule, type ScriptPage, type Settings } from './types';
 import { isQuickCommandsModule } from './dataProcessing';
 import { computeCustomVars, defaultCustomTheme, isCustomDark, normalizeCustomTheme } from './customTheme';
+import { LogRetentionBuffer, resolveLogLimits } from './logRetention';
+export { DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT,
+  LOG_MIB, DEFAULT_MAX_LOG_BYTES, MIN_LOG_BYTES, MAX_LOG_BYTES_LIMIT } from './logRetention';
 
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
@@ -31,30 +34,16 @@ export const connectionParams = $state<{
 });
 
 // ============ 日志数据 ============
-/** 日志区保留行数的兜底值:设置里没有这个键时用它(与后端 default_settings 一致) */
-export const DEFAULT_MAX_LOG_LINES = 5000;
-/** 滑块范围,同时用来夹住手改配置文件写进来的离谱值(0 会让日志永远是空的) */
-export const MIN_LOG_LINES = 1000;
-export const MAX_LOG_LINES_LIMIT = 100_000;
+const retainedLogs = new LogRetentionBuffer(reactiveLogLine);
 
-/** 当前生效的保留行数。设置里的 ui.ring_buffer_capacity 以前没有任何消费方
- *  (界面上也没入口),真正生效的是这里写死的上限;现在接上,改设置即时生效。 */
-function maxLogLines(): number {
-  const n = cachedSettings.value?.ui?.ring_buffer_capacity ?? DEFAULT_MAX_LOG_LINES;
-  if (!Number.isFinite(n)) return DEFAULT_MAX_LOG_LINES;
-  return Math.min(MAX_LOG_LINES_LIMIT, Math.max(MIN_LOG_LINES, Math.floor(n)));
-}
-
-/** 上限调小后立刻裁掉多余的最旧行(设置页应用时调),不必等下一批数据到达。 */
+/** 行数/大小上限调小后立刻裁剪，不必等下一批数据到达。 */
 export function trimLogLines() {
-  const max = maxLogLines();
-  if (logLines.length > max) {
-    logLines.splice(0, logLines.length - max);
-    logVersion.value++;
-  }
+  if (retainedLogs.trim(resolveLogLimits(cachedSettings.value?.ui))) logVersion.value++;
 }
 
-export const logLines = $state<LogLine[]>([]);
+/** 集合变动由 logVersion 一次通知，避免头部淘汰逐项触发深度响应式数组的更新。
+ * 单条记录仍是响应式对象；所有集合写入统一经过下方的追加/插入/裁剪/清空函数。 */
+export const logLines: LogLine[] = retainedLogs.lines;
 export const paused = $state<{ value: boolean }>({ value: false });
 export const displayMode = $state<{ value: 'ascii' | 'hex' }>({ value: 'ascii' });
 /** 文本模式的编码方式：'ascii' | 'utf8' | 'gbk'，默认 ascii */
@@ -67,6 +56,11 @@ export const logVersion = $state<{ value: number }>({ value: 0 });
 /** LogView 滚动容器的 DOM 引用，供 App.svelte 的回调函数使用 */
 export const scrollContainerRef = $state<{ el: HTMLDivElement | null }>({ el: null });
 
+function reactiveLogLine(line: LogLine): LogLine {
+  const record = $state(line);
+  return record;
+}
+
 export function appendLogLine(line: LogLine) {
   appendLogLines([line]);
 }
@@ -76,13 +70,7 @@ export function appendLogLine(line: LogLine) {
  * LogView 的 $derived/$effect 每批只重算一次(Svelte 响应式开销 ↓)。 */
 export function appendLogLines(batch: LogLine[]) {
   if (paused.value || batch.length === 0) return;
-  for (const line of batch) {
-    logLines.push(line);
-  }
-  const max = maxLogLines();
-  if (logLines.length > max) {
-    logLines.splice(0, logLines.length - max);
-  }
+  retainedLogs.append(batch, resolveLogLimits(cachedSettings.value?.ui));
   logVersion.value++;
 }
 
@@ -90,16 +78,14 @@ export function appendLogLines(batch: LogLine[]) {
  *  不受 paused 影响——回填的是用户主动打开的连接的既有内容,不是新到的实时数据。 */
 export function insertLogLines(at: number, batch: LogLine[]) {
   if (batch.length === 0) return;
-  logLines.splice(Math.min(at, logLines.length), 0, ...batch);
-  const max = maxLogLines();
-  if (logLines.length > max) {
-    logLines.splice(0, logLines.length - max);
-  }
+  retainedLogs.insert(at, batch, resolveLogLimits(cachedSettings.value?.ui));
   logVersion.value++;
 }
 
 export function clearLogLines() {
-  logLines.length = 0;
+  if (logLines.length === 0) return;
+  retainedLogs.clear();
+  logVersion.value++;
 }
 
 // ============ 统计 ============
@@ -341,7 +327,7 @@ export function applySharedSettings(s: Settings) {
   const tk = s.presets?.theme || 'preset-1';
   theme.value = tk;
   applyTheme(tk, customTheme.value);
-  // 保留行数调小了就立刻裁到位:别的窗口/agent 改的也一样,不必等本窗口下一批数据到达
+  // 缓存上限调小就立刻裁到位，别的窗口/agent 改的也一样。
   trimLogLines();
 }
 

@@ -8,6 +8,19 @@ use crate::config::command_group::CommandGroup;
 pub use crate::util::codec::LineEnding;
 
 const CONFIG_VERSION: u32 = 1;
+const MIN_LOG_LINES: usize = 1000;
+const MAX_LOG_LINES: usize = 10000;
+const LOG_MIB: usize = 1024 * 1024;
+
+fn default_log_buffer_max_bytes() -> usize { 4 * LOG_MIB }
+
+fn deserialize_log_lines<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
+    usize::deserialize(deserializer).map(|n| n.clamp(MIN_LOG_LINES, MAX_LOG_LINES))
+}
+
+fn deserialize_log_buffer_bytes<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<usize, D::Error> {
+    usize::deserialize(deserializer).map(|n| n.clamp(LOG_MIB, 16 * LOG_MIB))
+}
 
 #[derive(Clone, Copy, Debug, Default, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -98,7 +111,11 @@ pub struct UiSettings {
     pub display_mode: DisplayMode,
     pub line_ending: LineEnding,
     pub auto_scroll: bool,
+    #[serde(deserialize_with = "deserialize_log_lines")]
     pub ring_buffer_capacity: usize,
+    /// 界面缓存原始数据量上限，不包含浏览器对象与 DOM 的额外占用。
+    #[serde(default = "default_log_buffer_max_bytes", deserialize_with = "deserialize_log_buffer_bytes")]
+    pub log_buffer_max_bytes: usize,
     pub show_timestamp: bool,
     /// 日志区最左侧行号(本次连接期间 index)开关,旧配置无此字段时默认 false
     #[serde(default)]
@@ -475,6 +492,7 @@ impl Settings {
                 line_ending: LineEnding::Crlf,
                 auto_scroll: true,
                 ring_buffer_capacity: 5000,
+                log_buffer_max_bytes: default_log_buffer_max_bytes(),
                 show_timestamp: true,
                 show_line_index: false,
                 log_send: true,
@@ -663,7 +681,8 @@ impl LegacySettings {
                 display_mode: self.ui.display_mode,
                 line_ending: self.ui.line_ending,
                 auto_scroll: self.ui.auto_scroll,
-                ring_buffer_capacity: self.ui.ring_buffer_capacity,
+                ring_buffer_capacity: self.ui.ring_buffer_capacity.clamp(MIN_LOG_LINES, MAX_LOG_LINES),
+                log_buffer_max_bytes: def.ui.log_buffer_max_bytes,
                 show_timestamp: def.ui.show_timestamp,
                 show_line_index: false,
                 log_send: def.ui.log_send,
@@ -720,6 +739,38 @@ mod tests {
         assert_eq!(s.version, 1);
         assert_eq!(s.serial_defaults.baud_rate, 115200);
         assert_eq!(s.ui.ring_buffer_capacity, 5000);
+    }
+
+    #[test]
+    fn test_log_retention_defaults_and_old_capacity() {
+        let mut old = serde_json::to_value(Settings::default_settings()).unwrap();
+        old["ui"].as_object_mut().unwrap().remove("log_buffer_max_bytes");
+        old["ui"]["ring_buffer_capacity"] = serde_json::json!(100000);
+        let restored: Settings = serde_json::from_value(old).unwrap();
+        assert_eq!(restored.ui.ring_buffer_capacity, 10000);
+        let saved = serde_json::to_value(restored).unwrap();
+        assert_eq!(saved["ui"]["log_buffer_max_bytes"], 4 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_log_retention_patch_ranges_and_persistence() {
+        let base = Settings::default_settings();
+        let next = base.apply_patch(&serde_json::json!({"ui": {
+            "ring_buffer_capacity": 100000,
+            "log_buffer_max_bytes": 100 * 1024 * 1024,
+        }})).unwrap();
+        let saved = serde_json::to_value(&next).unwrap();
+        assert_eq!(saved["ui"]["ring_buffer_capacity"], 10000);
+        assert_eq!(saved["ui"]["log_buffer_max_bytes"], 16 * 1024 * 1024);
+        let low = next.apply_patch(&serde_json::json!({"ui": {
+            "ring_buffer_capacity": 0, "log_buffer_max_bytes": 0,
+        }})).unwrap();
+        let serialized = serde_json::to_value(low).unwrap();
+        assert_eq!(serialized["ui"]["ring_buffer_capacity"], 1000);
+        assert_eq!(serialized["ui"]["log_buffer_max_bytes"], 1024 * 1024);
+        for invalid in [serde_json::Value::Null, serde_json::json!("4 MiB"), serde_json::json!(-1)] {
+            assert!(base.apply_patch(&serde_json::json!({"ui":{"log_buffer_max_bytes":invalid}})).is_err());
+        }
     }
 
     #[test]

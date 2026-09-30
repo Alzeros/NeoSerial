@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Log retention settings regression</title>
+<body><div id="log" style="height:480px;width:700px"></div><div id="settings"></div>
+<script type="module">
+import '/src/app.css';
+import {mount,tick} from 'svelte';
+import LogView from '/src/components/LogView.svelte';
+import SettingsDialog from '/src/components/SettingsDialog.svelte';
+import * as stores from '/src/lib/stores.svelte.ts';
+import {getSettings} from '/src/lib/tauri.ts';
+stores.applySharedSettings(await getSettings());
+mount(LogView,{target:document.querySelector('#log')});
+const dialog=mount(SettingsDialog,{target:document.querySelector('#settings')});
+window.logSettingsTest={
+  async show(){stores.applySharedSettings(await getSettings());dialog.show('general');await tick();},
+  async seed(count,size){stores.clearLogLines();stores.appendLogLines(Array.from({length:count},(_,i)=>({
+    raw:Array(size).fill(65),ascii:'A'.repeat(size),ts:String(i+1),ts_ms:0,dir:'rx',line_index:i+1,is_error:false
+  })));await tick();},
+  ui:()=>JSON.parse(JSON.stringify(stores.cachedSettings.value.ui)),
+  rows:()=>stores.logLines.length,
+  stores,tick
+};
+</script></body></html>

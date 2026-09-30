@@ -4,6 +4,12 @@
   import type { LogLine } from '$lib/types';
   import { selectedLogText } from '$lib/logSelection';
 
+  // 每批集合变化只发布一次浅快照，保留记录身份，避免数组移位使所有行重新失效。
+  const renderedLines = $derived.by(() => {
+    logVersion.value;
+    return logLines.slice();
+  });
+
   let scrollContainer: HTMLDivElement;
   // 同步给 App.svelte 用的容器引用（兜底 + 兼容旧调用）
   $effect(() => {
@@ -48,7 +54,11 @@
   let lastHex = false;
   let lastEnc = 'ascii';
 
-  const matchSet = $derived(new Set(matchIndices));
+  const matchSet = $derived(new Set(matchIndices.map(i => renderedLines[i])));
+  // 下标只供搜索定位使用，普通记录期间不为每行维护随淘汰变化的响应式下标。
+  const rowIndices = $derived(
+    searchQuery ? new Map(renderedLines.map((line, i) => [line, i])) : null
+  );
 
   /**
    * 共享搜索正则：行匹配(testRe, 无 g)与高亮(globalRe, 有 g)共用同一 pattern，
@@ -219,7 +229,7 @@
     const q = searchQuery;
     const cs = searchCaseSensitive;
     const ww = searchWholeWord;
-    const lines = logLines;
+    const lines = renderedLines;
     const hex = displayMode.value === 'hex';
     // 编码变化也会改变 renderLine 输出，纳入依赖触发重算
     const enc = textEncoding.value;
@@ -287,8 +297,8 @@
     return segments;
   }
 
-  function isCurrentMatch(i: number): boolean {
-    return matchIndices[currentMatch] === i;
+  function isCurrentMatch(line: LogLine): boolean {
+    return renderedLines[matchIndices[currentMatch]] === line;
   }
 
   // ============ 渲染 ============
@@ -311,6 +321,7 @@
    * - 'gbk'：GBK 解码（TextDecoder label 'gbk'，WebView2/Chromium 支持）
    */
   function renderLine(line: LogLine): string {
+    if (line.omitted_bytes !== undefined) return line.ascii;
     if (displayMode.value === 'hex') {
       return renderHex(line);
     }
@@ -447,12 +458,14 @@
     class="flex-1 overflow-y-auto overflow-x-auto px-3 py-4 outline-none select-text"
     style="font-family: var(--log-font-family); font-size: var(--log-font-size); line-height: var(--log-line-height);"
   >
-    {#each logLines as line, i (i)}
+    <!-- 按记录身份复用行：淘汰最旧日志时，保留行只更新位置，不重写内容。
+         后端行号在旧数据和重连后可能重复，因此不使用 line_index 作 key。 -->
+    {#each renderedLines as line (line)}
       <div
-        data-idx={i}
+        data-idx={rowIndices?.get(line)}
         data-log-row
-        class="flex px-1 py-px {matchSet.has(i)
-          ? (isCurrentMatch(i)
+        class="flex px-1 py-px {searchQuery && matchSet.has(line)
+          ? (isCurrentMatch(line)
             ? 'bg-[rgba(196,138,46,0.18)]'
             : 'bg-[rgba(196,138,46,0.06)]')
           : 'hover:bg-[rgba(255,255,255,0.03)]'}"
@@ -478,7 +491,7 @@
         {/if}
         <!-- 内容：搜索匹配时高亮关键词片段 -->
         <span data-log-field class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
-          {#if searchQuery && matchSet.has(i) && searchMatcher}
+          {#if searchQuery && matchSet.has(line) && searchMatcher}
             {#each highlightSegments(renderLine(line), searchMatcher.globalRe) as seg}
               {#if seg.match}
                 <mark style="background: rgba(196,138,46,0.35); color: inherit; border-radius: 2px; padding: 0 1px;">{seg.text}</mark>

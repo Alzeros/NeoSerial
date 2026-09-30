@@ -15,6 +15,8 @@ export interface LogLine {
   is_error: boolean;
   /** 本次连接期间的行号(tx+rx 共用,开端口=1)。0 表示旧数据(前端显示为空)。 */
   line_index: number;
+  /** 界面缓存省略了超大内容；保留原时间/方向，提示在文本和 HEX 模式均可见。 */
+  omitted_bytes?: number;
 }
 
 export interface ConnectionState {
@@ -150,6 +152,8 @@ export interface Settings {
     line_ending: LineEnding;
     auto_scroll: boolean;
     ring_buffer_capacity: number;
+    /** 界面日志缓存的原始数据字节上限，与进程内存占用不同。 */
+    log_buffer_max_bytes: number;
     show_timestamp: boolean;
     /** 日志区最左侧行号(本次连接期间 index)开关 */
     show_line_index: boolean;

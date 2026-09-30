@@ -6,6 +6,7 @@
   import { X } from 'lucide-svelte';
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
+  import { LOG_MIB, DEFAULT_MAX_LOG_BYTES, MIN_LOG_BYTES, MAX_LOG_BYTES_LIMIT, resolveLogLimits } from '$lib/logRetention';
   import { patchSettings, getMcpStatus, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
   import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
@@ -95,6 +96,7 @@
   let newKeyword = $state('');
   // 日志区保留行数(ui.ring_buffer_capacity)。这个键以前没有消费方,现在接上了
   let editRingBuffer = $state(DEFAULT_MAX_LOG_LINES);
+  let editLogBufferBytes = $state(DEFAULT_MAX_LOG_BYTES);
   // "退出 NeoSerial" 的二次确认:这一下会断开所有连接并停 MCP,不该一击即中
   let exitArmed = $state(false);
   let exitArmTimer: ReturnType<typeof setTimeout> | null = null;
@@ -188,7 +190,7 @@
     codecDefaultEncoding: CodecEncoding; hiddenCodecOperations: string[];
     smsDefaultSmsc: string; smsDefaultEncoding: SmsDefaults['encoding']; smsDefaultValidityPeriod: number | null;
     qcFontSize: number; qcInputHeight: number; qcRowGap: number; qcFontFamily: string;
-    baudRates: number[]; errorKeywords: string[]; ringBuffer: number; theme: string; custom: Record<string, string>;
+    baudRates: number[]; errorKeywords: string[]; ringBuffer: number; logBufferBytes: number; theme: string; custom: Record<string, string>;
     mcpAutoStart: boolean; mcpPort: number;
     kbBaseUrl: string; disabledDocIds: number[]; kbAutoRefresh: boolean; suggestEnabled: boolean;
     suggestMinChars: number; suggestIgnoreAtPrefix: boolean; suggestMaxManual: number; suggestMaxHistory: number;
@@ -213,7 +215,8 @@
       hiddenDataFillPatterns: [...editHiddenDataFillPatterns],
       hiddenChecksumAlgorithms: [...editHiddenChecksumAlgorithms],
       qcFontSize: editQcFontSize, qcInputHeight: editQcInputHeight, qcRowGap: editQcRowGap, qcFontFamily: editQcFontFamily,
-      baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, theme: editTheme, custom: { ...editCustom },
+      baudRates, errorKeywords: [...editErrorKeywords], ringBuffer: editRingBuffer, logBufferBytes: editLogBufferBytes,
+      theme: editTheme, custom: { ...editCustom },
       mcpAutoStart: editMcpAutoStart, mcpPort: editMcpPort,
       kbBaseUrl: editedBase, disabledDocIds: [...editDisabledDocIds],
       kbAutoRefresh: editKbAutoRefresh, suggestEnabled: editSuggestEnabled,
@@ -281,7 +284,9 @@
     // 去空白项 + 去重:列表按关键词本身做 key,手改配置文件塞进重复项会让 {#each} 报错
     editErrorKeywords = [...new Set((cachedSettings.value?.error_keywords ?? []).map((k) => k.trim()).filter(Boolean))];
     newKeyword = '';
-    editRingBuffer = cachedSettings.value?.ui?.ring_buffer_capacity ?? DEFAULT_MAX_LOG_LINES;
+    const logLimits = resolveLogLimits(cachedSettings.value?.ui);
+    editRingBuffer = logLimits.lines;
+    editLogBufferBytes = logLimits.bytes;
     exitArmed = false;
     if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
     const ci = cachedSettings.value?.command_index;
@@ -518,6 +523,7 @@
     if (changed('qcRowGap')) ui.qc_row_gap = cur.qcRowGap;
     if (changed('qcFontFamily')) ui.qc_font_family = cur.qcFontFamily;
     if (changed('ringBuffer')) ui.ring_buffer_capacity = cur.ringBuffer;
+    if (changed('logBufferBytes')) ui.log_buffer_max_bytes = cur.logBufferBytes;
     if (Object.keys(ui).length) patch.ui = ui;
     if (changed('errorKeywords')) patch.error_keywords = cur.errorKeywords;
     const presets: NonNullable<SettingsPatch['presets']> = {};
@@ -606,7 +612,7 @@
     cachedSettings.value = next;
     // 地址与 Key 一样不回显:落盘后清空输入框,状态回到占位文字("已保存")
     editKbBaseUrl = '';
-    // 保留行数调小了就当场裁掉多余的最旧行(与发送历史上限同样的即时生效)
+    // 行数/大小上限调小后立即裁剪。
     trimLogLines();
     // 已应用的值就是新的"打开前原值":之后再取消/Esc 只撤销这之后的预览,不能把已落盘的 4 项翻回去
     origDirLabel = editDirLabel;
@@ -798,10 +804,10 @@
     const dir = editDirLabel === 'full' ? '发送/接收' : 'Tx/Rx';
     return `${latin} · ${editFontSize}px · ${editLineHeight.toFixed(1)} · ${dir}`;
   });
-  /** 收起时看得见当前值:编码 · 保留行数 · 关键词数 */
+  /** 收起时看得见当前值：编码、行数、原始数据大小、关键词数。 */
   const logDataSummary = $derived.by(() => {
     const enc = editTextEncoding === 'utf8' ? 'UTF-8' : editTextEncoding === 'gbk' ? 'GBK' : 'ASCII';
-    return `${enc} · ${editRingBuffer.toLocaleString()} 行 · ${editErrorKeywords.length} 个关键词`;
+    return `${enc} · ${editRingBuffer.toLocaleString()} 行 · ${editLogBufferBytes / LOG_MIB} MiB · ${editErrorKeywords.length} 个关键词`;
   });
 
   const kbSummary = $derived.by(() => {
@@ -1173,16 +1179,15 @@
                   </div>
                 </div>
 
-                <!-- 日志保留行数:对应 ui.ring_buffer_capacity。这个键以前没有任何消费方
-                     (真正生效的是前端写死的 10000),现在接上并给出入口 -->
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志保留行数</div>
+                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志缓存上限</div>
                 <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                  日志区最多保留多少行,超出后从最旧的开始丢。调小后立即生效;文件存盘不受此限。
+                  达到行数或大小上限时，从最旧记录开始淘汰。调小后立即生效；文件存盘不受此限。
                 </div>
                 <div class="flex items-center gap-3 mb-5">
-                  <span class="w-16 text-[13px] text-[var(--foreground)]">行数</span>
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">保留行数</span>
                   <input
                     type="range"
+                    aria-label="日志保留行数"
                     min={MIN_LOG_LINES}
                     max={MAX_LOG_LINES_LIMIT}
                     step="1000"
@@ -1191,6 +1196,24 @@
                     oninput={(e) => (editRingBuffer = Number((e.target as HTMLInputElement).value))}
                   />
                   <span class="w-16 text-right text-[13px] text-[var(--muted-foreground)] tnum">{editRingBuffer.toLocaleString()}</span>
+                </div>
+
+                <div class="flex items-center gap-3 mb-2">
+                  <span class="w-16 text-[13px] text-[var(--foreground)]">数据大小</span>
+                  <input
+                    type="range"
+                    aria-label="日志缓存数据大小"
+                    min={MIN_LOG_BYTES / LOG_MIB}
+                    max={MAX_LOG_BYTES_LIMIT / LOG_MIB}
+                    step="1"
+                    class="flex-1 accent-[var(--primary)]"
+                    value={editLogBufferBytes / LOG_MIB}
+                    oninput={(e) => (editLogBufferBytes = Number((e.target as HTMLInputElement).value) * LOG_MIB)}
+                  />
+                  <span class="w-16 text-right text-[13px] text-[var(--muted-foreground)] tnum">{editLogBufferBytes / LOG_MIB} MiB</span>
+                </div>
+                <div class="text-[12px] text-[var(--muted-foreground)] mb-5">
+                  按原始数据字节计量，实际内存占用会更高。单条内容超过大小上限时会显示省略提示。
                 </div>
 
                 <!-- 错误关键词:Rx 行命中即标红。以前只能手改 settings.json -->
