@@ -66,6 +66,7 @@ await withHeadlessBrowser(async ({ call, evaluate, until, click, fresh, delay, s
 
   await viewport(1216, 800);
   await fresh('main');
+  assert.equal(await evaluate(`document.querySelector('[data-log-empty]')?.textContent.trim()`), '连接串口后开始显示数据', 'empty log area explains the blank state');
   assert.equal(await evaluate(`document.querySelectorAll('tr[data-row] td:last-child button:not([data-add-row]):not(:disabled)').length`), 0, 'row sends stay disabled while disconnected');
   assert.equal(await evaluate(`Boolean(document.querySelector('.send-panel,[data-send-panel]'))`), false, 'no leftover regrouped send panel');
 
@@ -225,6 +226,15 @@ await withHeadlessBrowser(async ({ call, evaluate, until, click, fresh, delay, s
     s.sendText.value='AT+CSQ';return persistenceTest.tick();
   })()`);
   await fits();
+  const dirBadges = await evaluate(`(()=>{
+    const badges=[...document.querySelectorAll('.dir-badge')];
+    return {texts:badges.map(b=>b.textContent.trim()), tinted:badges.every(b=>getComputedStyle(b).backgroundColor!=='rgba(0, 0, 0, 0)'),
+      rowH:document.querySelector('[data-log-row]').getBoundingClientRect().height, emptyGone:!document.querySelector('[data-log-empty]')};
+  })()`);
+  assert.deepEqual(dirBadges.texts, ['Tx', 'Rx', 'Tx', 'Rx', 'Rx', 'Tx', 'Rx', 'Rx'], 'direction badges mirror each log line');
+  assert.equal(dirBadges.tinted, true, 'badges carry their tinted backgrounds in both themes');
+  assert.ok(dirBadges.rowH < 26, `badges keep log rows compact (${dirBadges.rowH}px)`);
+  assert.equal(dirBadges.emptyGone, true, 'empty-state hint hides once logs exist');
   if (output) await screenshot(join(output, '01-main-light.png'));
   await evaluate(`persistenceTest.stores.applyTheme('preset-3');persistenceTest.tick()`);
   await fits();

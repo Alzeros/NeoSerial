@@ -460,6 +460,49 @@ input[type="number"]:focus {
   box-shadow: 0 0 0 3px var(--focus-ring);
 }
 
+/* 焦点环统一:按钮/复选框/多行文本的键盘焦点与输入框、开关同一语言(青绿柔光),
+   不再露出浏览器默认蓝框。focus-visible 只在键盘焦点时触发,鼠标点击不出现。 */
+button:focus-visible,
+[role="button"]:focus-visible,
+input[type="checkbox"]:focus-visible,
+input[type="radio"]:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 1px;
+}
+
+textarea:focus-visible {
+  outline: none;
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+/* 日志方向徽标:恒定宽度,Rx/Tx 淡色底+同色文字;底色由 color-mix 按主题色自动生成,深浅主题通用 */
+.dir-badge {
+  display: inline-block;
+  min-width: 2.4em;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.dir-badge[data-dir="rx"] {
+  color: var(--rx);
+  background: color-mix(in srgb, var(--rx) 14%, transparent);
+}
+
+.dir-badge[data-dir="tx"] {
+  color: var(--tx);
+  background: color-mix(in srgb, var(--tx) 14%, transparent);
+}
+
+.dir-badge:not([data-dir="rx"]):not([data-dir="tx"]) {
+  color: var(--muted-foreground);
+  background: var(--overlay-hover);
+}
+
 input[type="text"]:disabled,
 input[type="number"]:disabled {
   background: var(--background);

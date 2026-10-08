@@ -1,6 +1,6 @@
 <script lang="ts">
   import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
-  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused } from '$lib/stores';
+  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused, connected } from '$lib/stores';
   import type { LogLine } from '$lib/types';
   import { selectedLogText } from '$lib/logSelection';
 
@@ -367,17 +367,6 @@
     return out.trimEnd();
   }
 
-  function dirColor(dir: string): string {
-    switch (dir) {
-      case 'rx':
-        return 'text-[var(--rx)]';
-      case 'tx':
-        return 'text-[var(--tx)]';
-      default:
-        return 'text-[var(--muted-foreground)]';
-    }
-  }
-
   function dirLabel(dir: string): string {
     const full = logDirLabelStyle.value === 'full';
     switch (dir) {
@@ -480,9 +469,7 @@
         {#if logSendContent.value || showTimestamp.value}
           <div class="flex items-baseline gap-2 shrink-0 pr-2 mr-2 border-r border-[var(--border)]">
             {#if logSendContent.value}
-              <span data-log-field class="text-right font-bold {dirColor(line.dir)}">
-                {dirLabel(line.dir)}
-              </span>
+              <span data-log-field class="dir-badge" data-dir={line.dir}>{dirLabel(line.dir)}</span>
             {/if}
             {#if showTimestamp.value}
               <span data-log-field class="text-[var(--muted-foreground)] tabular-nums">{line.ts}</span>
@@ -506,6 +493,14 @@
       </div>
     {/each}
   </div>
+
+  <!-- 空状态：无日志时的占位提示，避免大面积空白被误读为故障 -->
+  {#if renderedLines.length === 0}
+    <div
+      data-log-empty
+      class="pointer-events-none absolute inset-0 flex items-center justify-center text-[13px] text-[var(--muted-foreground)]"
+    >{connected.value ? '等待数据…' : '连接串口后开始显示数据'}</div>
+  {/if}
 
   {#if ctxMenu.show}
     <div
