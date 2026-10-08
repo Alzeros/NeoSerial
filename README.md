@@ -261,10 +261,13 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 ## 测试
 
 ```bash
-cargo test           # Rust 单元测试（207 passed）
-npm run test:unit    # 指令联想匹配的纯函数单测（11 tests）
-npm run check        # Svelte/TypeScript 类型检查
+cargo test                # Rust 单元测试
+npm run test:unit         # 前端纯函数与源码契约测试
+npm run test:persistence  # 面板自动保存、设置保存并发的隔离浏览器回归测试
+npm run check             # Svelte/TypeScript 类型检查
 ```
+
+`test:persistence` 不需要 Rust 或串口设备：它启动临时 Vite 服务和独立的无界面 Chrome/Edge，使用模拟 IPC，不读取或修改真实配置。需本机安装 Chromium 系浏览器；自动查找失败时可用 `BROWSER_BINARY` 指定浏览器可执行文件路径。
 
 ## 源码
 

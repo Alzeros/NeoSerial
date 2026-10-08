@@ -1,7 +1,7 @@
 <script lang="ts">
   import { untrack } from 'svelte';
   // 帧构造器表单 + 实时预览 + 发送/填入/模板。
-  // 表单直接 bind tool.config.xxx($state 深响应):ScriptSequencer 的自动保存 effect 深度
+  // 表单直接 bind tool.config.xxx($state 深响应):SequencePersistence 的自动保存 effect 深度
   // 订阅 scriptModules,改动即落盘,这里不做额外 clone。
   import CustomSelect from './ui/CustomSelect.svelte';
   import { buildFrame, send, type FrameResult } from '$lib/tauri';

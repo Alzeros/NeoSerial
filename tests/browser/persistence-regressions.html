@@ -1,0 +1,102 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Isolated persistence regressions</title>
+<body><div id="app"></div>
+<script type="module">
+import '/src/app.css';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
+import { mount, tick } from 'svelte';
+import * as stores from '/src/lib/stores.svelte.ts';
+import { presetScriptModules } from '/src/lib/types.ts';
+
+// All native commands are mocked. This page never reads or writes the user's profile.
+const label = new URL(location.href).searchParams.get('window') === 'settings' ? 'settings' : 'main';
+mockWindows(label);
+const clone = value => JSON.parse(JSON.stringify(value));
+const saved = {
+  ui: {
+    log_font_size: 14, log_line_height: 1.6, log_dir_label: 'short', log_font_latin: 'default',
+    log_font_cjk: 'default', text_encoding: 'Ascii', show_timestamp: true, log_send: true,
+    ring_buffer_capacity: 5000, log_buffer_max_bytes: 4194304, line_ending: 'CrLf',
+    display_mode: 'Ascii', auto_scroll: true,
+  },
+  presets: { theme: 'preset-1', baud_rates: [9600, 115200, 921600] },
+  mcp: { port: 34594, auto_start: true }, command_index: {}, error_keywords: [],
+  serial_defaults: { baud_rate: 115200, data_bits: 'Eight', parity: 'None', stop_bits: 'One', flow_control: 'None' },
+};
+let sequence = presetScriptModules();
+sequence[0].pages[0].commands[0].command = 'ORIGINAL';
+const calls = [], gates = new Map(), failures = new Set();
+const merge = (target, patch) => {
+  for (const [key, value] of Object.entries(patch)) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      target[key] ??= {};
+      merge(target[key], value);
+    } else target[key] = clone(value);
+  }
+};
+mockIPC(async (cmd, args) => {
+  // Snapshot IPC arguments at invocation, not after the artificial disk delay.
+  const payload = args ? clone(args) : null;
+  calls.push({ cmd, args: payload });
+  const gate = gates.get(cmd);
+  if (gate) {
+    gates.delete(cmd);
+    await gate.promise;
+  }
+  if (failures.delete(cmd)) throw new Error('isolated save failure');
+  switch (cmd) {
+    case 'get_settings': return clone(saved);
+    case 'patch_settings':
+      merge(saved, payload.patch);
+      await emit('settings-changed', {});
+      return clone(saved);
+    case 'load_sequence_auto': return clone(sequence);
+    case 'save_sequence_auto':
+      sequence = payload.data;
+      await emit('sequence-changed', { source: label });
+      return;
+    case 'take_pending_settings': return { section: 'appearance', ext_module: null, anchor: null };
+    case 'get_window_conn_state': return { connected: false };
+    case 'take_pending_takeover': return null;
+    case 'command_index_load': return { documents: [], commands: [], fetched_at: null };
+    case 'send_history_load':
+    case 'list_ports':
+    case 'get_mcp_only_connections': return [];
+    case 'kb_credential_status': return { user_key: 'unset', builtin_base_url: false, builtin_api_key: false };
+    case 'data_dirs': return { config: '/isolated-test-only', local: '/isolated-test-only', mode: 'standard' };
+    case 'plugin:app|version': return 'test';
+    case 'get_mcp_status': return { running: false, port: null };
+    case 'get_logging_status': return { active: false, path: null };
+    case 'plugin:window|is_maximized': return false;
+    default: return null;
+  }
+}, { shouldMockEvents: true });
+
+const { preloadBeforeMount } = await import('/src/lib/startup.ts');
+await preloadBeforeMount();
+const App = (await import('/src/App.svelte')).default;
+mount(App, { target: document.querySelector('#app') });
+await tick();
+window.persistenceTest = {
+  stores, calls, tick, run: new URL(location.href).searchParams.get('run'),
+  saved: () => clone(saved), sequence: () => clone(sequence),
+  button: text => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === text)
+    ?? [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(text)),
+  holdNext(cmd) {
+    let release;
+    const promise = new Promise(resolve => { release = resolve; });
+    gates.set(cmd, { promise });
+    this.release = release;
+  },
+  release() {},
+  failNext(cmd) { failures.add(cmd); },
+  async remoteCommand(text) {
+    sequence[0].pages[0].commands[0].command = text;
+    await emit('sequence-changed', { source: 'win-other' });
+  },
+};
+</script>
+</body></html>

@@ -4,7 +4,7 @@
   import { emit } from '@tauri-apps/api/event';
   import { getVersion } from '@tauri-apps/api/app';
   import { X } from 'lucide-svelte';
-  import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, trimLogLines, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
+  import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, applySharedSettings, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
   import { LOG_MIB, DEFAULT_MAX_LOG_BYTES, MIN_LOG_BYTES, MAX_LOG_BYTES_LIMIT, resolveLogLimits } from '$lib/logRetention';
   import { patchSettings, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
@@ -235,6 +235,8 @@
   );
   // 保存失败的原因(值无效、写盘失败),显示在按钮栏;下次应用/保存或重开对话框时清掉
   let saveError = $state<string | null>(null);
+  // 只串行化保存，不锁编辑控件；等待 IPC 时产生的新改动仍是未保存草稿。
+  let saving = $state(false);
 
   export function show(
     section: Section = 'about',
@@ -391,6 +393,7 @@
 
   // 打开独立主题编辑器窗口（单例，已存在则聚焦）
   async function openThemeEditorWindow() {
+    if (saving) return;
     saveError = null;
     try {
       // 独立窗口关闭后 JS 上下文会销毁，必须先等目标窗口创建/聚焦成功。
@@ -488,8 +491,7 @@
 
   /** 只把"相对上次加载/应用变了"的编辑项装进补丁。整份提交会把别处(另一窗口、agent、
    *  主题编辑器)在本对话框打开期间改过的字段用这里的旧副本冲回去;只交差异就互不干扰。 */
-  function buildPatch(): SettingsPatch {
-    const cur = currentEdits();
+  function buildPatch(cur: EditValues): SettingsPatch {
     const base = lastAppliedEdits;
     const changed = (k: keyof EditValues) => !base || JSON.stringify(cur[k]) !== JSON.stringify(base[k]);
     const patch: SettingsPatch = {};
@@ -550,6 +552,7 @@
    *  返回是否成功:失败(端口留空/越界、写盘出错)时 store 不动、原因显示在按钮栏,"保存"不关窗——
    *  原先失败只进 console,对话框照常关掉、界面按新值显示,重启后全部回到旧值。 */
   async function applyEdits(): Promise<boolean> {
+    if (saving) return false;
     saveError = null;
     if (!CODEC_ENCODINGS.some(option => option.value === editCodecDefaultEncoding)) {
       saveError = '请选择有效的编解码默认文本编码';
@@ -569,54 +572,60 @@
       saveError = 'MCP 端口须为 1024–65535 的整数';
       return false;
     }
-    // Key 走独立通道(不进 settings.json / 不下发给前端与 agent):填了就存,存不进就别继续
-    const newKey = editKbApiKey.trim();
-    if (newKey) {
-      try {
-        await kbSetApiKey(newKey);
-      } catch (e) {
-        console.error('保存知识库 Key 失败:', e);
-        saveError = `保存 API Key 失败:${e}`;
-        return false;
-      }
-      editKbApiKey = '';
-      showApiKey = false;
-      keyCleared = false;
-      kbCred = { ...kbCred, user_key: 'set' };
-    }
-    const patch = buildPatch();
-    if (Object.keys(patch).length === 0) return true;
-    let next: Settings;
+    // 在第一次 await（包括凭据保存）之前固定整份提交。之后仍允许编辑，
+    // 但补丁、保存成功的基准只能认这份快照，不能把后来输入的值一起当作已落盘。
+    const submitted = currentEdits();
+    const submittedKeyInput = editKbApiKey;
+    const submittedBaseInput = editKbBaseUrl;
+    const patch = buildPatch(submitted);
+    saving = true;
     try {
-      next = await patchSettings(patch);
-    } catch (e) {
-      console.error('保存设置失败:', e);
-      saveError = `保存失败:${e}`;
-      return false;
+      // Key 独立保存、不进入 Settings。若等待期间又输入了新 Key，保留新输入。
+      const newKey = submittedKeyInput.trim();
+      if (newKey) {
+        try {
+          await kbSetApiKey(newKey);
+        } catch (e) {
+          console.error('保存知识库 Key 失败:', e);
+          saveError = `保存 API Key 失败:${e}`;
+          return false;
+        }
+        if (editKbApiKey === submittedKeyInput) {
+          editKbApiKey = '';
+          showApiKey = false;
+        }
+        keyCleared = false;
+        kbCred = { ...kbCred, user_key: 'set' };
+      }
+      if (Object.keys(patch).length > 0) {
+        let next: Settings;
+        try {
+          next = await patchSettings(patch);
+        } catch (e) {
+          console.error('保存设置失败:', e);
+          saveError = `保存失败:${e}`;
+          return false;
+        }
+        // store 和取消时的恢复值只采用后端实际保存的结果，而不是仍可继续编辑的副本。
+        applySharedSettings(next);
+        origDirLabel = logDirLabelStyle.value;
+        origFontLatin = logFontLatin.value;
+        origFontCJK = logFontCJK.value;
+        origTextEncoding = textEncoding.value;
+        // 已提交的地址不回显，但不能清掉等待期间输入的另一个地址。
+        if (editKbBaseUrl === submittedBaseInput) editKbBaseUrl = '';
+      }
+      lastAppliedEdits = submitted;
+      if (hasUnsavedChanges) {
+        // 保存结果可能刷新了界面；新的草稿继续预览，但不写进已保存的 store/基准。
+        applyTheme(editTheme, editCustom);
+        applyLogFont(editFontSize, editLineHeight, editFontLatin, editFontCJK);
+        emitPreview();
+      }
+      return true;
+    } finally {
+      saving = false;
     }
-    // 落盘成功再把预览值同步进 store(主题/字体/编码/波特率),与 settings 一致
-    presetBaudRates.value = next.presets.baud_rates;
-    theme.value = editTheme;
-    customTheme.value = { ...editCustom };
-    logFontSize.value = editFontSize;
-    logLineHeight.value = editLineHeight;
-    logDirLabelStyle.value = editDirLabel;
-    logFontLatin.value = editFontLatin;
-    logFontCJK.value = editFontCJK;
-    textEncoding.value = editTextEncoding;
-    cachedSettings.value = next;
-    // 地址与 Key 一样不回显:落盘后清空输入框,状态回到占位文字("已保存")
-    editKbBaseUrl = '';
-    // 行数/大小上限调小后立即裁剪。
-    trimLogLines();
-    // 已应用的值就是新的"打开前原值":之后再取消/Esc 只撤销这之后的预览,不能把已落盘的 4 项翻回去
-    origDirLabel = editDirLabel;
-    origFontLatin = editFontLatin;
-    origFontCJK = editFontCJK;
-    origTextEncoding = editTextEncoding;
-    // 应用完成:把脏检测/补丁基准刷新到当前,应用按钮重新置灰
-    lastAppliedEdits = currentEdits();
-    return true;
   }
 
   /** 应用:保存但不关窗,便于继续调其他设置项。 */
@@ -624,9 +633,9 @@
     await applyEdits();
   }
 
-  /** 保存:应用 + 关窗;保存失败留在对话框里让用户看到原因。 */
+  /** 保存成功且没有后来输入的草稿才关窗；否则保留窗口，允许继续应用/保存。 */
   async function handleSave() {
-    if (await applyEdits()) await closeWindow();
+    if (await applyEdits() && !hasUnsavedChanges) await closeWindow();
   }
 
   // 刷新指令库:用编辑框里的地址/Key(不必先保存)。缓存更新后后端广播,commandIndex store 自己重载。
@@ -900,6 +909,7 @@
   }
 
   async function handleCancel() {
+    if (saving) return; // 避免关闭 JS 上下文后，尚在执行的保存才写入磁盘。
     // 取消：恢复打开前的主题与字体（撤销预览，含自定义色板改动）
     applyTheme(theme.value, customTheme.value);
     applyLogFont(logFontSize.value, logLineHeight.value, logFontLatin.value, logFontCJK.value);
@@ -1349,7 +1359,7 @@
                     <div class="text-[13px] font-medium text-[var(--foreground)]">编辑配色</div>
                     <div class="text-[11px] text-[var(--muted-foreground)]">实时预览</div>
                   </div>
-                  <button class="btn btn-primary flex-shrink-0" style="padding: 4px 10px; font-size: 12px; white-space: nowrap;" onclick={openThemeEditorWindow}>
+                  <button class="btn btn-primary flex-shrink-0" style="padding: 4px 10px; font-size: 12px; white-space: nowrap;" disabled={saving} onclick={openThemeEditorWindow}>
                     打开 →
                   </button>
                 </div>
@@ -1936,15 +1946,15 @@
         {:else}
           <span class="flex-1"></span>
         {/if}
-        <button class="btn btn-ghost" style="padding: 4px 12px;" onclick={handleCancel}>取消</button>
+        <button class="btn btn-ghost" style="padding: 4px 12px;" disabled={saving} onclick={handleCancel}>取消</button>
         <button
           class="btn btn-secondary"
           style="padding: 4px 12px;"
-          disabled={!hasUnsavedChanges}
-          title={hasUnsavedChanges ? '保存但不关闭,可继续调整其他设置' : '没有可应用的改动'}
+          disabled={saving || !hasUnsavedChanges}
+          title={saving ? '正在保存本次修改' : hasUnsavedChanges ? '保存但不关闭,可继续调整其他设置' : '没有可应用的改动'}
           onclick={handleApply}
         >应用</button>
-        <button class="btn btn-primary" style="padding: 4px 12px;" onclick={handleSave}>保存</button>
+        <button class="btn btn-primary" style="padding: 4px 12px;" disabled={saving} onclick={handleSave}>保存</button>
       </div>
     </div>
   </div>

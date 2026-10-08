@@ -7,6 +7,7 @@
   import BottomPanel from '$components/BottomPanel.svelte';
   import StatusBar from '$components/StatusBar.svelte';
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
+  import SequencePersistence from '$components/SequencePersistence.svelte';
   import ThemeEditor from '$components/ThemeEditor.svelte';
   import SettingsDialog from '$components/SettingsDialog.svelte';
   import {
@@ -586,6 +587,8 @@
 {:else if isSettingsWindow}
   <SettingsDialog standalone={true} />
 {:else}
+<!-- 持久化跟随串口窗口，不随右侧脚本面板的显隐卸载。 -->
+<SequencePersistence />
 {#if showModeNotification.value && connectionMode.mode === 'shared'}
   <div class="fixed top-3 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-md text-[13px] font-medium shadow-lg flex items-center gap-2"
        style="background: var(--warning); color: var(--primary-foreground);">
