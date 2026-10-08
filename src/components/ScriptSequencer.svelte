@@ -85,7 +85,7 @@
     {#if settingsTarget}
       <button
         type="button"
-        class="ml-auto shrink-0 flex items-center justify-center rounded transition-colors text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer"
+        class="ml-auto shrink-0 flex items-center justify-center rounded transition-colors text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer"
         style="width: 22px; height: 22px;"
         title={settingsTarget.title}
         onclick={() => { settingsRequest.section = 'extensions'; settingsRequest.extModule = settingsTarget!.module; }}

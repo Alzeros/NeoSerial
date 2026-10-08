@@ -932,7 +932,7 @@
 {#if open}
   <div
     class={standalone ? 'flex h-screen w-screen overflow-hidden' : 'fixed inset-0 z-[100] flex items-center justify-center'}
-    style={standalone ? 'background: var(--background);' : 'background: rgba(0,0,0,0.35);'}
+    style={standalone ? 'background: var(--background);' : 'background: var(--overlay-mask);'}
   >
     <div
       class={standalone ? 'h-full w-full border flex flex-col' : 'rounded-lg shadow-xl w-[600px] border flex flex-col'}
@@ -943,15 +943,15 @@
       <div class="flex items-center h-8 shrink-0 border-b border-[var(--border)]">
         {#if standalone}
           <div data-tauri-drag-region class="flex h-full flex-1 items-center px-3 text-[13px] font-medium text-[var(--muted-foreground)] select-none">设置</div>
-          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer" onclick={handleMinimize} title="最小化">−</button>
-          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer" onclick={handleToggleMaximize} title="最大化/还原">
+          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer" onclick={handleMinimize} title="最小化">−</button>
+          <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer" onclick={handleToggleMaximize} title="最大化/还原">
             <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" stroke-width="1" fill="none" rx="1" /></svg>
           </button>
           <button class="flex h-full w-10 items-center justify-center text-[var(--muted-foreground)] hover:bg-[var(--error)] hover:text-white cursor-pointer" onclick={handleCancel} title="关闭 (Esc)"><X size={14} /></button>
         {:else}
           <div class="flex-1 px-5 text-[15px] font-semibold text-[var(--foreground)]">设置</div>
           <button
-            class="flex items-center justify-center w-6 h-6 mr-3 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+            class="flex items-center justify-center w-6 h-6 mr-3 rounded text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
             onclick={handleCancel}
             title="关闭 (Esc)"
           ><X size={15} /></button>
@@ -965,8 +965,8 @@
           {#each sections as s}
             <button
               class="block w-full text-left px-4 py-2 text-[13px] transition-colors {activeSection === s.key
-                ? 'bg-[var(--border-subtle)] text-[var(--primary)] font-medium border-l-2 border-[var(--primary)]'
-                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] border-l-2 border-transparent'}"
+                ? 'bg-[var(--overlay-hover)] text-[var(--primary)] font-medium border-l-2 border-[var(--primary)]'
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] border-l-2 border-transparent'}"
               onclick={() => {
                 activeSection = s.key;
                 // 点左侧导航一律回到该页的顶层:扩展页停在上次进过的子页(指令联想/MCP…)时,
@@ -1127,13 +1127,13 @@
                     <button
                       class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'short'
                         ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                        : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                        : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer'}"
                       onclick={() => changeDirLabel('short')}
                     >Tx / Rx</button>
                     <button
                       class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'full'
                         ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                        : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                        : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer'}"
                       onclick={() => changeDirLabel('full')}
                     >发送 / 接收</button>
                   </div>
@@ -1164,7 +1164,7 @@
                       <button
                         class="px-3 py-1 rounded-md border text-[13px] transition-colors {editTextEncoding === enc.v
                           ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                          : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] cursor-pointer'}"
+                          : 'border-[var(--border)] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer'}"
                         onclick={() => selectTextEncoding(enc.v as 'ascii' | 'utf8' | 'gbk')}
                       >{enc.l}</button>
                     {/each}
@@ -1372,7 +1372,7 @@
                 扩展功能按模块独立管理。点开进入各自设置:快捷指令常驻开启;数据处理、指令联想与 MCP 可独立开关。
               </div>
               <button
-                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--overlay-hover)] mb-2"
                 style="border: 1px solid var(--border);"
                 onclick={() => (extModule = 'quick')}
               >
@@ -1381,7 +1381,7 @@
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
               <button
-                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--overlay-hover)] mb-2"
                 style="border: 1px solid var(--border);"
                 onclick={() => (extModule = 'data')}
               >
@@ -1390,7 +1390,7 @@
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
               <button
-                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)] mb-2"
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--overlay-hover)] mb-2"
                 style="border: 1px solid var(--border);"
                 onclick={() => (extModule = 'suggest')}
               >
@@ -1399,7 +1399,7 @@
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
               <button
-                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--border-subtle)]"
+                class="flex items-center w-full text-left px-3 py-3 rounded transition-colors hover:bg-[var(--overlay-hover)]"
                 style="border: 1px solid var(--border);"
                 onclick={() => (extModule = 'mcp')}
               >

@@ -653,19 +653,19 @@
       onmousedown={(e) => e.stopPropagation()}
     >
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] transition-colors cursor-pointer {inputMenu.hasSelection ? 'hover:bg-[var(--border-subtle)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] opacity-40 cursor-default'}"
+        class="block w-full text-left px-3 py-1.5 text-[13px] transition-colors cursor-pointer {inputMenu.hasSelection ? 'hover:bg-[var(--overlay-hover)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] opacity-40 cursor-default'}"
         onclick={inputCopy}
       >复制</button>
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] transition-colors cursor-pointer {inputMenu.canCut ? 'hover:bg-[var(--border-subtle)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] opacity-40 cursor-default'}"
+        class="block w-full text-left px-3 py-1.5 text-[13px] transition-colors cursor-pointer {inputMenu.canCut ? 'hover:bg-[var(--overlay-hover)] text-[var(--foreground)]' : 'text-[var(--muted-foreground)] opacity-40 cursor-default'}"
         onclick={inputCut}
       >剪切</button>
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] text-[var(--foreground)] transition-colors cursor-pointer"
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] text-[var(--foreground)] transition-colors cursor-pointer"
         onclick={inputPaste}
       >粘贴</button>
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] text-[var(--foreground)] transition-colors cursor-pointer"
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] text-[var(--foreground)] transition-colors cursor-pointer"
         onclick={inputSelectAll}
       >全选</button>
     </div>
@@ -675,7 +675,7 @@
   {#if closeGuard.open}
     <div
       class="fixed inset-0 z-[100] flex items-center justify-center"
-      style="background: rgba(0,0,0,0.35);"
+      style="background: var(--overlay-mask);"
       onclick={() => (closeGuard.open = false)}
       onkeydown={(e) => { if (e.key === 'Escape') closeGuard.open = false; }}
       role="presentation"

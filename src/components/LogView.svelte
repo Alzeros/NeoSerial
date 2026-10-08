@@ -410,27 +410,27 @@
         style="width: 160px; height: 28px; font-size: 13px; padding: 0 8px; border-radius: var(--radius-sm);"
       />
       <button
-        class="flex items-center justify-center w-7 h-7 rounded text-[13px] font-medium transition-colors {searchCaseSensitive
+        class="flex items-center justify-center w-7 h-7 rounded-md text-[13px] font-medium transition-colors {searchCaseSensitive
           ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-          : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+          : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
         onclick={() => (searchCaseSensitive = !searchCaseSensitive)}
         title="区分大小写"
       >Aa</button>
       <button
-        class="flex items-center justify-center w-7 h-7 rounded transition-colors {searchWholeWord
+        class="flex items-center justify-center w-7 h-7 rounded-md transition-colors {searchWholeWord
           ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-          : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+          : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
         onclick={() => (searchWholeWord = !searchWholeWord)}
         title="全字匹配"
       ><WholeWord size={15} /></button>
       <button
-        class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        class="flex items-center justify-center w-7 h-7 rounded-md text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         onclick={prevMatch}
         disabled={matchIndices.length === 0}
         title="上一个 (Shift+Enter)"
       ><ChevronUp size={15} /></button>
       <button
-        class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+        class="flex items-center justify-center w-7 h-7 rounded-md text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
         onclick={nextMatch}
         disabled={matchIndices.length === 0}
         title="下一个 (Enter)"
@@ -439,7 +439,7 @@
         {matchIndices.length > 0 ? `${currentMatch + 1}/${matchIndices.length}` : '0/0'}
       </span>
       <button
-        class="flex items-center justify-center w-7 h-7 rounded text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] transition-colors"
+        class="flex items-center justify-center w-7 h-7 rounded-md text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] transition-colors"
         onclick={closeSearch}
         title="关闭 (Esc)"
       ><X size={15} /></button>
@@ -466,9 +466,9 @@
         data-log-row
         class="flex px-1 py-px {searchQuery && matchSet.has(line)
           ? (isCurrentMatch(line)
-            ? 'bg-[rgba(196,138,46,0.18)]'
-            : 'bg-[rgba(196,138,46,0.06)]')
-          : 'hover:bg-[rgba(255,255,255,0.03)]'}"
+            ? 'bg-[var(--search-hit-active)]'
+            : 'bg-[var(--search-hit)]')
+          : 'hover:bg-[var(--overlay-hover)]'}"
       >
         <!-- 行号(本次连接期间 index,最左列,等宽数字右对齐) -->
         {#if showLineIndex.value}
@@ -494,7 +494,7 @@
           {#if searchQuery && matchSet.has(line) && searchMatcher}
             {#each highlightSegments(renderLine(line), searchMatcher.globalRe) as seg}
               {#if seg.match}
-                <mark style="background: rgba(196,138,46,0.35); color: inherit; border-radius: 2px; padding: 0 1px;">{seg.text}</mark>
+                <mark style="background: var(--search-mark); color: inherit; border-radius: 2px; padding: 0 1px;">{seg.text}</mark>
               {:else}
                 {seg.text}
               {/if}
@@ -515,20 +515,20 @@
     >
       {#if ctxMenu.hasSelection}
         <button
-          class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+          class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] transition-colors cursor-pointer"
           onclick={ctxCopy}
         >复制</button>
       {/if}
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] transition-colors cursor-pointer"
         onclick={ctxClear}
       >清空</button>
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] transition-colors cursor-pointer"
         onclick={ctxTogglePause}
       >{paused.value ? '继续' : '暂停'}</button>
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] transition-colors cursor-pointer"
         onclick={ctxSearch}
       >搜索</button>
     </div>

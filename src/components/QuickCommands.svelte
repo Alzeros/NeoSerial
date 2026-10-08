@@ -549,9 +549,9 @@
         <tr class="text-[var(--muted-foreground)]">
           <th class="w-7 px-0.5 py-1 text-center font-medium">
             <button
-              class="w-full rounded px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false)
+              class="w-full rounded-md px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enabled) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)]'}"
               title="全选/取消选中"
               onclick={() => {
                 const page = currentModulePages()[activeScriptPage.value];
@@ -564,9 +564,9 @@
           <th class="px-1 py-1 text-center font-medium">命令</th>
           <th class="w-[34px] px-0.5 py-1 text-center font-medium">
             <button
-              class="w-full rounded px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.hex) ?? false)
+              class="w-full rounded-md px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.hex) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)]'}"
               title="全选/取消 Hex"
               onclick={() => {
                 const page = currentModulePages()[activeScriptPage.value];
@@ -578,9 +578,9 @@
           </th>
           <th class="w-[26px] px-0.5 py-1 text-center font-medium">
             <button
-              class="w-full rounded px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enter) ?? false)
+              class="w-full rounded-md px-0.5 py-0.5 text-[12px] font-medium transition-colors whitespace-nowrap {(currentModulePages()[activeScriptPage.value]?.commands.every((c: any) => c.enter) ?? false)
                 ? 'bg-[var(--primary)] text-[var(--primary-foreground)]'
-                : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)]'}"
+                : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)]'}"
               title="全选/取消 回车"
               onclick={() => {
                 const page = currentModulePages()[activeScriptPage.value];
@@ -599,7 +599,7 @@
         {#each currentModulePages()[activeScriptPage.value]?.commands as cmd, i (cmd)}
           <tr
             data-row
-            class="border-t border-[var(--border-subtle)] hover:bg-[var(--border-subtle)]"
+            class="border-t border-[var(--border-subtle)] hover:bg-[var(--overlay-hover)]"
             oncontextmenu={(e) => handleRowContextMenu(e, i)}
           >
             <td class="px-0.5 py-1 text-center text-[var(--muted-foreground)]">
@@ -614,7 +614,7 @@
                   data-row-toggle
                   class="inline-flex items-center justify-center w-5 h-5 rounded-md border text-[10px] font-medium transition-colors cursor-pointer {cmd.enabled
                     ? 'border-[var(--primary)] bg-[var(--primary)] text-[var(--primary-foreground)]'
-                    : 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--muted-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]'}"
+                    : 'border-[var(--border)] bg-[var(--overlay-hover)] text-[var(--muted-foreground)] hover:border-[var(--primary)] hover:text-[var(--primary)]'}"
                   title={cmd.enabled ? '已选中（点击取消）' : '未选中（点击选中）'}
                   onclick={() => (cmd.enabled = !cmd.enabled)}
                 >{i + 1}</button>
@@ -652,8 +652,8 @@
             <td class="px-1 py-1">
               <!-- 注释显示上限 6 字：超长切前 5 字加省略号，完整注释在悬停提示；宽度恒定 -->
               <button
-                class="w-full rounded border px-1 py-1 text-[13px] transition-colors truncate text-center {connected.value
-                  ? 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
+                class="w-full rounded-md border px-1 py-1 text-[13px] transition-colors truncate text-center {connected.value
+                  ? 'border-[var(--border)] bg-[var(--overlay-hover)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
                   : 'border-[var(--border-subtle)] text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'}"
                 style="padding: 2px 3px; line-height: 1;"
                 title={cmd.note ? `发送：${cmd.note}` : (connected.value ? '点击发送此行（右键编辑注释）' : '未连接')}
@@ -685,16 +685,16 @@
     <!-- 第一层：次级操作（ghost 文字按钮 + 调整顺序开关） -->
     <div class="flex items-center gap-2 px-3 py-2">
       <button
-        class="h-7 -ml-2 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
+        class="h-7 -ml-2 px-3 rounded-md text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
         onclick={handleSaveConfig}
       >另存为</button>
       <button
-        class="h-7 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
+        class="h-7 px-3 rounded-md text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
         onclick={handleLoadConfig}
       >加载</button>
       <div class="w-px h-4 bg-[var(--border)] mx-1"></div>
       <button
-        class="h-7 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--error)] hover:border-[var(--error)] transition-colors"
+        class="h-7 px-3 rounded-md text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--error)] hover:border-[var(--error)] transition-colors"
         onclick={handleClearConfig}
       >清空</button>
       <label class="switch ml-auto {scriptRunning.value ? 'opacity-50 pointer-events-none' : ''}">
@@ -763,7 +763,7 @@
       </div>
       <!-- 底部 2px 进度条：仅运行中显示，进度=已发送/总发送 -->
       {#if scriptRunning.value}
-        <div class="absolute left-0 right-0 bottom-0 h-0.5 bg-[var(--border-subtle)]">
+        <div class="absolute left-0 right-0 bottom-0 h-0.5 bg-[var(--overlay-hover)]">
           <div
             class="h-full bg-[var(--primary)] transition-[width] duration-150"
             style="width: {progressPct}%;"
@@ -783,13 +783,13 @@
     onclick={(e) => e.stopPropagation()}
   >
     <button
-      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer"
       onclick={handleRenamePageFromMenu}
     >
       重命名页签
     </button>
     <button
-      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--border-subtle)] cursor-pointer {currentModulePages().length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--overlay-hover)] cursor-pointer {currentModulePages().length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
       disabled={currentModulePages().length <= 1}
       onclick={handleDeletePageFromMenu}
     >
@@ -802,7 +802,7 @@
 {#if confirmDelete.open}
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
-    style="background: rgba(0,0,0,0.35);"
+    style="background: var(--overlay-mask);"
   >
     <div
       class="rounded-lg shadow-xl w-[300px] border"
@@ -831,7 +831,7 @@
 {#if renameState.open}
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
-    style="background: rgba(0,0,0,0.35);"
+    style="background: var(--overlay-mask);"
   >
     <div
       class="rounded-lg shadow-xl w-[300px] border"
@@ -866,13 +866,13 @@
     onclick={(e) => e.stopPropagation()}
   >
     <button
-      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--border-subtle)] cursor-pointer"
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--foreground)] hover:bg-[var(--overlay-hover)] cursor-pointer"
       onclick={handleEditNoteFromMenu}
     >
       编辑注释
     </button>
     <button
-      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--border-subtle)] cursor-pointer {currentModulePages()[activeScriptPage.value]?.commands.length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
+      class="flex items-center w-full px-3 py-1.5 text-[13px] text-left text-[var(--error)] hover:bg-[var(--overlay-hover)] cursor-pointer {currentModulePages()[activeScriptPage.value]?.commands.length <= 1 ? 'opacity-40 cursor-not-allowed' : ''}"
       disabled={currentModulePages()[activeScriptPage.value]?.commands.length <= 1}
       onclick={handleDeleteRowFromMenu}
     >
@@ -885,7 +885,7 @@
 {#if noteEdit.open}
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
-    style="background: rgba(0,0,0,0.35);"
+    style="background: var(--overlay-mask);"
   >
     <div
       class="rounded-lg shadow-xl w-[320px] border"
@@ -917,7 +917,7 @@
 {#if confirmClear.open}
   <div
     class="fixed inset-0 z-[100] flex items-center justify-center"
-    style="background: rgba(0,0,0,0.35);"
+    style="background: var(--overlay-mask);"
   >
     <div
       class="rounded-lg shadow-xl w-[300px] border"

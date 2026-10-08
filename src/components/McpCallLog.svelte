@@ -139,12 +139,12 @@
     >
       {#if ctxMenu.hasSelection}
         <button
-          class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+          class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] transition-colors cursor-pointer"
           onclick={ctxCopy}
         >复制</button>
       {/if}
       <button
-        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--border-subtle)] transition-colors cursor-pointer"
+        class="block w-full text-left px-3 py-1.5 text-[13px] hover:bg-[var(--overlay-hover)] transition-colors cursor-pointer"
         onclick={ctxClear}
         disabled={records.length === 0}
         style={records.length === 0 ? 'opacity: 0.45; cursor: default;' : ''}

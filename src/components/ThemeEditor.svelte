@@ -176,14 +176,14 @@
       主题编辑器
     </div>
     <button
-      class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+      class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
       onclick={handleMinimize}
       title="最小化"
     >
       <svg width="11" height="11" viewBox="0 0 12 12" fill="none"><rect x="1" y="5.5" width="10" height="1" fill="currentColor" /></svg>
     </button>
     <button
-      class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+      class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
       onclick={handleToggleMaximize}
       title="最大化/还原"
     >
@@ -207,7 +207,7 @@
     </span>
     {#each themeMeta as t}
       <button
-        class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] cursor-pointer transition-colors border-[var(--border)] text-[var(--foreground)] hover:border-[var(--border-strong)] hover:bg-[var(--border-subtle)]"
+        class="inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[12px] cursor-pointer transition-colors border-[var(--border)] text-[var(--foreground)] hover:border-[var(--border-strong)] hover:bg-[var(--overlay-hover)]"
         title="载入「{t.label}」整套配色再微调"
         onclick={() => startFromPreset(t.key)}
       >

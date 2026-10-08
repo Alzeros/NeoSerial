@@ -43,13 +43,19 @@
   --overlay-track: rgba(0, 0, 0, 0.16);
   --overlay-scrollbar: rgba(0, 0, 0, 0.14);
   --overlay-scrollbar-hover: rgba(0, 0, 0, 0.24);
+  --overlay-mask: rgba(0, 0, 0, 0.35);
   --focus-ring: rgba(15, 110, 86, 0.15);
   --danger-overlay: rgba(181, 71, 58, 0.08);
   --danger-overlay-hover: rgba(181, 71, 58, 0.15);
   --noise-opacity: 0.025;
 
-  /* ---- 圆角 ---- */
-  --radius: 10px;
+  /* 日志搜索高亮：命中行底色 / 当前命中行底色 / 命中词标记色 */
+  --search-hit: rgba(196, 138, 46, 0.06);
+  --search-hit-active: rgba(196, 138, 46, 0.18);
+  --search-mark: rgba(196, 138, 46, 0.35);
+
+  /* ---- 圆角：控件统一 --radius-sm(6px)，容器/弹窗统一 --radius(8px) ---- */
+  --radius: 8px;
   --radius-sm: 6px;
 
   /* ---- 日志区字体（可在设置中调节） ---- */

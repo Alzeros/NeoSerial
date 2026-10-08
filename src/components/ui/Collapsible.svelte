@@ -21,7 +21,7 @@
 <div class="mb-0.5" style="border-bottom: 1px solid var(--border-subtle);">
   <button
     type="button"
-    class="flex items-center gap-1.5 w-full text-left px-1 py-2 rounded transition-colors hover:bg-[var(--border-subtle)]"
+    class="flex items-center gap-1.5 w-full text-left px-1 py-2 rounded transition-colors hover:bg-[var(--overlay-hover)]"
     style="color: var(--muted-foreground);"
     aria-expanded={open}
     onclick={() => (open = !open)}

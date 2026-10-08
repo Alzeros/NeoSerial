@@ -659,7 +659,7 @@
             >确认删除</button>
           {:else}
             <button
-              class="max-w-32 truncate rounded border border-[var(--border)] bg-[var(--border-subtle)] px-2 py-1 text-[12px] text-[var(--foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] cursor-pointer"
+              class="max-w-32 truncate rounded border border-[var(--border)] bg-[var(--overlay-hover)] px-2 py-1 text-[12px] text-[var(--foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] cursor-pointer"
               title="载入模板「{t.name}」"
               onclick={() => loadTemplate(tool, t.name)}
             >{t.name}</button>

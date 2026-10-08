@@ -135,7 +135,7 @@
     <p class="text-[12px] leading-relaxed text-[var(--muted-foreground)] select-text">{guide.instructions}</p>
     {#each guide.blocks as block, index (`${client}-${scope}-${index}`)}
       <div class="mt-2 rounded border border-[var(--border)] overflow-hidden">
-        <div class="flex items-center justify-between gap-2 px-2 py-1 bg-[var(--border-subtle)]">
+        <div class="flex items-center justify-between gap-2 px-2 py-1 bg-[var(--overlay-hover)]">
           <span class="text-[12px] text-[var(--muted-foreground)]">{block.label}</span>
           <button class="text-[12px] px-1 py-0.5 hover:text-[var(--primary)]" aria-label={`复制${block.label}`} onclick={() => copy(`block-${index}`,block.code)}>{copied === `block-${index}` ? '已复制' : '复制'}</button>
         </div>

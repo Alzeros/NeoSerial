@@ -140,7 +140,7 @@
     onmouseleave={closeTakeoverMenu}
   >
     <button
-      class="relative flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+      class="relative flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
       onclick={handleNewWindow}
       title={mcpOnlyConnections.value.length > 0 ? '打开新窗口 / 打开后台连接' : '打开新窗口'}
     >
@@ -165,7 +165,7 @@
       >
         {#each mcpOnlyConnections.value as c (c.port)}
           <button
-            class="w-full text-left px-3 py-1.5 hover:bg-[var(--border-subtle)] cursor-pointer transition-colors flex items-center gap-2"
+            class="w-full text-left px-3 py-1.5 hover:bg-[var(--overlay-hover)] cursor-pointer transition-colors flex items-center gap-2"
             onclick={() => { handleTakeover(c.port, c.baud); closeTakeoverMenu(); }}
           >
             <span class="w-1.5 h-1.5 rounded-full flex-shrink-0" style="background: #dc2626;"></span>
@@ -176,7 +176,7 @@
         <!-- 分隔线 -->
         <div class="my-1 border-t" style="border-color: var(--border);"></div>
         <button
-          class="w-full text-left px-3 py-1.5 hover:bg-[var(--border-subtle)] cursor-pointer transition-colors flex items-center gap-2"
+          class="w-full text-left px-3 py-1.5 hover:bg-[var(--overlay-hover)] cursor-pointer transition-colors flex items-center gap-2"
           onclick={() => { handleNewWindow(); closeTakeoverMenu(); }}
         >
           <Plus size={13} class="flex-shrink-0" />
@@ -191,7 +191,7 @@
   <button
     class="flex items-center h-full px-3 text-[13px] cursor-pointer transition-colors {alwaysOnTop.value
       ? 'text-[var(--primary)]'
-      : 'text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)]'}"
+      : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
     onclick={handleToggleAlwaysOnTop}
     title={alwaysOnTop.value ? '取消置顶' : '窗口置顶'}
   >
@@ -204,7 +204,7 @@
 
   <!-- 脚本面板折叠按钮：lucide PanelRight / PanelRightClose -->
   <button
-    class="flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+    class="flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={toggleScriptPanel}
     title={scriptPanelOpen.value ? '收起脚本面板' : '展开脚本面板'}
   >
@@ -217,7 +217,7 @@
 
   <!-- 设置按钮：直接打开设置面板（默认停在"关于"页） -->
   <button
-    class="flex items-center h-full px-3 text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+    class="flex items-center h-full px-3 text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={handleOpenSettings}
     title="设置"
   >
@@ -228,7 +228,7 @@
 
   <!-- 窗口控制按钮 -->
   <button
-    class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+    class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={handleMinimize}
     title="最小化"
   >
@@ -237,7 +237,7 @@
     </svg>
   </button>
   <button
-    class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--border-subtle)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
+    class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={handleToggleMaximize}
     title="最大化/还原"
   >
