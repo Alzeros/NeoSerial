@@ -592,7 +592,7 @@
           </th>
           <!-- 列窄到放不下单位,挂 title 说明 -->
           <th class="w-[42px] px-0.5 py-1 text-center font-medium" title="单位 ms">Delay</th>
-          <th class="w-[78px] px-1 py-1 text-center font-medium">注释</th>
+          <th class="w-[96px] px-1 py-1 text-center font-medium">注释<span class="ml-0.5 font-normal opacity-60">/发送</span></th>
         </tr>
       </thead>
       <tbody>
@@ -650,15 +650,16 @@
               />
             </td>
             <td class="px-1 py-1">
+              <!-- 注释显示上限 6 字：超长切前 5 字加省略号，完整注释在悬停提示；宽度恒定 -->
               <button
-                class="w-full rounded border px-1 py-1 text-[13px] transition-colors truncate text-center flex items-center justify-center {connected.value
+                class="w-full rounded border px-1 py-1 text-[13px] transition-colors truncate text-center {connected.value
                   ? 'border-[var(--border)] bg-[var(--border-subtle)] text-[var(--foreground)] hover:bg-[var(--primary)] hover:text-[var(--primary-foreground)] hover:border-[var(--primary)] cursor-pointer'
                   : 'border-[var(--border-subtle)] text-[var(--muted-foreground)] opacity-40 cursor-not-allowed'}"
                 style="padding: 2px 3px; line-height: 1;"
                 title={cmd.note ? `发送：${cmd.note}` : (connected.value ? '点击发送此行（右键编辑注释）' : '未连接')}
                 disabled={!connected.value}
                 onclick={() => sendOne(i)}
-              >{cmd.note || '发送'}</button>
+              >{cmd.note ? (cmd.note.length > 6 ? `${cmd.note.slice(0, 5)}…` : cmd.note) : '发送'}</button>
             </td>
           </tr>
         {/each}

@@ -19,7 +19,7 @@ const saved = {
   ui: {
     log_font_size: 14, log_line_height: 1.6, log_dir_label: 'short', log_font_latin: 'default',
     log_font_cjk: 'default', text_encoding: 'Ascii', show_timestamp: true, log_send: true,
-    ring_buffer_capacity: 5000, log_buffer_max_bytes: 4194304, line_ending: 'CrLf',
+    ring_buffer_capacity: 5000, log_buffer_max_bytes: 4194304, line_ending: 'Crlf',
     display_mode: 'Ascii', auto_scroll: true,
   },
   presets: { theme: 'preset-1', baud_rates: [9600, 115200, 921600] },
@@ -28,7 +28,7 @@ const saved = {
 };
 let sequence = presetScriptModules();
 sequence[0].pages[0].commands[0].command = 'ORIGINAL';
-const calls = [], gates = new Map(), failures = new Set();
+const calls = [], gates = new Map(), failures = new Set(), responses = new Map();
 const merge = (target, patch) => {
   for (const [key, value] of Object.entries(patch)) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -47,6 +47,7 @@ mockIPC(async (cmd, args) => {
     await gate.promise;
   }
   if (failures.delete(cmd)) throw new Error('isolated save failure');
+  if (responses.has(cmd)) return clone(responses.get(cmd));
   switch (cmd) {
     case 'get_settings': return clone(saved);
     case 'patch_settings':
@@ -93,6 +94,7 @@ window.persistenceTest = {
   },
   release() {},
   failNext(cmd) { failures.add(cmd); },
+  reply(cmd, value) { responses.set(cmd, value); },
   async remoteCommand(text) {
     sequence[0].pages[0].commands[0].command = text;
     await emit('sequence-changed', { source: 'win-other' });

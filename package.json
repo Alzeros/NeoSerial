@@ -11,6 +11,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:unit": "node --test tests/*.test.ts",
     "test:persistence": "node tests/browser/persistence-regressions.mjs",
+    "test:ui": "node tests/browser/ui-regressions.mjs",
     "tauri": "tauri"
   },
   "devDependencies": {

@@ -264,10 +264,13 @@ claude mcp add --transport http neoserial http://localhost:34594/mcp
 cargo test                # Rust 单元测试
 npm run test:unit         # 前端纯函数与源码契约测试
 npm run test:persistence  # 面板自动保存、设置保存并发的隔离浏览器回归测试
+npm run test:ui           # 快捷指令表格、发送区开关与窗口布局的隔离浏览器回归测试
 npm run check             # Svelte/TypeScript 类型检查
 ```
 
-`test:persistence` 不需要 Rust 或串口设备：它启动临时 Vite 服务和独立的无界面 Chrome/Edge，使用模拟 IPC，不读取或修改真实配置。需本机安装 Chromium 系浏览器；自动查找失败时可用 `BROWSER_BINARY` 指定浏览器可执行文件路径。
+`test:persistence` 和 `test:ui` 不需要 Rust 或串口设备：它启动临时 Vite 服务和独立的无界面 Chrome/Edge，使用模拟 IPC，不读取或修改真实配置。需本机安装 Chromium 系浏览器；自动查找失败时可用 `BROWSER_BINARY` 指定浏览器可执行文件路径。
+
+如需同时生成浅色、深色及最小窗口尺寸的预览截图：`npm run test:ui -- --screenshots <输出目录>`。截图中的串口和日志均为模拟数据。
 
 ## 源码
 

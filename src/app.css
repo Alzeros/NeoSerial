@@ -17,8 +17,8 @@
   --background-deep: #EFEBE0;
 
   --foreground: #3A3A32;
-  --foreground-secondary: #6A665A;
-  --muted-foreground: #8A8676;
+  --foreground-secondary: #605C51;
+  --muted-foreground: #6E6A5F;
 
   --primary: #0F6E56;
   --primary-hover: #0C5A46;
@@ -69,7 +69,7 @@
   --foreground-hsl: 60 8% 21%;
   --primary-hsl: 167 76% 25%;
   --primary-foreground-hsl: 0 0% 100%;
-  --muted-foreground-hsl: 47 8% 50%;
+  --muted-foreground-hsl: 44 7% 40%;
   --border-hsl: 43 24% 86%;
   --input-hsl: 0 0% 100%;
   --ring-hsl: 167 76% 25%;
@@ -86,7 +86,7 @@
   --card-foreground-hsl: 60 8% 21%;
   --rx-hsl: 140 38% 40%;
   --tx-hsl: 214 41% 38%;
-  --system-hsl: 47 8% 50%;
+  --system-hsl: 44 7% 40%;
 }
 
 /* ===== 预设 2 · 浅灰白 + 深墨绿 ===== */
@@ -98,8 +98,8 @@ html[data-theme="preset-2"] {
   --background-deep: #E8E8E4;
 
   --foreground: #4A4A46;
-  --foreground-secondary: #6B6B65;
-  --muted-foreground: #8B8B85;
+  --foreground-secondary: #5E5E58;
+  --muted-foreground: #686862;
 
   --primary: #3A5A50;
   --primary-hover: #2F4A42;
@@ -133,7 +133,7 @@ html[data-theme="preset-2"] {
   --foreground-hsl: 60 2% 28%;
   --primary-hsl: 156 22% 29%;
   --primary-foreground-hsl: 0 0% 100%;
-  --muted-foreground-hsl: 60 3% 54%;
+  --muted-foreground-hsl: 60 3% 40%;
   --border-hsl: 60 8% 86%;
   --input-hsl: 0 0% 100%;
   --ring-hsl: 156 22% 29%;
@@ -150,7 +150,7 @@ html[data-theme="preset-2"] {
   --card-foreground-hsl: 60 2% 28%;
   --rx-hsl: 140 38% 40%;
   --tx-hsl: 210 17% 36%;
-  --system-hsl: 60 3% 54%;
+  --system-hsl: 60 3% 40%;
 }
 
 /* ===== 预设 3 · 深色导航 + 青绿高亮（暗色模式） ===== */
@@ -226,8 +226,8 @@ html[data-theme="preset-4"] {
   --background-deep: #EDE3D3;
 
   --foreground: #5C5142;
-  --foreground-secondary: #7A6F5E;
-  --muted-foreground: #9C8F78;
+  --foreground-secondary: #655A4B;
+  --muted-foreground: #71644F;
 
   --primary: #B4653F;
   --primary-hover: #9A5433;
@@ -261,7 +261,7 @@ html[data-theme="preset-4"] {
   --foreground-hsl: 33 17% 31%;
   --primary-hsl: 19 49% 48%;
   --primary-foreground-hsl: 0 0% 100%;
-  --muted-foreground-hsl: 38 16% 54%;
+  --muted-foreground-hsl: 37 18% 38%;
   --border-hsl: 36 33% 81%;
   --input-hsl: 0 0% 100%;
   --ring-hsl: 19 49% 48%;
@@ -278,7 +278,7 @@ html[data-theme="preset-4"] {
   --card-foreground-hsl: 33 17% 31%;
   --rx-hsl: 122 26% 48%;
   --tx-hsl: 218 21% 45%;
-  --system-hsl: 38 16% 54%;
+  --system-hsl: 37 18% 38%;
 }
 
 /* 暗色主题：禁用纸张噪点纹理（custom-dark 由 applyTheme 按自定义背景亮度打上） */
@@ -711,10 +711,10 @@ table tbody tr:hover {
   background: var(--overlay-hover);
 }
 
-/* 标签文字（配置区） */
+/* 可操作字段标签使用次要正文色；弱化色留给时间戳、说明，禁用态另用 opacity 区分。 */
 .control-group span,
 label span {
-  color: var(--muted-foreground);
+  color: var(--foreground-secondary);
   font-size: 12px;
   font-weight: 500;
   letter-spacing: 0.3px;
