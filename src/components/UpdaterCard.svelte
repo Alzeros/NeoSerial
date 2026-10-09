@@ -156,7 +156,7 @@
       <span class="text-[13px] font-semibold" style="color: var(--primary);">发现新版本 v{status.version}</span>
     {:else}
       <span class="text-[13px] font-semibold" style="color: var(--foreground);">
-        当前版本 {version || '0.3.7'}
+        当前版本 {version || '0.3.8'}
       </span>
     {/if}
 
