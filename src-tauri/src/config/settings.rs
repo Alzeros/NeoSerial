@@ -455,7 +455,37 @@ impl Default for CommandIndexSettings {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct UpdaterSettings {
+    pub auto_check: bool,
+    pub last_check_at: u64,
+    pub checked_version: String,
+    pub available_version: String,
+    pub release_notes: String,
+    pub ignored_version: String,
+    pub snoozed_version: String,
+    pub snooze_until: u64,
+}
+
+impl Default for UpdaterSettings {
+    fn default() -> Self {
+        Self {
+            auto_check: true,
+            last_check_at: 0,
+            checked_version: String::new(),
+            available_version: String::new(),
+            release_notes: String::new(),
+            ignored_version: String::new(),
+            snoozed_version: String::new(),
+            snooze_until: 0,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Settings {
+    #[serde(default)]
+    pub updater: UpdaterSettings,
     pub version: u32,
     pub window: WindowSettings,
     pub serial_defaults: SerialDefaults,
@@ -477,6 +507,7 @@ pub struct Settings {
 impl Settings {
     pub fn default_settings() -> Self {
         Settings {
+            updater: UpdaterSettings::default(),
             version: CONFIG_VERSION,
             window: WindowSettings { width: 1100, height: 720, x: 100, y: 80 },
             serial_defaults: SerialDefaults {
@@ -724,6 +755,7 @@ impl LegacySettings {
             error_keywords: self.error_keywords,
             presets: PresetSettings::default(),
             mcp: def.mcp.clone(),
+            updater: UpdaterSettings::default(),
             command_index: CommandIndexSettings::default(),
         }
     }
@@ -739,6 +771,28 @@ mod tests {
         assert_eq!(s.version, 1);
         assert_eq!(s.serial_defaults.baud_rate, 115200);
         assert_eq!(s.ui.ring_buffer_capacity, 5000);
+    }
+
+    #[test]
+    fn test_updater_settings_compatibility_and_persistence() {
+        let mut old = serde_json::to_value(Settings::default_settings()).unwrap();
+        old.as_object_mut().unwrap().remove("updater");
+        let restored: Settings = serde_json::from_value(old).unwrap();
+        assert!(restored.updater.auto_check);
+        let changed = restored.apply_patch(&serde_json::json!({ "updater": {
+            "auto_check": false, "last_check_at": 12345,
+            "checked_version": "0.3.7", "available_version": "0.3.8",
+            "ignored_version": "0.3.8", "snoozed_version": "0.3.8",
+            "snooze_until": 604800000
+        }})).unwrap();
+        let reloaded: Settings = serde_json::from_str(&serde_json::to_string(&changed).unwrap()).unwrap();
+        assert!(!reloaded.updater.auto_check);
+        assert_eq!(reloaded.updater.ignored_version, "0.3.8");
+        assert_eq!(reloaded.updater.snooze_until, 604800000);
+        let partial = reloaded.apply_patch(&serde_json::json!({ "updater": { "auto_check": true } })).unwrap();
+        assert!(partial.updater.auto_check);
+        assert_eq!(partial.updater.available_version, "0.3.8");
+        assert_eq!(partial.ui.ring_buffer_capacity, restored.ui.ring_buffer_capacity);
     }
 
     #[test]

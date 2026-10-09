@@ -1,0 +1,58 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Update reminder regression</title>
+<body style="margin:0"><div id="app"></div><script type="module">
+import '/src/app.css';
+import { mount, tick } from 'svelte';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
+import { defaultUpdaterSettings } from '/src/lib/updateReminder.ts';
+import { updateView } from '/src/lib/updates.svelte.ts';
+import { currentPort } from '/src/lib/stores.svelte.ts';
+import TitleBar from '/src/components/TitleBar.svelte';
+import UpdaterCard from '/src/components/UpdaterCard.svelte';
+
+const query = new URL(location.href).searchParams;
+const label = query.get('window') || 'main';
+mockWindows(label);
+const saved = { updater: JSON.parse(sessionStorage.getItem('update-prefs') || 'null') || defaultUpdaterSettings() };
+let release;
+const gate = query.has('hold') ? new Promise(resolve => { release = resolve; }) : Promise.resolve();
+window.updateTest = {
+  tick, port: currentPort, view: updateView, saved, checks: 0, closed: 0, opened: null, failSave: false, failCheck: false, unexpected: [], maximized: false,
+  release: () => release?.(),
+  remote: async patch => {
+    Object.assign(saved.updater, patch);
+    sessionStorage.setItem('update-prefs', JSON.stringify(saved.updater));
+    await emit('settings-changed', {});
+  },
+};
+mockIPC(async (command, args) => {
+  switch (command) {
+    case 'get_settings': return structuredClone(saved);
+    case 'patch_settings':
+      if (updateTest.failSave) throw Error('disk failure');
+      Object.assign(saved.updater, args.patch.updater);
+      sessionStorage.setItem('update-prefs', JSON.stringify(saved.updater));
+      await emit('settings-changed', {});
+      return structuredClone(saved);
+    case 'plugin:app|version': return '0.3.7';
+    case 'plugin:updater|check':
+      updateTest.checks++;
+      await gate;
+      if (updateTest.failCheck) throw Error('offline');
+      return { rid: updateTest.checks, currentVersion: '0.3.7', version: '0.3.8', body: '测试更新说明\n修复串口选择', rawJson: {} };
+    case 'plugin:resources|close': updateTest.closed++; return;
+    case 'open_settings_window': updateTest.opened = args; return;
+    case 'get_mcp_only_connections': return [];
+    case 'plugin:window|toggle_maximize': updateTest.maximized = !updateTest.maximized; return;
+    case 'plugin:window|is_maximized': return updateTest.maximized;
+    default: updateTest.unexpected.push(command); throw Error('Unexpected IPC: ' + command);
+  }
+}, { shouldMockEvents: true });
+if (label === 'settings') {
+  document.querySelector('#app').style.cssText = 'width:420px;margin:24px auto';
+  mount(UpdaterCard, { target: document.querySelector('#app'), props: { version: '0.3.7' } });
+} else {
+  mount(TitleBar, { target: document.querySelector('#app') });
+}
+await tick();
+</script></body></html>

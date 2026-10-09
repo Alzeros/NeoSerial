@@ -10,7 +10,7 @@ import { createServer } from 'vite';
 // Chromium binary with BROWSER_BINARY (Chrome/Edge/Chromium), if necessary.
 const root = fileURLToPath(new URL('../../', import.meta.url));
 
-export async function withHeadlessBrowser(test) {
+export async function withHeadlessBrowser(test, { timeoutMs = 90000 } = {}) {
   const candidates = [
     process.env.BROWSER_BINARY,
     '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
@@ -80,8 +80,8 @@ export async function withHeadlessBrowser(test) {
       if (result.exceptionDetails) throw new Error(JSON.stringify(result.exceptionDetails));
       return result.result.value;
     };
-    const until = async expression => {
-      for (let i = 0; i < 200; i++) {
+    const until = async (expression, waitMs = 10000) => {
+      for (let i = 0; i < Math.ceil(waitMs / 50); i++) {
         if (await evaluate(expression)) return;
         if (errors.length) throw new Error(JSON.stringify(errors));
         await delay(50);
@@ -107,7 +107,7 @@ export async function withHeadlessBrowser(test) {
       timedOut = true;
       for (const request of pending.values()) request.reject(new Error('Browser regression timed out'));
       socket.close();
-    }, 90000);
+    }, timeoutMs);
 
     const screenshot = async path => {
       await evaluate('document.fonts.ready');
@@ -123,11 +123,24 @@ export async function withHeadlessBrowser(test) {
     socket?.close();
     if (browser && browser.exitCode === null && !browser.killed) {
       const exited = new Promise(resolve => browser.once('exit', resolve));
-      browser.kill();
+      if (process.platform === 'win32') {
+        await new Promise(resolve => {
+          const cleanup = spawn('taskkill', ['/PID', String(browser.pid), '/T', '/F'], { stdio: 'ignore', windowsHide: true });
+          cleanup.once('exit', resolve);
+          cleanup.once('error', resolve);
+        });
+      } else {
+        browser.kill();
+      }
       await Promise.race([exited, delay(3000)]);
     }
     await server?.close();
-    await rm(profile, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+    try {
+      await rm(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+    } catch (error) {
+      if (!['EBUSY', 'EPERM'].includes(error.code)) throw error;
+      console.warn('Temporary browser profile is still locked:', profile);
+    }
   }
 
 }

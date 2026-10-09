@@ -1,15 +1,14 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window';
+  import { getVersion } from '@tauri-apps/api/app';
   import { onMount } from 'svelte';
+  import UpdateNotice from './UpdateNotice.svelte';
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
   import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
   import { openPortWindow, openSettingsWindow, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
 
   const appWindow = getCurrentWindow();
-  // 窗口一律平等(没有"主窗口"):标题只按本窗口的连接显示
-  const titleText = $derived(
-    currentPort.value ? `NeoSerial · ${currentPort.value}` : 'NeoSerial'
-  );
+  let appVersion = $state('');
 
   let alwaysOnTop = $state<{ value: boolean }>({ value: false });
 
@@ -87,14 +86,19 @@
 
   // 标题栏拖动区域：按住鼠标拖动移动窗口（data-tauri-drag-region 由 Tauri 拦截）
   // 双击标题栏切换最大化
-  function handleTitleDblClick() {
+  function handleTitleDblClick(event: MouseEvent) {
+    if (event.target instanceof Element && event.target.closest('button')) return;
     handleToggleMaximize();
   }
 
   onMount(() => {
+    let active = true;
+    getVersion().then((value) => { if (active) appVersion = value; })
+      .catch((error) => console.error('读取应用版本失败:', error));
     refreshMcpOnly();
     const unlisten = onMcpConnectionsChanged(() => refreshMcpOnly());
     return () => {
+      active = false;
       unlisten.then((f) => f());
     };
   });
@@ -122,12 +126,14 @@
   style="background: var(--background-elevated);"
 >
   <!-- 左侧：应用名 + 拖动区域(连了端口显示端口名) -->
-  <div
-    data-tauri-drag-region
-    class="flex-1 h-full flex items-center px-3 text-[13px] font-medium text-[var(--muted-foreground)]"
-    ondblclick={handleTitleDblClick}
-  >
-    {titleText}
+  <div class="flex-1 min-w-0 h-full flex items-center text-[13px] font-medium text-[var(--muted-foreground)]" ondblclick={handleTitleDblClick}>
+    <div data-tauri-drag-region class="h-full flex items-center pl-3 pr-2 shrink-0">NeoSerial</div>
+    <UpdateNotice currentVersion={appVersion} />
+    <div data-tauri-drag-region class="flex-1 min-w-0 h-full flex items-center px-2">
+      {#if currentPort.value}
+        <span data-tauri-drag-region data-title-port class="truncate">· {currentPort.value}</span>
+      {/if}
+    </div>
   </div>
 
   <!-- 新窗口按钮 + 后台连接提示:

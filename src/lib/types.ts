@@ -137,6 +137,7 @@ export type DeepPartial<T> = T extends (infer U)[]
 export type SettingsPatch = DeepPartial<Settings>;
 
 export interface Settings {
+  updater?: import('./updateReminder').UpdaterSettings;
   version: number;
   window: { width: number; height: number; x: number; y: number };
   serial_defaults: {
