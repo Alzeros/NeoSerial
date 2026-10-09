@@ -1,7 +1,7 @@
 <script lang="ts">
   import { availablePorts, connectionParams, connected, presetBaudRates, windowPort, settingsRequest } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
-  import { shouldPollPorts } from '$lib/connectionPorts';
+  import { normalizePorts, shouldPollPorts } from '$lib/connectionPorts';
   import CustomSelect from '$components/ui/CustomSelect.svelte';
 
   // 局部错误提示(端口已连接/被占用),4s 自动消失。不依赖全局 store 避免跨窗口响应性问题。
@@ -47,7 +47,7 @@
 
   async function refreshPorts() {
     try {
-      const ports = await listPorts();
+      const ports = normalizePorts(await listPorts());
       availablePorts.value = ports;
       // 默认显示一个端口:优先保持当前选的(上次连的 last_port),不在可用列表则取第一个
       if (ports.length > 0) {

@@ -1,0 +1,18 @@
+<!doctype html><html lang="en"><meta charset="utf-8"><title>COM selection regression</title>
+<body><div id="app"></div><script>window.errors = []; window.addEventListener('error', event => window.errors.push(event.message));</script><script type="module">
+import '/src/app.css';
+import { mount, tick } from 'svelte';
+import { mockIPC } from '@tauri-apps/api/mocks';
+import ConnectionBar from '/src/components/ConnectionBar.svelte';
+import { connectionParams } from '/src/lib/stores.svelte.ts';
+window.comTest = { tick, connectionParams, ports: [
+  { port: 'COM3', device: null },
+  { port: 'COM3', device: 'USB serial device' },
+  { port: 'COM8', device: 'Second device' },
+] };
+mockIPC(async command => {
+  if (command === 'list_ports') return comTest.ports;
+  throw Error('Unexpected IPC: ' + command);
+});
+mount(ConnectionBar, { target: document.querySelector('#app') });
+</script></body></html>
