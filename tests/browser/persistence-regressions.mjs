@@ -48,9 +48,9 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, delay }) => {
   await click('深海夜航');
   await evaluate('persistenceTest.release()');
   await until(`persistenceTest.saved().presets.theme==='preset-2' && !persistenceTest.button('应用').disabled`);
-  assert.equal(await evaluate(`persistenceTest.calls.filter(c=>c.cmd==='plugin:window|close').length`), 0, 'do not close with newer unsaved edits');
+  assert.equal(await evaluate(`persistenceTest.calls.filter(c=>c.cmd==='plugin:window|hide').length`), 0, 'do not close with newer unsaved edits');
   await click('保存');
-  await until(`persistenceTest.calls.some(c=>c.cmd==='plugin:window|close')`);
+  await until(`persistenceTest.calls.some(c=>c.cmd==='plugin:window|hide')`);
   assert.equal(await evaluate('persistenceTest.saved().presets.theme'), 'preset-3');
   console.log('PASS: save keeps the window open when edits arrive during the write');
 

@@ -29,7 +29,8 @@ let indexLoad: Promise<void> | null = null;
  *  整份缓存随手册数量涨(实测 245 KB),而关掉指令联想的窗口根本用不上,所以不在启动时无条件读,
  *  改由真正要用的地方来要:输入框联想(启用时)、指令查询面板、设置页的指令联想子页。
  *  失败不缓存结果,下一个调用方可以重试。 */
-export function ensureCommandIndexLoaded(): Promise<void> {
+export function ensureCommandIndexLoaded(refresh = false): Promise<void> {
+  if (refresh) indexLoad = null;
   indexLoad ??= listenersReady.then(reloadCommandIndex).catch((e) => {
     indexLoad = null;
     console.error('加载指令库缓存失败:', e);

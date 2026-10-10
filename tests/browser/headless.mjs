@@ -97,7 +97,8 @@ export async function withHeadlessBrowser(test, { timeoutMs = 90000 } = {}) {
       assert.deepEqual(errors, [], 'No uncaught frontend exceptions');
       const current = String(++run);
       await call('Page.navigate', { url: `${base}/tests/browser/persistence-regressions.html?window=${label}&run=${current}` });
-      await until(`window.persistenceTest?.run===${JSON.stringify(current)}`);
+      await until(`window.persistenceTest?.run===${JSON.stringify(current)}`, 30000);
+      if (label === 'settings') await until('Boolean(persistenceTest.button("保存"))', 30000);
       await delay(80); // let pending open requests and initial effects settle
     };
     await call('Runtime.enable');

@@ -1,0 +1,34 @@
+import assert from 'node:assert/strict';
+import { withHeadlessBrowser } from './headless.mjs';
+
+await withHeadlessBrowser(async ({ evaluate, until, click, fresh }) => {
+  await fresh('settings');
+  await until('persistenceTest.calls.some(call => call.cmd === "show_settings_window")');
+  const forbidden = ['get_window_conn_state', 'take_pending_takeover', 'send_history_load', 'get_window_history', 'list_ports'];
+  assert.deepEqual(await evaluate(`persistenceTest.calls.filter(call => ${JSON.stringify(forbidden)}.includes(call.cmd))`), []);
+  await click('雾灰松');
+  await click('取消');
+  await until('persistenceTest.calls.some(call => call.cmd === "plugin:window|hide") && !document.querySelector("[data-tauri-drag-region]")');
+  assert.equal(await evaluate('persistenceTest.saved().presets.theme'), 'preset-1');
+  assert.equal(await evaluate('persistenceTest.calls.some(call => call.cmd === "plugin:window|close")'), false);
+  await evaluate('persistenceTest.remoteSettings({presets:{theme:"preset-3"}})');
+  await evaluate('persistenceTest.reopenSettings({section:"appearance",ext_module:null,anchor:null})');
+  await until('Boolean(document.querySelector("[data-tauri-drag-region]"))');
+  assert.equal(await evaluate('persistenceTest.stores.theme.value'), 'preset-3');
+  assert.equal(await evaluate('persistenceTest.button("应用").disabled'), true);
+  await click('雾灰松');
+  await evaluate('persistenceTest.reopenSettings({section:"appearance",ext_module:null,anchor:null})');
+  await until('persistenceTest.calls.filter(call=>call.cmd==="show_settings_window").length >= 3');
+  assert.equal(await evaluate('persistenceTest.button("应用").disabled'), false, 'reopening visible window preserves draft');
+  await click('保存');
+  await until('!document.querySelector("[data-tauri-drag-region]")');
+  assert.equal(await evaluate('persistenceTest.saved().presets.theme'), 'preset-2');
+  await evaluate('persistenceTest.failNext("get_settings"); persistenceTest.reopenSettings({section:"appearance",ext_module:null,anchor:null})');
+  await until('document.body.innerText.includes("读取设置失败")');
+  assert.equal(await evaluate('Boolean(persistenceTest.button("保存"))'), false, 'failed load must not allow saving default settings');
+  await click('重试');
+  await until('Boolean(persistenceTest.button("保存"))');
+  assert.equal(await evaluate('persistenceTest.stores.theme.value'), 'preset-2');
+  await click('取消');
+  console.log('PASS: lean settings startup, hide/reuse, fresh drafts, visible draft preservation, save and read-error recovery');
+}, { timeoutMs: 180000 });

@@ -50,7 +50,7 @@ try {
   }
   assert.ok(main, 'disposable native main window found');
   const dirs = await main.evaluate(`window.__TAURI_INTERNALS__.invoke('data_dirs')`);
-  assert.ok(dirs.config.replaceAll('\\', '/').endsWith('/docs/settings-close-test-data'), 'refuse to modify real user settings');
+  assert.ok(['settings-close-test-data', 'settings-perf-data'].some(name => dirs.config.replaceAll('\\', '/').endsWith('/docs/' + name)), 'refuse to modify real user settings');
   const invoke = (cmd, args = {}) => main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(cmd)}, ${JSON.stringify(args)})`);
   const labels = () => main.evaluate(`window.__TAURI_INTERNALS__.invoke('plugin:window|get_all_windows')`);
   const theme = async () => (await invoke('get_settings')).presets.theme;
@@ -62,7 +62,7 @@ try {
   }
   await invoke('patch_settings', { patch: { presets: { theme: 'preset-1' } } });
   for (const action of ['cancel', 'x', 'save', 'saveUnchanged', 'escape', 'native']) {
-    assert.ok(!(await labels()).includes('settings'), 'previous settings window was destroyed');
+
     await invoke('open_settings_window', { section: 'appearance' });
     let settings;
     for (let i = 0; i < 80 && !settings; i++) {
@@ -91,7 +91,7 @@ try {
     } else await settings.evaluate(`window.__TAURI_INTERNALS__.invoke('plugin:window|close',{label:'settings'})`);
     let gone = false;
     for (let i = 0; i < 30; i++) {
-      if (!(await labels()).includes('settings')) { gone = true; break; }
+      if (await settings.evaluate(`(async()=>!document.querySelector('[data-tauri-drag-region]') && !(await window.__TAURI_INTERNALS__.invoke('plugin:window|is_visible',{label:'settings'})))()`)) { gone = true; break; }
       await delay(100);
     }
     if (!gone) console.error('Native errors:', await settings.evaluate('closeErrors'));
@@ -99,8 +99,9 @@ try {
     assert.equal(await theme(), action === 'save' ? desired : before, `${action}: persisted theme`);
     const diskSettings = JSON.parse(await readFile(join(dirs.config, 'settings.json'), 'utf8'));
     assert.equal(diskSettings.presets.theme, action === 'save' ? desired : before, `${action}: settings file`);
+    assert.ok((await labels()).includes('settings'), 'settings WebView remains reusable');
     assert.ok((await labels()).includes('main'), 'main window remains open');
-    console.log(`PASS ${action}: window destroyed, saved/cancelled changes correct, main stays open`);
+    console.log(`PASS ${action}: window hidden and reusable, saved/cancelled changes correct, main stays open`);
   }
 } finally {
   clearTimeout(timeout);

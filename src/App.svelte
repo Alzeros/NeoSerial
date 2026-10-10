@@ -221,7 +221,7 @@
 
   onMount(() => {
     // 主题编辑器窗口:不加载串口连接等设置,ThemeEditor 组件自行加载主题
-    if (isThemeEditorWindow) return;
+    if (isThemeEditorWindow || isSettingsWindow) return;
 
     // 所有窗口(main + 副窗口)都是完整串口界面。
     // 副窗口(win-{port})按 label 反推 port 存 windowPort;main 的 label="main" 后端返回 port=None,

@@ -84,6 +84,10 @@ export async function takePendingSettings(): Promise<SettingsOpenRequest | null>
   return await invoke<SettingsOpenRequest | null>('take_pending_settings');
 }
 
+export async function showSettingsWindow(): Promise<void> {
+  await invoke('show_settings_window');
+}
+
 /** 窗口 onMount 调:查归属本窗口的连接状态(dev 重载后恢复 UI 用)。 */
 export async function getWindowConnState(): Promise<WindowConnState> {
   return await invoke<WindowConnState>('get_window_conn_state');

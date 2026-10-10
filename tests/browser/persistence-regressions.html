@@ -99,6 +99,14 @@ window.persistenceTest = {
     sequence[0].pages[0].commands[0].command = text;
     await emit('sequence-changed', { source: 'win-other' });
   },
+  async remoteSettings(patch) {
+    merge(saved, patch);
+    await emit('settings-changed', {});
+  },
+  async reopenSettings(request) {
+    responses.set('take_pending_settings', request);
+    await emit('settings-open-request', request);
+  },
 };
 </script>
 </body></html>

@@ -25,6 +25,7 @@ use state::{AppState, SettingsOpenRequest};
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const SETTINGS_MIN_WIDTH: f64 = 680.0;
 const SETTINGS_MIN_HEIGHT: f64 = 500.0;
+static SETTINGS_OPEN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -41,24 +42,33 @@ async fn open_settings_window(
     ext_module: Option<String>,
     anchor: Option<String>,
 ) -> Result<(), String> {
+    let _guard = SETTINGS_OPEN_LOCK.lock().await;
     let request = SettingsOpenRequest {
         section: section.unwrap_or_else(|| "about".to_string()),
         ext_module,
         anchor,
     };
-    if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
-        window.show().map_err(|e| e.to_string())?;
-        window.set_focus().map_err(|e| e.to_string())?;
-        window
-            .emit("settings-open-request", request)
-            .map_err(|e| e.to_string())?;
-        return Ok(());
-    }
-
     let state = app_handle
         .try_state::<AppState>()
         .ok_or("无法访问应用状态")?;
-    *state.pending_settings.lock().map_err(|e| e.to_string())? = Some(request);
+    *state.pending_settings.lock().map_err(|e| e.to_string())? = Some(request.clone());
+    if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        if !window.is_visible().map_err(|e| e.to_string())? {
+            if let (Ok(origin), Ok(parent_size), Ok(size)) = (
+                webview_window.outer_position(),
+                webview_window.outer_size(),
+                window.outer_size(),
+            ) {
+                let position = PhysicalPosition::new(
+                    origin.x + ((parent_size.width as i64 - size.width as i64) / 2) as i32,
+                    origin.y + ((parent_size.height as i64 - size.height as i64) / 2) as i32,
+                );
+                window.set_position(position).map_err(|e| e.to_string())?;
+            }
+        }
+        window.emit("settings-open-request", request).map_err(|e| e.to_string())?;
+        return Ok(());
+    }
 
     // 设置窗口首次打开时放在调用窗口正中间。这里使用物理像素计算，
     // 使用物理像素适配缩放；在隐藏状态下完成定位，避免默认位置的窗口先闪现。
@@ -90,8 +100,18 @@ async fn open_settings_window(
     if let Some(position) = centered_position {
         let _ = window.set_position(position);
     }
-    window.show().map_err(|e| format!("显示设置窗口失败: {}", e))?;
-    window.set_focus().map_err(|e| format!("聚焦设置窗口失败: {}", e))?;
+
+    Ok(())
+}
+
+#[tauri::command]
+fn show_settings_window(webview_window: tauri::WebviewWindow) -> Result<(), String> {
+    if webview_window.label() != SETTINGS_WINDOW_LABEL {
+        return Err("只能由设置窗口请求显示".to_string());
+    }
+    webview_window.unminimize().map_err(|e| e.to_string())?;
+    webview_window.show().map_err(|e| e.to_string())?;
+    webview_window.set_focus().map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -378,6 +398,7 @@ pub fn run() {
             get_modem_status,
             take_pending_takeover,
             open_settings_window,
+            show_settings_window,
             take_pending_settings,
             exit_app,
             resolve_last_close,

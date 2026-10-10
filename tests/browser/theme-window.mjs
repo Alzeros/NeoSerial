@@ -79,10 +79,10 @@ try {
   await settings.evaluate(`(()=>{const fetchNative=window.fetch;window.fetch=async(url,options)=>{if(String(url).endsWith('/open_theme_editor'))await new Promise(r=>setTimeout(r,250));return fetchNative(url,options);};})()`);
   await click(settings, button('打开 →'));
   await wait(1000);
-  assert.ok((await labels()).includes('theme-editor'), 'theme editor must open before caller is destroyed');
+  assert.ok((await labels()).includes('theme-editor'), 'theme editor must open before caller is hidden');
   const editor = await windowByLabel('theme-editor');
-  await until(async () => !(await labels()).includes('settings'), 'settings closes after editor opens');
-  console.log('PASS: actual native editor opens even with delayed IPC; settings closes afterward');
+  await until(async () => await settings.evaluate(`!document.querySelector('[data-tauri-drag-region]')`), 'settings hides after editor opens');
+  console.log('PASS: actual native editor opens even with delayed IPC; settings hides afterward');
 
   assert.ok(await editor.evaluate(`Boolean(document.querySelector('[data-tauri-drag-region]'))`), 'editor retains its native drag region');
 
@@ -99,16 +99,17 @@ try {
 
   // An opening error must keep the settings draft and show a visible error.
   settings = await settingsPage();
-  await settings.evaluate(`(()=>{const fetchNative=window.fetch;window.fetch=(url,options)=>String(url).endsWith('/open_theme_editor')?Promise.resolve(new Response('theme-open-test-failure',{headers:{'Tauri-Response':'error','Content-Type':'text/plain'}})):fetchNative(url,options);})()`);
+  await settings.evaluate(`(()=>{const fetchNative=window.fetch;window.restoreFetch=()=>{window.fetch=fetchNative};window.fetch=(url,options)=>String(url).endsWith('/open_theme_editor')?Promise.resolve(new Response('theme-open-test-failure',{headers:{'Tauri-Response':'error','Content-Type':'text/plain'}})):fetchNative(url,options);})()`);
   await click(settings, button('打开 →'));
   await wait(500);
   assert.ok((await labels()).includes('settings'), 'failed editor open keeps settings window');
   assert.ok(await settings.evaluate(`document.body.innerText.includes('theme-open-test-failure')`), 'opening error is visible');
   await click(settings, button('取消'));
-  await until(async () => !(await labels()).includes('settings'), 'cancel remains functional after failed open');
+  await until(async () => await settings.evaluate(`!document.querySelector('[data-tauri-drag-region]')`), 'cancel remains functional after failed open');
   assert.equal((await invoke('get_settings')).presets.theme, 'preset-1', 'failure did not save draft');
   console.log('PASS: failure leaves settings usable, displays error, and preserves saved values');
 
+  await settings.evaluate('window.restoreFetch()');
   settings = await settingsPage();
   await click(settings, button('打开 →'));
   const saveEditor = await windowByLabel('theme-editor');

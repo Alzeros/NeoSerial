@@ -7,8 +7,8 @@
   import { presetBaudRates, cachedSettings, theme, themeMeta, customTheme, applyTheme, applySharedSettings, logFontSize, logLineHeight, applyLogFont, logDirLabelStyle, textEncoding, logFontLatin, logFontLatinPresets, logFontCJK, logFontCJKPresets, DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT } from '$lib/stores';
   import { defaultCustomTheme } from '$lib/customTheme';
   import { LOG_MIB, DEFAULT_MAX_LOG_BYTES, MIN_LOG_BYTES, MAX_LOG_BYTES_LIMIT, resolveLogLimits } from '$lib/logRetention';
-  import { patchSettings, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
-  import { commandIndex, ensureCommandIndexLoaded } from '$lib/commandIndex';
+  import { getSettings, showSettingsWindow, onSettingsChanged, patchSettings, openUrl, openThemeEditor, exitApp, commandIndexRefresh, commandIndexRefreshDoc, commandIndexTestConnection, sendHistoryClear, kbCredentialStatus, kbSetApiKey, dataDirs, openDataDir, takePendingSettings, onSettingsOpenRequest, type SettingsOpenRequest, type KbCredentialStatus, type DataDirs } from '$lib/tauri';
+  import { commandIndex, ensureCommandIndexLoaded, initCommandIndex } from '$lib/commandIndex';
   import { defaultSuggestLimits } from '$lib/suggest';
   import { DATA_SOURCE_OPTIONS, CHECKSUM_OPTIONS, DATA_TOOL_OPTIONS } from '$lib/dataProcessing';
   import { CODEC_ENCODINGS, CODEC_OPERATIONS, codecDefaultEncoding, codecEncodingLabel, isFixedCodecOperation, type CodecEncoding } from '$lib/codec';
@@ -24,7 +24,12 @@
   let { standalone = false }: { standalone?: boolean } = $props();
   let open = $state(false);
   const appWindow = getCurrentWindow();
-  let closingStandalone = false;
+  let mounted = false;
+  let requestEpoch = 0;
+  let hidingTask: Promise<void> | null = null;
+  let openingTask: Promise<void> = Promise.resolve();
+  let openingError = $state('');
+  let lastRequest: SettingsOpenRequest = { section: 'about', ext_module: null, anchor: null };
 
   function emitPreview() {
     if (!standalone) return;
@@ -45,8 +50,18 @@
       open = false;
       return;
     }
-    closingStandalone = true;
-    await appWindow.close();
+    if (hidingTask) return hidingTask;
+    requestEpoch++;
+    hidingTask = (async () => {
+      await appWindow.hide();
+      open = false;
+      openingError = '';
+      editKbApiKey = '';
+      editKbBaseUrl = '';
+      showApiKey = false;
+      if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
+    })().finally(() => { hidingTask = null; });
+    return hidingTask;
   }
 
   // 左侧导航：当前激活的设置项
@@ -128,7 +143,19 @@
   let extModule = $state<'suggest' | 'mcp' | 'quick' | 'data' | null>(null);
   // 指令联想子页要列手册、报条数,而联想关着的窗口启动时没载索引——进这一页时现载
   $effect(() => {
-    if (open && extModule === 'suggest') ensureCommandIndexLoaded();
+    if (!open || extModule !== 'suggest') return;
+    const cleanup = standalone ? initCommandIndex() : undefined;
+    ensureCommandIndexLoaded(standalone);
+    let active = true;
+    kbCredentialStatus().then((value) => { if (active) kbCred = value; }).catch(() => {});
+    return () => { active = false; cleanup?.(); };
+  });
+
+  $effect(() => {
+    if (!open || activeSection !== 'general' || !openDirs) return;
+    let active = true;
+    dataDirs().then((value) => { if (active) dirs = value; }).catch(() => {});
+    return () => { active = false; };
   });
   // 指令联想编辑副本(从 cachedSettings.command_index 拷贝;保存后立即生效,不需重启)
   let editSuggestEnabled = $state(true);
@@ -308,11 +335,6 @@
     historyCleared = false;
     keyCleared = false;
     saveError = null;
-    // 凭据状态与数据目录:后端说了才算(内置值不下发,前端自己看不出配没配)
-    kbCredentialStatus()
-      .then((s) => (kbCred = s))
-      .catch(() => {});
-    dataDirs().then((d) => (dirs = d)).catch(() => {});
     // 所有设置分组每次开窗默认收起，不持久化展开状态。
     // 例外:带 anchor 跳进来的那一节要展开——连接栏"添加…"跳过来却是收起的
     // 等于什么也没发生。
@@ -361,26 +383,72 @@
     );
   }
 
+  async function prepareRequest(request: SettingsOpenRequest) {
+    const epoch = ++requestEpoch;
+    lastRequest = request;
+    openingError = '';
+    try {
+      if (!open) {
+        const settings = await getSettings();
+        if (!mounted || epoch !== requestEpoch) return;
+        applySharedSettings(settings);
+        showRequest(request);
+      } else if (!saving) {
+        activeSection = request.section as Section;
+        extModule = request.ext_module;
+        if (request.anchor === 'baud') openBaud = true;
+      }
+      await tick();
+      if (!mounted || epoch !== requestEpoch) return;
+      await showSettingsWindow();
+    } catch (error) {
+      if (!mounted || epoch !== requestEpoch) return;
+      if (open) saveError = `打开设置失败:${error}`;
+      else openingError = `读取设置失败:${error}`;
+      await tick();
+      await showSettingsWindow().catch((failure) => console.error('显示设置窗口失败:', failure));
+    }
+  }
+
+  function openPendingRequest(initial = false) {
+    openingTask = openingTask.then(() => consumePendingRequest(initial));
+    return openingTask;
+  }
+
+  async function consumePendingRequest(initial: boolean) {
+    try {
+      await hidingTask;
+      const request = await takePendingSettings();
+      if (!mounted) return;
+      if (request || (initial && !open && !openingError)) await prepareRequest(request ?? lastRequest);
+    } catch (error) {
+      console.error('读取设置打开请求失败:', error);
+      if (mounted) await prepareRequest(lastRequest);
+    }
+  }
+
   onMount(() => {
     if (!standalone) return;
-    show();
-    let unlistenClose: (() => void) | null = null;
-    appWindow.onCloseRequested((event) => {
-      if (closingStandalone) return;
+    mounted = true;
+    const unlistenClose = appWindow.onCloseRequested((event) => {
       event.preventDefault();
       handleCancel();
-    }).then((unlisten) => {
-      unlistenClose = unlisten;
     });
-    const unlistenRequest = onSettingsOpenRequest(showRequest);
-    takePendingSettings()
-      .then((request) => {
-        if (request) showRequest(request);
-      })
-      .catch((e) => console.error('读取设置窗口打开请求失败:', e));
+    const unlistenRequest = onSettingsOpenRequest(() => { void openPendingRequest(); });
+    unlistenRequest.then(() => openPendingRequest(true)).catch((error) => console.error('初始化设置窗口失败:', error));
+    const unlistenSettings = onSettingsChanged(() => {
+      if (!open) return;
+      const epoch = requestEpoch;
+      getSettings().then((settings) => {
+        if (mounted && open && epoch === requestEpoch) applySharedSettings(settings);
+      }).catch((error) => console.error('刷新设置失败:', error));
+    });
     return () => {
-      unlistenRequest.then((unlisten) => unlisten());
-      unlistenClose?.();
+      mounted = false;
+      requestEpoch++;
+      for (const listener of [unlistenRequest, unlistenClose, unlistenSettings]) {
+        listener.then((unlisten) => unlisten()).catch(() => {});
+      }
     };
   });
 
@@ -396,7 +464,7 @@
     if (saving) return;
     saveError = null;
     try {
-      // 独立窗口关闭后 JS 上下文会销毁，必须先等目标窗口创建/聚焦成功。
+      // 必须先等目标窗口创建/聚焦成功，再隐藏设置页。
       // 主题编辑器自行读取已保存色板；打开失败时保留本页草稿与取消基准。
       await openThemeEditor();
       await closeWindow();
@@ -909,7 +977,7 @@
   }
 
   async function handleCancel() {
-    if (saving) return; // 避免关闭 JS 上下文后，尚在执行的保存才写入磁盘。
+    if (saving) return; // 保存尚未结束时不允许关闭，避免误以为取消了写入。
     // 取消：恢复打开前的主题与字体（撤销预览，含自定义色板改动）
     applyTheme(theme.value, customTheme.value);
     applyLogFont(logFontSize.value, logLineHeight.value, logFontLatin.value, logFontCJK.value);
@@ -926,10 +994,21 @@
 
 <svelte:window on:keydown={(e) => {
   // Esc 关闭设置弹窗（弹窗不再支持点遮罩关闭）
-  if (e.key === 'Escape' && open) handleCancel();
+  if (e.key === 'Escape' && (open || openingError)) handleCancel();
 }} />
 
-{#if open}
+{#if openingError}
+  <div class="h-screen flex flex-col" style="background: var(--background); color: var(--foreground);">
+    <div data-tauri-drag-region class="h-8 px-3 flex items-center border-b border-[var(--border)]">设置</div>
+    <div class="flex-1 flex flex-col items-center justify-center gap-4 p-6">
+      <p role="alert" class="text-[13px] break-all">{openingError}</p>
+      <div class="flex gap-2">
+        <button class="btn btn-primary" onclick={() => prepareRequest(lastRequest)}>重试</button>
+        <button class="btn btn-ghost" onclick={handleCancel}>关闭</button>
+      </div>
+    </div>
+  </div>
+{:else if open}
   <div
     class={standalone ? 'flex h-screen w-screen overflow-hidden' : 'fixed inset-0 z-[100] flex items-center justify-center'}
     style={standalone ? 'background: var(--background);' : 'background: var(--overlay-mask);'}

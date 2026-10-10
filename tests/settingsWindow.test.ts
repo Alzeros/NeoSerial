@@ -63,3 +63,14 @@ test('设置窗口首次打开使用最小尺寸并居中到调用窗口', async
   assert.match(settings, /<svg width="11" height="11" viewBox="0 0 12 12"/);
   assert.match(settings, /<rect x="1\.5" y="1\.5" width="9" height="9"/);
 });
+
+test('settings reuse is allowed to hide its native window', async () => {
+  const capability = JSON.parse(await readFile(new URL('../src-tauri/capabilities/default.json', import.meta.url), 'utf8'));
+  assert.ok(capability.permissions.includes('core:window:allow-hide'));
+});
+
+test('settings entry does not eagerly import the serial application', async () => {
+  const source = await readFile(new URL('../src/main.ts', import.meta.url), 'utf8');
+  assert.doesNotMatch(source, /import App from/);
+  assert.match(source, /import\('\.\/components\/SettingsDialog\.svelte'\)/);
+});

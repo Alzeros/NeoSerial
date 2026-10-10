@@ -1,11 +1,14 @@
 import { mount } from 'svelte';
-import App from './App.svelte';
+import { getCurrentWebview } from '@tauri-apps/api/webview';
 import './app.css';
-import { preloadBeforeMount } from '$lib/startup';
-
-// 先把设置和快捷指令取回来再挂载:首帧直接按用户配置画,不先画默认值再跳一次(见 startup.ts)
-preloadBeforeMount().finally(() => {
-  mount(App, {
-    target: document.getElementById('app')!,
+const target = document.getElementById('app')!;
+if (getCurrentWebview().label === 'settings') {
+  import('./components/SettingsDialog.svelte').then(({ default: SettingsDialog }) => {
+    mount(SettingsDialog, { target, props: { standalone: true } });
   });
-});
+} else {
+  Promise.all([
+    import('./App.svelte'),
+    import('./lib/startup').then(({ preloadBeforeMount }) => preloadBeforeMount()),
+  ]).then(([{ default: App }]) => mount(App, { target }));
+}
