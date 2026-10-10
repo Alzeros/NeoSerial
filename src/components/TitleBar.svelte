@@ -126,14 +126,18 @@
   style="background: var(--background-elevated);"
 >
   <!-- 左侧：应用名 + 拖动区域(连了端口显示端口名) -->
-  <div class="flex-1 min-w-0 h-full flex items-center text-[13px] font-medium text-[var(--muted-foreground)]" ondblclick={handleTitleDblClick}>
-    <div data-tauri-drag-region class="h-full flex items-center pl-3 pr-2 shrink-0">NeoSerial</div>
-    <UpdateNotice currentVersion={appVersion} />
-    <div data-tauri-drag-region class="flex-1 min-w-0 h-full flex items-center px-2">
-      {#if currentPort.value}
-        <span data-tauri-drag-region data-title-port class="truncate">· {currentPort.value}</span>
-      {/if}
+  <div class="flex-1 min-w-0 h-full flex items-center bg-[var(--background)] text-[13px] text-[var(--foreground)]" ondblclick={handleTitleDblClick}>
+    <div class="flex min-w-0 items-baseline">
+      <div data-tauri-drag-region class="pl-3 pr-2 shrink-0 font-semibold">NeoSerial</div>
+      <UpdateNotice currentVersion={appVersion} />
+      <div data-tauri-drag-region class="min-w-0 flex items-baseline gap-3 px-3">
+        {#if currentPort.value}
+          <span data-tauri-drag-region data-title-separator aria-hidden="true" class="h-3 w-px shrink-0 self-center border-l border-[var(--border-strong)]"></span>
+          <span data-tauri-drag-region data-title-port class="truncate font-medium">{currentPort.value}</span>
+        {/if}
+      </div>
     </div>
+    <div data-tauri-drag-region class="flex-1 h-full"></div>
   </div>
 
   <!-- 新窗口按钮 + 后台连接提示:
