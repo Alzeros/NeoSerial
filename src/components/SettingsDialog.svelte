@@ -17,6 +17,7 @@
   import UpdaterCard from '$components/UpdaterCard.svelte';
   import McpSetup from '$components/McpSetup.svelte';
   import Collapsible from '$components/ui/Collapsible.svelte';
+  import SettingsHelp from '$components/ui/SettingsHelp.svelte';
   import type { ManualDocument, Settings, SettingsPatch } from '$lib/types';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
@@ -1082,10 +1083,7 @@
                  收起也知道现在是什么设置;四节等价,视觉上比"两节展开两节折叠"整齐。
                  与指令联想子页同一套语言。 -->
             <div>
-              <Collapsible title="预设波特率" summary={baudSummary} bind:open={openBaud}>
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                  添加后可在连接栏波特率下拉中选择。内置三项不可删除。
-                </div>
+              <Collapsible title="预设波特率" help="添加后可在连接栏波特率下拉中选择。内置三项不可删除。" summary={baudSummary} bind:open={openBaud}>
 
                 <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
                   {#each editBaudRates as b}
@@ -1141,11 +1139,7 @@
                   {/if}
                 </div>
               </Collapsible>
-              <Collapsible title="日志显示" summary={logViewSummary} bind:open={openLogView}>
-                <!-- 折叠头已经是"日志显示",不再重复一个"日志字体"标题;这行说明就是本节的说明 -->
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-4">
-                  英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。
-                </div>
+              <Collapsible title="日志显示" help="英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。" summary={logViewSummary} bind:open={openLogView}>
 
                 <!-- 英文字体 -->
                 <div class="flex items-center gap-3 mb-4">
@@ -1228,10 +1222,7 @@
               </Collapsible>
               <Collapsible title="日志内容" summary={logDataSummary} bind:open={openLogData}>
                 <!-- 文本编码 -->
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">文本编码</div>
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                  HEX显示关闭时的文本模式解码方式。
-                </div>
+                <div class="flex items-center gap-1 mb-2 text-[13px] font-medium text-[var(--foreground)]">文本编码<SettingsHelp label="文本编码" text="HEX显示关闭时的文本模式解码方式。" /></div>
                 <div class="flex items-center gap-3 mb-5">
                   <span class="w-16 text-[13px] text-[var(--foreground)]">编码</span>
                   <div class="flex gap-2">
@@ -1288,10 +1279,7 @@
                 </div>
 
                 <!-- 错误关键词:Rx 行命中即标红。以前只能手改 settings.json -->
-                <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">错误关键词</div>
-                <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                  接收行含其中任一词就整行标红(大小写无关,自己发的内容不参与)。改完即时生效,不必重连。
-                </div>
+                <div class="flex items-center gap-1 mb-2 text-[13px] font-medium text-[var(--foreground)]">错误关键词<SettingsHelp label="错误关键词" text="接收行含其中任一词就整行标红(大小写无关,自己发的内容不参与)。改完即时生效,不必重连。" /></div>
 
                 <div class="flex flex-wrap gap-2 mb-3 min-h-[28px]">
                   {#each editErrorKeywords as k (k)}
@@ -1394,10 +1382,7 @@
             </div>
           {:else if activeSection === 'appearance'}
             <!-- 外观：主题预设 -->
-            <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">主题</div>
-            <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-              选择应用的整体配色方案，点击即时预览。
-            </div>
+            <div class="flex items-center gap-1 mb-2 text-[13px] font-medium text-[var(--foreground)]">主题<SettingsHelp label="主题" text="选择应用的整体配色方案，点击即时预览。" /></div>
             <div class="grid grid-cols-2 gap-3">
               {#each themeMeta as t}
                 <button
@@ -1493,12 +1478,9 @@
                 <span>‹</span><span>返回扩展</span>
               </button>
               <div class="flex items-center gap-3 mb-1">
-                <div class="text-[13px] font-medium text-[var(--foreground)]">快捷指令</div>
+                <div class="flex items-center gap-1 text-[13px] font-medium text-[var(--foreground)]">快捷指令<SettingsHelp label="快捷指令" text="调整快捷指令编辑区的字号、输入框高度、行间距与字体。" /></div>
                 <!-- 这一页没有开关(常驻开启),用一枚标记占住右侧那列,与另两页的总开关同位置 -->
                 <span class="ml-auto text-[12px]" style="color: var(--primary);">常驻开启</span>
-              </div>
-              <div class="text-[12px] text-[var(--muted-foreground)]">
-                侧栏快捷指令编辑区的密度:字号、输入框高度、行间距与字体。
               </div>
 
               <!-- 上边框给页头收口,与指令联想页的状态行同法,不必再套一层 div -->
@@ -1564,14 +1546,11 @@
                 <span>‹</span><span>返回扩展</span>
               </button>
               <div class="flex items-center gap-3 mb-1">
-                <div class="text-[13px] font-medium text-[var(--foreground)]">数据处理</div>
+                <div class="flex items-center gap-1 text-[13px] font-medium text-[var(--foreground)]">数据处理<SettingsHelp label="数据处理" text="关闭后隐藏数据处理入口，已填写的内容、配置和模板仍会保留。" /></div>
                 <label class="switch ml-auto" title={editShowDataTab ? '关闭数据处理' : '启用数据处理'}>
                   <input type="checkbox" aria-label="启用数据处理" bind:checked={editShowDataTab} />
                   <span class="switch-track"></span>
                 </label>
-              </div>
-              <div class="text-[12px] text-[var(--muted-foreground)]">
-                控制侧栏“数据处理”tab。关闭仅隐藏入口，各工具的输入、配置和模板仍会保留。
               </div>
               {#if editShowDataTab}
                 <div class="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2 py-1">
@@ -1587,8 +1566,8 @@
                     {/each}
                   </div>
                 </div>
-                <div class="mt-3">
-                  <div class="text-[12px] font-medium text-[var(--muted-foreground)]">帧构造器选项</div>
+                <div class="extension-settings-group">
+                  <h3>帧构造器选项</h3>
                   <Collapsible title="数据域生成方式" summary={dataFillOptionsSummary} bind:open={openDataFillOptions}>
                     <div class="grid grid-cols-2 gap-x-3 gap-y-2">
                       {#each DATA_SOURCE_OPTIONS as option (option.value)}
@@ -1625,16 +1604,15 @@
                     </div>
                   </Collapsible>
                 </div>
-                <div class="mt-3">
-                  <div class="text-[12px] font-medium text-[var(--muted-foreground)]">编解码选项</div>
-                  <Collapsible title="默认参数" summary={codecEncodingLabel(editCodecDefaultEncoding)} bind:open={openCodecDefaults}>
+                <div class="extension-settings-group">
+                  <h3>编解码选项</h3>
+                  <Collapsible title="默认参数" help="首次使用时生效；已有草稿可在工具中点击“使用默认编码”。" summary={codecEncodingLabel(editCodecDefaultEncoding)} bind:open={openCodecDefaults}>
                     <div class="flex items-center gap-3 text-[13px]">
                       <label for="settings-codec-encoding" class="w-24 shrink-0">默认文本编码</label>
                       <select id="settings-codec-encoding" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editCodecDefaultEncoding}>
                         {#each CODEC_ENCODINGS as option}<option value={option.value}>{option.label}</option>{/each}
                       </select>
                     </div>
-                    <p class="mt-2 text-[11px] text-[var(--muted-foreground)]">首次使用时生效；已有草稿可在工具中点击“使用默认编码”。</p>
                   </Collapsible>
                   <Collapsible title="处理方式" summary={codecOperationsSummary} bind:open={openCodecOperations}>
                     <div class="grid grid-cols-2 gap-x-3 gap-y-2">
@@ -1650,9 +1628,9 @@
                     </div>
                   </Collapsible>
                 </div>
-                <div class="mt-3">
-                  <div class="text-[12px] font-medium text-[var(--muted-foreground)]">短信选项</div>
-                  <Collapsible title="默认参数" summary={editSmsDefaultSmsc.trim() || '使用模组短信中心'} bind:open={openSmsDefaults}>
+                <div class="extension-settings-group">
+                  <h3>短信选项</h3>
+                  <Collapsible title="默认参数" help="首次使用或点击“恢复默认参数”时采用这些设置，不覆盖正在编辑的内容。" summary={editSmsDefaultSmsc.trim() || '使用模组短信中心'} bind:open={openSmsDefaults}>
                     <div class="space-y-3 text-[13px]">
                       <div>
                         <label for="settings-sms-center" class="mb-1 block">默认短信中心号码</label>
@@ -1672,7 +1650,6 @@
                           {#if !SMS_VALIDITY_OPTIONS.some(option => option.value === editSmsDefaultValidity)}<option value={editSmsDefaultValidity}>自定义（{editSmsDefaultValidity}）</option>{/if}
                         </select>
                       </div>
-                      <p class="text-[12px] text-[var(--muted-foreground)]">首次使用或点击“恢复默认参数”时采用这些设置，不覆盖正在编辑的内容。</p>
                     </div>
                   </Collapsible>
                 </div>
@@ -1686,14 +1663,11 @@
                 <!-- 标题与总开关同一行:开关管的是整页,不必再写一遍"启用输入联想"
                      (label 只包 track,标题不是它的 label;可点区域交给 aria-label/title) -->
                 <div class="flex items-center gap-3 mb-1">
-                  <div class="text-[13px] font-medium text-[var(--foreground)]">指令联想</div>
+                  <div class="flex items-center gap-1 text-[13px] font-medium text-[var(--foreground)]">指令联想<SettingsHelp label="指令联想" text="输入指令时显示知识库手册和发送历史候选，手册包含语法、参数与示例。" /></div>
                   <label class="switch ml-auto" title={editSuggestEnabled ? '关闭输入联想' : '启用输入联想'}>
                     <input type="checkbox" aria-label="启用输入联想" bind:checked={editSuggestEnabled} />
                     <span class="switch-track"></span>
                   </label>
-                </div>
-                <div class="text-[12px] text-[var(--muted-foreground)]">
-                  输入时弹出候选:知识库手册索引(带语法/参数/示例)与发送历史。
                 </div>
 
                 {#if editSuggestEnabled}
@@ -1897,11 +1871,7 @@
                       </Collapsible>
                     {/if}
 
-                    <Collapsible title="联想行为" summary={behaviorSummary} bind:open={openBehavior}>
-                      <!-- 键盘操作是"弹层怎么用",归在这一节;原先摊在页顶当引言,占三行还抢眼 -->
-                      <div class="text-[12px] text-[var(--muted-foreground)] mb-3">
-                        ↑ 进列表并选中最佳候选,继续 ↑ 向上翻;Tab / 有高亮时回车 = 填入,Esc 收起;无高亮时回车照旧发送。
-                      </div>
+                    <Collapsible title="联想行为" help="↑ 进列表并选中最佳候选,继续 ↑ 向上翻;Tab / 有高亮时回车 = 填入,Esc 收起;无高亮时回车照旧发送。" summary={behaviorSummary} bind:open={openBehavior}>
                       <!-- 弹出时机:模组指令几乎全以 AT+ 开头,按输入字符数算门槛时
                            "AT""AT+"就命中整本手册,而它们是打任何指令的必经之路 -->
                       <label class="switch mb-3">
@@ -1986,14 +1956,14 @@
                 <span>‹</span><span>返回扩展</span>
               </button>
               <div class="flex items-center gap-3 mb-1">
-                <div class="text-[13px] font-medium text-[var(--foreground)]">MCP 服务</div>
+                <div class="flex items-center gap-1 text-[13px] font-medium text-[var(--foreground)]">MCP 服务<SettingsHelp label="MCP 服务" text="支持 MCP Streamable HTTP 的客户端可接入并操作串口。" /></div>
                 <label class="switch ml-auto" title={editMcpAutoStart ? '关闭 MCP 服务' : '启用 MCP 服务'}>
                   <input type="checkbox" aria-label="启用 MCP 服务" bind:checked={editMcpAutoStart} />
                   <span class="switch-track"></span>
                 </label>
               </div>
               <div class="text-[12px] text-[var(--muted-foreground)]">
-                支持 MCP Streamable HTTP 的客户端可接入并操作串口。开关与端口改后重启生效。
+                开关与端口修改后，重启应用生效。
               </div>
 
               {#if editMcpAutoStart}
@@ -2005,9 +1975,8 @@
                 </label>
 
                 <div class="flex items-center gap-3 mt-3 mb-3">
-                  <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">端口</span>
+                  <span class="flex items-center gap-1 w-20 text-[13px] text-[var(--foreground)] shrink-0">端口<SettingsHelp label="MCP 端口" text="端口被占用时，会自动向上寻找可用端口。" /></span>
                   <input type="number" class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-input)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
-                  <span class="ml-auto text-[12px] text-[var(--muted-foreground)]">被占时自动向上找空闲端口</span>
                 </div>
 
               {/if}
@@ -2038,3 +2007,31 @@
     </div>
   </div>
 {/if}
+
+<style>
+  .extension-settings-group {
+    margin-top: 12px;
+    padding-bottom: 4px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+  }
+
+  .extension-settings-group > h3 {
+    margin: 0 0 4px;
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+    border-radius: calc(var(--radius) - 1px) calc(var(--radius) - 1px) 0 0;
+    background: var(--overlay-hover);
+    color: var(--foreground);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .extension-settings-group > :global([data-settings-collapse]) {
+    margin: 0 10px;
+  }
+
+  .extension-settings-group > :global([data-settings-collapse]:last-child) {
+    border-bottom: none !important;
+  }
+</style>

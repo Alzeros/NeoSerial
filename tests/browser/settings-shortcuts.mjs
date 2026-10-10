@@ -4,9 +4,9 @@ import { withHeadlessBrowser } from './headless.mjs';
 await withHeadlessBrowser(async ({ base, call, fresh, click, evaluate, until }) => {
   const targets = [
     ['快捷指令', 'quick', '常驻开启'],
-    ['数据处理', 'data', '控制侧栏“数据处理”tab'],
-    ['指令查询', 'suggest', '输入时弹出候选'],
-    ['MCP 日志', 'mcp', '支持 MCP Streamable HTTP'],
+    ['数据处理', 'data', '帧构造器选项'],
+    ['指令查询', 'suggest', '指令联想'],
+    ['MCP 日志', 'mcp', 'MCP 服务'],
   ];
   const requests = [];
   await fresh('main');
@@ -21,7 +21,7 @@ await withHeadlessBrowser(async ({ base, call, fresh, click, evaluate, until }) 
   }
   await call('Page.navigate', { url: `${base}/tests/browser/persistence-regressions.html?window=settings&run=deep-link&extModule=data` });
   await until('window.persistenceTest?.run === "deep-link"', 30000);
-  await until('document.body.innerText.includes("控制侧栏“数据处理”tab")');
+  await until('document.body.innerText.includes("帧构造器选项")');
   for (let index = 0; index < targets.length; index++) {
     await evaluate(`persistenceTest.reopenSettings(${JSON.stringify(requests[index])})`);
     await until(`document.body.innerText.includes(${JSON.stringify(targets[index][2])})`);
