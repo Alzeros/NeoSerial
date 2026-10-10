@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import CopyFeedback from './ui/CopyFeedback.svelte';
   import CustomSelect from './ui/CustomSelect.svelte';
   import { generateSms, parseSmsBatch, smsDefaultsFromSettings, restoreSmsDefaults,
     SMS_ENCODING_OPTIONS as encodingOptions, SMS_VALIDITY_OPTIONS as validityOptions,
@@ -14,6 +15,8 @@
   let generatedSnapshot = $state('');
   let generationError = $state<{ snapshot: string; message: string } | null>(null);
   let feedback = $state('');
+  let copiedKey = $state('');
+  let copyRequest = 0;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const parseSnapshot = $derived(config.pdu_input);
   const generateSnapshot = $derived(JSON.stringify([config.recipient, config.smsc, config.text, config.encoding, config.reference, config.validity_period ?? null]));
@@ -25,7 +28,7 @@
   const encodingLabel = (encoding: SmsEncoding) => encoding === 'gsm7' ? 'GSM 7-bit' : encoding === 'ucs2' ? 'UCS-2' : '8-bit 二进制';
   const byteHex = (value: number) => '0x' + value.toString(16).padStart(2, '0').toUpperCase();
 
-  function update(patch: Partial<SmsConfig>) { onconfigchange({...config, ...patch}); feedback = ''; }
+  function update(patch: Partial<SmsConfig>) { onconfigchange({...config, ...patch}); feedback = ''; copyRequest++; }
   function restoreDefaults() {
     update(restoreSmsDefaults(config, smsDefaultsFromSettings(cachedSettings.value?.ui)));
     feedback = '已恢复默认参数';
@@ -34,6 +37,7 @@
   }
   function run() {
     feedback = '';
+    copyRequest++;
     if (isParse) {
       parsed = parseSmsBatch(config.pdu_input);
       parsedSnapshot = parseSnapshot;
@@ -48,20 +52,31 @@
       }
     }
   }
-  async function copy(value: string) {
+  async function copy(value: string, key: string) {
     if (!canCopy) return;
-    try { await navigator.clipboard.writeText(value); feedback = '已复制'; }
-    catch { feedback = '复制失败，请选中结果后复制'; }
+    const request = ++copyRequest;
+    const source = isParse ? parsed : generated;
+    const snapshot = isParse ? parseSnapshot : generateSnapshot;
+    feedback = '';
     if (timer) clearTimeout(timer);
+    try {
+      await navigator.clipboard.writeText(value);
+      if (request !== copyRequest || source !== (isParse ? parsed : generated) || snapshot !== (isParse ? parseSnapshot : generateSnapshot)) return;
+      copiedKey = key;
+      feedback = '已复制';
+    } catch {
+      if (request !== copyRequest) return;
+      feedback = '复制失败，请选中结果后复制';
+    }
     timer = setTimeout(() => (feedback = ''), 2000);
   }
   function copyReport() {
     if (!parsed) return;
     const groups = parsed.groups.map(group => `长短信 ${group.peer} · 参考号 ${group.reference} · ${group.received}/${group.total} 段\n${group.complete ? group.text ?? group.dataHex : `缺段：${group.missing.join(', ') || '无'}；冲突段：${group.conflicts.join(', ') || '无'}`}`);
     const records = parsed.messages.map((message, index) => `第 ${index+1} 条 · ${message.type}\n号码：${message.peer}\n短信中心：${message.smsc || '使用模组设置'}\n时间：${message.timestamp ?? '无'}\n编码：${encodingLabel(message.encoding)}\n${message.text ?? message.dataHex}\nPDU：${message.pdu}`);
-    void copy([...groups, ...records, ...parsed.errors].join('\n\n'));
+    void copy([...groups, ...records, ...parsed.errors].join('\n\n'), 'report');
   }
-  onDestroy(() => { if (timer) clearTimeout(timer); });
+  onDestroy(() => { copyRequest++; if (timer) clearTimeout(timer); });
 </script>
 
 <div class="sms-panel flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
@@ -143,7 +158,7 @@
                 <div class="sms-card" data-sms-assembly>
                   <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <span class="font-medium">长短信 · {group.complete ? '已合并' : '未合并'} · {group.received}/{group.total} 段</span>
-                    <button type="button" class="sms-copy" disabled={!canCopy || !group.complete} onclick={() => copy(group.text ?? group.dataHex ?? '')}>复制完整{group.encoding === '8bit' ? '数据' : '正文'}</button>
+                    <button type="button" class="sms-copy" disabled={!canCopy || !group.complete} onclick={() => copy(group.text ?? group.dataHex ?? '', `group-${index}`)}><CopyFeedback label={`复制完整${group.encoding === '8bit' ? '数据' : '正文'}`} copied={feedback === '已复制' && copiedKey === `group-${index}`} /></button>
                   </div>
                   <p class="mb-1 break-all text-[11px] text-[var(--muted-foreground)]">{group.peer} · 参考号 {group.reference}</p>
                   {#if group.complete}
@@ -157,7 +172,7 @@
                 <div class="sms-card" data-sms-message>
                   <div class="mb-1 flex flex-wrap items-center justify-between gap-2">
                     <span class="font-medium">第 {index+1} 条 · {message.type === 'SMS-DELIVER' ? '接收短信' : '发送短信'}{#if message.concat} · {message.concat.sequence}/{message.concat.total} 段{/if}</span>
-                    <button type="button" class="sms-copy" disabled={!canCopy} onclick={() => copy(message.text ?? message.dataHex)}>复制{message.text === null ? 'Hex' : '正文'}</button>
+                    <button type="button" class="sms-copy" disabled={!canCopy} onclick={() => copy(message.text ?? message.dataHex, `message-${index}`)}><CopyFeedback label={`复制${message.text === null ? 'Hex' : '正文'}`} copied={feedback === '已复制' && copiedKey === `message-${index}`} /></button>
                   </div>
                   <p class="mb-1 break-all text-[11px] text-[var(--muted-foreground)]">{message.peer} · {encodingLabel(message.encoding)}</p>
                   <textarea class="sms-text" aria-label={`短信正文 ${index+1}`} readonly rows="3" value={message.text ?? message.dataHex} placeholder="空正文"></textarea>
@@ -191,7 +206,7 @@
                 <div class="sms-card" data-sms-generated>
                   <div class="mb-2 flex flex-wrap items-center justify-between gap-2">
                     <span class="font-medium">第 {part.sequence}/{part.total} 段</span>
-                    <button type="button" class="sms-copy" disabled={!canCopy} onclick={() => copy(part.pdu)}>复制 PDU</button>
+                    <button type="button" class="sms-copy" disabled={!canCopy} onclick={() => copy(part.pdu, `part-${part.sequence}`)}><CopyFeedback label="复制 PDU" copied={feedback === '已复制' && copiedKey === `part-${part.sequence}`} /></button>
                   </div>
                   <p class="mb-2 select-text font-mono">AT+CMGS={part.tpduLength}</p>
                   <textarea class="sms-text" aria-label={`生成 PDU ${part.sequence}`} readonly rows="3" value={part.pdu}></textarea>
@@ -207,11 +222,11 @@
   </div>
   <div class="flex shrink-0 flex-wrap items-center gap-2 border-t border-[var(--border)] bg-[var(--background-elevated)] px-4 py-2">
     {#if isParse}
-      <button type="button" class="sms-action" disabled={!canCopy} onclick={copyReport}>复制解析结果</button>
+      <button type="button" class="sms-action" disabled={!canCopy} onclick={copyReport}><CopyFeedback label="复制解析结果" copied={feedback === '已复制' && copiedKey === 'report'} /></button>
     {:else}
-      <button type="button" class="sms-action" disabled={!canCopy} onclick={() => generated && copy(generated.parts.map(part => part.pdu).join('\n'))}>复制全部 PDU</button>
+      <button type="button" class="sms-action" disabled={!canCopy} onclick={() => generated && copy(generated.parts.map(part => part.pdu).join('\n'), 'all')}><CopyFeedback label="复制全部 PDU" copied={feedback === '已复制' && copiedKey === 'all'} /></button>
     {/if}
-    <span role="status" class="text-[12px] text-[var(--primary)]">{feedback}</span>
+    <span role="status" class="text-[12px] text-[var(--primary)]">{feedback === '已复制' ? '' : feedback}</span>
   </div>
 </div>
 

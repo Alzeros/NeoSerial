@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { onDestroy, untrack } from 'svelte';
   // 帧构造器表单 + 实时预览 + 发送/填入/模板。
   // 表单直接 bind tool.config.xxx($state 深响应):SequencePersistence 的自动保存 effect 深度
   // 订阅 scriptModules,改动即落盘,这里不做额外 clone。
+  import CopyFeedback from './ui/CopyFeedback.svelte';
   import CustomSelect from './ui/CustomSelect.svelte';
   import { buildFrame, send, type FrameResult } from '$lib/tauri';
   import {
@@ -154,6 +155,7 @@
   async function doBuild() {
     const mySeq = ++seq;
     building = true;
+    copied = false;
     try {
       const r = await buildFrame(tool.config);
       if (mySeq !== seq) return; // 过期响应丢弃
@@ -277,12 +279,18 @@
 
   // ---- 复制整帧 hex:项目通用 navigator.clipboard 写法,复制成功 1.5s 显「已复制」 ----
   let copied = $state(false);
+  let copyTimer: ReturnType<typeof setTimeout> | undefined;
+  onDestroy(() => { if (copyTimer) clearTimeout(copyTimer); });
   async function copyHex() {
     if (!built || isStale) return;
+    const copiedResult = built;
+    copied = false;
+    if (copyTimer) clearTimeout(copyTimer);
     try {
-      await navigator.clipboard.writeText(built.hex);
+      await navigator.clipboard.writeText(copiedResult.hex);
+      if (built !== copiedResult || isStale) return;
       copied = true;
-      setTimeout(() => (copied = false), 1500);
+      copyTimer = setTimeout(() => (copied = false), 1500);
     } catch {
       // 剪贴板不可用时静默(与 SettingsDialog 一致)
     }
@@ -545,11 +553,11 @@
       <!-- Hex 显示完整帧；数据文本只显示数据域字符，避免与二进制帧头/校验混排。 -->
       {#if built}
         <button
-          class="ml-auto px-1.5 py-0.5 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {copied ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
+          class="ml-auto px-1.5 py-0.5 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {copied ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
           disabled={isStale}
           title={isStale ? '帧已过期,请重新生成后再复制' : '复制整帧 hex 到剪贴板'}
           onclick={copyHex}
-        >{copied ? '已复制' : '复制'}</button>
+        ><CopyFeedback copied={copied && !isStale} /></button>
       {/if}
       <div class="{built ? '' : 'ml-auto '}flex items-center gap-1 text-[12px]">
         <button

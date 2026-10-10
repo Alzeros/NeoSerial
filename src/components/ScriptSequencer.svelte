@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onMount, tick } from 'svelte';
   // 滑块图标而非齿轮:标题栏右上角已经有一枚齿轮(应用设置),两枚一模一样的齿轮上下挨着
   // 分不清谁是谁。滑块 = "调这个模块的参数",跟"应用设置"一眼区分开。
   import { SlidersHorizontal } from 'lucide-svelte';
@@ -29,6 +30,36 @@
     if (!showMcpTab && scriptView === 'mcp') scriptView = 'scripts';
   });
 
+  let navigation: HTMLDivElement | undefined = $state();
+  let indicator = $state<{ left: number; top: number; width: number } | null>(null);
+  let observer: ResizeObserver | undefined;
+
+  function measureIndicator() {
+    if (!navigation?.isConnected || !navigation.offsetWidth) return;
+    const selected = navigation.querySelector<HTMLButtonElement>('[data-module-tab][aria-current="page"]');
+    indicator = selected ? { left: selected.offsetLeft, top: selected.offsetTop + selected.offsetHeight - 2, width: selected.offsetWidth } : null;
+  }
+
+  onMount(() => {
+    let active = true;
+    observer = new ResizeObserver(measureIndicator);
+    document.fonts.ready.then(() => { if (active) measureIndicator(); });
+    return () => { active = false; observer?.disconnect(); observer = undefined; };
+  });
+
+  $effect(() => {
+    scriptView; showDataTab; showSuggestTab; showMcpTab; navigation;
+    let active = true;
+    tick().then(() => {
+      if (!active || !navigation) return;
+      observer?.disconnect();
+      observer?.observe(navigation);
+      navigation.querySelectorAll('[data-module-tab]').forEach(button => observer?.observe(button));
+      measureIndicator();
+    });
+    return () => { active = false; };
+  });
+
   // 持久化由 App 下常驻的 SequencePersistence 管理，侧栏收起/展开只切换视图。
 
   // 用类型标注而不是 $derived<...>() 泛型:标注形式对三元里的对象字面量有上下文类型,
@@ -47,37 +78,41 @@
 
 <div class="flex h-full flex-col border-l border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
   <!-- 顶部视图切换:快捷指令 / 数据处理 / 指令查询 / MCP 日志。用文字下划线风格(轻),与下方页签的实心块(重)拉开层级。 -->
-  <div class="flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
-    <button
+  <div bind:this={navigation} data-module-navigation class="relative flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
+    <button data-module-tab="scripts" aria-current={scriptView === 'scripts' ? 'page' : undefined}
       class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'scripts'
-        ? 'text-[var(--foreground)] border-[var(--primary)]'
+        ? 'text-[var(--foreground)] border-transparent'
         : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
       onclick={() => (scriptView = 'scripts')}
     >快捷指令</button>
     {#if showDataTab}
       <!-- 紧接在「快捷指令」之后:数据处理页签(spec:第二项,不是加在最后) -->
-      <button
+      <button data-module-tab="data" aria-current={scriptView === 'data' ? 'page' : undefined}
         class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'data'
-          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          ? 'text-[var(--foreground)] border-transparent'
           : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
         onclick={() => (scriptView = 'data')}
       >数据处理</button>
     {/if}
     {#if showSuggestTab}
-      <button
+      <button data-module-tab="reference" aria-current={scriptView === 'reference' ? 'page' : undefined}
         class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'reference'
-          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          ? 'text-[var(--foreground)] border-transparent'
           : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
         onclick={() => (scriptView = 'reference')}
       >指令查询</button>
     {/if}
     {#if showMcpTab}
-      <button
+      <button data-module-tab="mcp" aria-current={scriptView === 'mcp' ? 'page' : undefined}
         class="text-[13px] font-medium transition-colors cursor-pointer pb-0.5 border-b-2 {scriptView === 'mcp'
-          ? 'text-[var(--foreground)] border-[var(--primary)]'
+          ? 'text-[var(--foreground)] border-transparent'
           : 'text-[var(--muted-foreground)] border-transparent hover:text-[var(--foreground)]'}"
         onclick={() => (scriptView = 'mcp')}
       >MCP 日志</button>
+    {/if}
+    {#if indicator}
+      <span data-module-indicator aria-hidden="true" class="module-indicator"
+        style:width={`${indicator.width}px`} style:top={`${indicator.top}px`} style:transform={`translateX(${indicator.left}px)`}></span>
     {/if}
     <!-- 跳当前 tab 对应的扩展设置子页。四个 tab 共用这一枚、位置固定在右上角,
          比各自在内容区里再摆一个更好找(MCP 日志那页也没有能挂按钮的表头行)。
@@ -103,3 +138,13 @@
     <McpCallLog />
   {/if}
 </div>
+
+<style>
+  .module-indicator {
+    position: absolute; left: 0; height: 2px; pointer-events: none;
+    background: var(--primary); transition: transform 120ms ease-out, width 120ms ease-out;
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .module-indicator { transition: none; }
+  }
+</style>

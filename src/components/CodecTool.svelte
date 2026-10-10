@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import CopyFeedback from './ui/CopyFeedback.svelte';
   import CustomSelect from './ui/CustomSelect.svelte';
   import { CODEC_ENCODINGS, codecEncodingLabel, codecUsesEncoding, convertCodec, codecSendPayload, codecDefaultEncoding, restoreCodecEncoding, visibleCodecOperations, type CodecConfig, type CodecResult } from '$lib/codec';
   import { encodeGbkTexts } from '$lib/tauri';
@@ -164,9 +165,9 @@
 
   <div class="shrink-0 border-t border-[var(--border)] bg-[var(--background-elevated)] px-4 py-2">
     <div class="flex flex-wrap items-center gap-2">
-      <button type="button" class="codec-action" disabled={!usable} onclick={copy}>复制结果</button>
+      <button type="button" class="codec-action" disabled={!usable} onclick={copy}><CopyFeedback label="复制结果" copied={feedback === '已复制'} /></button>
       <button type="button" class="codec-action" disabled={!usable || !result?.value} title={fillHint} onclick={fill}>填入发送框</button>
-      <span role="status" class="text-[12px] text-[var(--primary)]">{feedback}</span>
+      <span role="status" class="text-[12px] text-[var(--primary)]">{feedback === '已复制' ? '' : feedback}</span>
     </div>
     {#if usable && (result?.format === 'text' || result?.format === 'escaped') && payload?.hex}
       <p class="mt-1 text-[11px] text-[var(--muted-foreground)]">
