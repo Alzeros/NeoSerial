@@ -59,7 +59,10 @@ mockIPC(async (cmd, args) => {
       sequence = payload.data;
       await emit('sequence-changed', { source: label });
       return;
-    case 'take_pending_settings': return { section: 'appearance', ext_module: null, anchor: null };
+    case 'take_pending_settings': {
+      const module = new URL(location.href).searchParams.get('extModule');
+      return { section: module ? 'extensions' : 'appearance', ext_module: module, anchor: null };
+    }
     case 'get_window_conn_state': return { connected: false };
     case 'take_pending_takeover': return null;
     case 'command_index_load': return { documents: [], commands: [], fetched_at: null };

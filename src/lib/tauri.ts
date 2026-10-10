@@ -75,7 +75,7 @@ export async function openSettingsWindow(
 ): Promise<void> {
   await invoke('open_settings_window', {
     section: request.section ?? null,
-    ext_module: request.ext_module ?? null,
+    extModule: request.ext_module ?? null,
     anchor: request.anchor ?? null,
   });
 }

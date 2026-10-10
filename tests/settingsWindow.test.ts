@@ -74,3 +74,10 @@ test('settings entry does not eagerly import the serial application', async () =
   assert.doesNotMatch(source, /import App from/);
   assert.match(source, /import\('\.\/components\/SettingsDialog\.svelte'\)/);
 });
+
+test('settings shortcuts map the module to the native camelCase argument', async () => {
+  const source = await readFile(new URL('../src/lib/tauri.ts', import.meta.url), 'utf8');
+  const command = source.slice(source.indexOf("await invoke('open_settings_window'"), source.indexOf('export async function takePendingSettings'));
+  assert.match(command, /extModule:\s*request\.ext_module/);
+  assert.doesNotMatch(command, /ext_module:\s*request\.ext_module/);
+});
