@@ -14,9 +14,18 @@ export function mcpEndpoint(status: {running: boolean; port: number | null}): st
     ? `http://127.0.0.1:${port}/mcp` : null;
 }
 
+export const MCP_VERIFY_PROMPT = '请调用 NeoSerial 的 list_ports，列出可用串口。只读取端口列表，不要连接串口，不要发送数据；如果工具不可用，请说明，不要猜测结果。';
+
+export interface SetupBlock {
+  label: string;
+  code: string;
+  location: string;
+  merge?: boolean;
+}
+
 interface SetupGuide {
   instructions: string;
-  blocks: {label: string; code: string}[];
+  blocks: SetupBlock[];
   verification: string;
   notes: string;
   docs: string;
@@ -30,17 +39,17 @@ export function mcpSetupGuide(client: McpClient, scope: McpScope, url: string): 
     case 'claude': return {
       instructions: user ? '在终端运行，注册到当前用户，供各项目使用。'
         : '先在终端进入目标项目目录，再运行。仅当前用户在该项目可用。',
-      blocks: [{label:'终端命令', code:`claude mcp add --scope ${user ? 'user' : 'local'} --transport http neoserial ${url}`}],
+      blocks: [{label:'终端命令', location: user ? '系统终端（PowerShell 等）' : '系统终端，先进入目标项目目录', code:`claude mcp add --scope ${user ? 'user' : 'local'} --transport http neoserial ${url}`}],
       verification: '在目标项目的终端运行 claude mcp get neoserial；在 Claude 会话中用 /mcp 检查连接和工具。',
       notes: '同名项已存在时，add 不会更新旧地址。先用 get 核对范围；项目中的同名项会优先于用户配置。配置后新建会话验证。',
       docs:'https://code.claude.com/docs/en/mcp',
     };
     case 'codex': return {
-      instructions: user ? '终端命令与手动编辑 ~/.codex/config.toml 二选一，作用于当前用户。'
+      instructions: user ? '推荐在系统终端执行下方命令，添加到当前用户配置。无需再填写手动配置。'
         : '将配置合并到目标项目的 .codex/config.toml。',
       blocks: [
-        ...(user ? [{label:'终端命令',code:`codex mcp add neoserial --url ${url}`}] : []),
-        {label: user ? '或：config.toml 配置' : '.codex/config.toml 配置',code:`[mcp_servers.neoserial]\nurl = "${url}"`},
+        ...(user ? [{label:'终端命令',location:'系统终端（PowerShell 等）',code:`codex mcp add neoserial --url ${url}`}] : []),
+        {label:'config.toml 配置',location:user ? '~/.codex/config.toml（~ 表示用户主目录）' : '目标项目的 .codex/config.toml',merge:true,code:`[mcp_servers.neoserial]\nurl = "${url}"`},
       ],
       verification: 'codex mcp get neoserial 可核对配置；在目标项目新建 Codex 会话，用 /mcp 检查实际连接。',
       notes: '已有 [mcp_servers.neoserial] 时更新该段，避免重复添加。项目配置需在信任项目后生效；自定义配置目录以客户端环境为准。',
@@ -48,7 +57,7 @@ export function mcpSetupGuide(client: McpClient, scope: McpScope, url: string): 
     };
     case 'cursor': return {
       instructions: `合并到 ${user ? '~/.cursor/mcp.json（当前用户，各项目可用）' : '目标项目的 .cursor/mcp.json'}。`,
-      blocks:[{label:'mcp.json 配置',code:JSON.stringify({mcpServers:{neoserial:{url}}},null,2)}],
+      blocks:[{label:'mcp.json 配置',location:user ? '~/.cursor/mcp.json（~ 表示用户主目录）' : '目标项目的 .cursor/mcp.json',merge:true,code:JSON.stringify({mcpServers:{neoserial:{url}}},null,2)}],
       verification:'在 Cursor 的 MCP 设置中检查 neoserial 状态与工具列表；必要时重启客户端。',
       notes:'将 neoserial 合并到已有 mcpServers 中，保留其他服务。已有同名项时更新它，并检查项目配置是否覆盖用户配置。',
       docs:'https://cursor.com/docs/mcp',
@@ -56,7 +65,7 @@ export function mcpSetupGuide(client: McpClient, scope: McpScope, url: string): 
     case 'vscode': return {
       instructions:user ? '在命令面板执行 MCP: Open User Configuration，打开当前用户配置文件。'
         : '将配置合并到目标工作区的 .vscode/mcp.json。',
-      blocks:[{label:'mcp.json 配置',code:JSON.stringify({servers:{neoserial:{type:'http',url}}},null,2)}],
+      blocks:[{label:'mcp.json 配置',location:user ? 'VS Code 命令面板 → MCP: Open User Configuration' : '目标工作区的 .vscode/mcp.json',merge:true,code:JSON.stringify({servers:{neoserial:{type:'http',url}}},null,2)}],
       verification:'执行 MCP: List Servers，选择 neoserial 检查或启动；在 Copilot 的工具列表中确认可用。',
       notes:'将 neoserial 合并到已有 servers 中，保留其他服务。用户配置按 VS Code 配置文件区分；远程工作区需核对服务运行位置。',
       docs:'https://code.visualstudio.com/docs/agent-customization/mcp-servers',

@@ -36,7 +36,7 @@ try{
   if(clipboardWrites.at(-1).actual!==clipboardWrites.at(-1).text){
     console.log('LIMIT: hidden native Clipboard API resolves but readback is empty; OS clipboard round-trip not verified.');
   }
-  await ev(btn('检测服务')+'.click()');
+  await ev(btn('本机服务自检')+'.click()');
   await until("document.body.textContent.includes('个工具可读取')");
   await ev("(()=>{const s=document.querySelector('#mcp-client');s.value='vscode';s.dispatchEvent(new Event('change',{bubbles:true}));})()");
   await until("Boolean(document.querySelector('textarea'))");

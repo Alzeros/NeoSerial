@@ -49,3 +49,18 @@ test('Cursor and VS Code use their respective JSON roots, with chosen scope inst
   assert.match(mcpSetupGuide('cursor','project',url).instructions, /\.cursor\/mcp\.json/);
   assert.match(mcpSetupGuide('vscode','user',url).instructions, /MCP: Open User Configuration/);
 });
+
+
+test('every configuration example states its execution or file location', () => {
+  for (const {value} of MCP_CLIENTS) {
+    for (const scope of ['user', 'project'] as const) {
+      const guide = mcpSetupGuide(value, scope, 'http://127.0.0.1:34600/mcp');
+      for (const block of guide.blocks) {
+        assert.ok(block.location?.length, `${value}/${scope}: location required`);
+        if (!block.code.startsWith('claude ') && !block.code.startsWith('codex ')) {
+          assert.equal(block.merge, true, `${value}/${scope}: warn against overwriting configuration`);
+        }
+      }
+    }
+  }
+});
