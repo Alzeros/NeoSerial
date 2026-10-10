@@ -1057,7 +1057,7 @@
         </nav>
 
         <!-- 右侧内容区（独立滚动） -->
-        <div class="flex-1 overflow-y-auto px-6 py-5">
+        <div class="flex-1 overflow-y-auto px-6 py-5 [scrollbar-gutter:stable]">
           {#if activeSection === 'about'}
             <!-- 关于：图标 + 应用名 + 版本 -->
             <div class="flex flex-col items-center justify-center text-center" style="min-height: 280px;">
