@@ -1,280 +1,335 @@
-# NeoSerial
+<p align="center">
+  <img src="assets/neoserial_icon_512.png" width="112" alt="NeoSerial 图标">
+</p>
 
-面向嵌入式开发的串口调试工具。Tauri 2 + Svelte 5 + Rust + windows-sys 原生 overlapped I/O。
+<h1 align="center">NeoSerial</h1>
 
-**单 exe 多窗口** + **内嵌 MCP server**（Claude Code 等 AI agent 经由它操作串口）+ **自动更新**。
+<p align="center">
+  面向通信模组与嵌入式开发的 Windows 串口调试工具，内置 MCP 服务，人和 AI agent 共用同一个串口连接。
+</p>
 
-## 构建
+<p align="center">
+  <a href="https://github.com/Alzeros/NeoSerial/releases/latest"><img src="https://img.shields.io/github/v/release/Alzeros/NeoSerial?color=0F6E56" alt="Release"></a>
+  <img src="https://img.shields.io/badge/platform-Windows%2010%2F11%20x64-0F6E56" alt="Platform">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-0F6E56" alt="License"></a>
+</p>
+
+<p align="center">
+  简体中文 | <a href="README.en.md">English</a>
+</p>
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot-dark.png">
+  <img src="assets/screenshot.png" alt="NeoSerial 主界面">
+</picture>
+
+<sub>截图中的端口与日志为模拟数据。</sub>
+
+## 特性
+
+- **原生 overlapped I/O**：直接调用 Win32 API 收发，USB 驱动缓冲满时发送不会卡住界面，高波特率下也能稳定拼行。
+- **一个进程，多个窗口**：每个窗口独立连一个串口，并发收发互不阻塞；可托盘常驻，关掉窗口连接仍在后台运行。
+- **AI agent 接入**：内嵌 MCP（Streamable HTTP）服务，Claude Code、Codex、Cursor、VS Code Copilot 等客户端可以列端口、收发、跑脚本、查手册。agent 发的命令会显示在界面上，你手动发的命令 agent 也能读到。
+- **快捷指令与脚本序列**：多页签命令表，支持逐行延时、循环运行、拖拽排序，可导入导出 JSON。
+- **数据处理工具**：帧构造器（自动计算长度与 CRC/SUM/XOR 校验）、编解码（GBK/UTF-8/UTF-16、Base64、转义文本）、短信 PDU 解析与生成。
+- **AT 指令联想**：可对接知识库，在输入框里联想手册中的指令，附带语法、参数表和示例；没有知识库时只用发送历史联想。
+- **日常细节**：HEX/ASCII 显示、时间戳、错误关键词高亮、日志搜索、文件发送、日志存盘、CTS/DSR 指示、主题编辑器、自动更新。
+
+## 下载安装
+
+从 [Releases](https://github.com/Alzeros/NeoSerial/releases/latest) 下载：
+
+| 文件 | 说明 |
+|------|------|
+| `NeoSerial_<版本>_x64-setup.exe` | NSIS 安装版，**推荐**。支持自动更新；缺少 WebView2 时会联网安装 |
+| `NeoSerial_<版本>_x64-portable.exe` | 免安装单文件。需要系统已有 WebView2（Win11 自带） |
+
+想让免安装版把配置也存在自己旁边（不写 `%APPDATA%`），在 exe 同目录放一个空文件 `neoserial.portable`，详见 [配置与数据](#配置与数据)。
+
+NeoSerial 是**单实例**的：再次启动只会把已有窗口拉到前台，不会再起一个进程去抢 COM 口和 MCP 端口。
+
+## 快速上手
+
+1. 在顶部连接栏选端口（悬停可看设备名）、波特率等参数，点 **连接**。
+2. 在底部输入框输入命令，回车或点 **发送**。打开 **回车换行** 会自动追加 CRLF；打开 **HEX发送** 则按十六进制发送。
+3. 常用命令写进右侧 **快捷指令** 表，可以单行发送，也可以设置次数和间隔批量运行。
+4. 标题栏的 **+** 可以再开一个窗口连另一个串口；齿轮按钮打开设置。
+5. 想让 AI agent 操作串口，看 [AI agent 接入（MCP）](#ai-agent-接入mcp)。
+
+## 功能
+
+### 连接与收发
+
+- 参数：端口、波特率（预设列表可在下拉里直接"添加…"）、数据位 5–8、校验 None/Odd/Even、停止位 1/2、流控 None/软件/硬件。
+- 端口下拉带设备友好名（通过 SetupAPI 获取，非 USB 端口也有），列表会去重并统一 COM 大小写。未连接时每 2 秒检测一次热插拔。
+- 端口已被别的窗口连着时，连接按钮下方会出现提示。
+- 发送：ASCII / HEX、可选追加 CRLF、**发送 Ctrl-Z**（0x1A，用于短信文本模式结束输入）。
+- **中文标点转半角**（设置 → 通用 → 发送处理）：发送前把 `？，：（）` 等转成半角，引号里的内容不动。只作用于输入框和快捷指令，MCP 发送的内容原样透传。
+- 文件发送：按 1024 字节分块并显示进度。进度到 100% 表示驱动已收下全部字节，不是指数据只塞进了队列。
+- 状态栏：连接状态、Tx/Rx 字节计数（可清零）；硬件流控时显示 CTS/DSR 电平指示灯。
+
+### 日志显示
+
+- ASCII / HEX 切换、时间戳（`HH:MM:SS.mmm`）、行号、方向标签（`Tx/Rx` 或 `发送/接收`）、暂停、清空。
+- 文本解码可选 ASCII / UTF-8 / GBK（设置 → 通用 → 日志内容），只影响显示。
+- 错误关键词高亮：默认 `ERROR`、`FAIL`、`+CME ERROR`、`+CMS ERROR`，可增删。只匹配接收行，不区分大小写，改了不用重连。
+- 留存上限按行数（1000–10000，默认 5000）和原始字节数（1–16 MiB，默认 4 MiB）同时控制，超出时从最旧的行开始丢；单条超大记录会替换成占位提示。存盘文件不受影响。
+- `Ctrl+F` 搜索日志（`F3` / `Shift+F3` 跳到下一个/上一个）。复制时按行和字段重建文本，软换行不会混进复制内容。
+- 字体（英文等宽字体与中文字体分别设置）、字号、行高可调，实时预览。
+
+### 日志存盘
+
+- 新建覆盖或续写同一文件，可选是否记录发送内容。
+- 不可打印字节转成 `\xHH` 写入；默认存到缓存目录下的 `logs\`。
+- 存盘是全局的：所有连接的收发写进同一个文件；任一窗口开始或停止存盘，其他窗口会同步状态。
+
+### 快捷指令与脚本序列
+
+- 结构为"模块 → 页签 → 命令行"。每行可设置：启用、命令、Hex、回车、延时（ms）、注释；有注释时，注释显示在该行的发送按钮上。
+- 单行发送（在命令框按回车也行）、表头一键全选/取消、**调整顺序** 模式下拖拽排序、右键菜单（重命名/删除页签、编辑注释、删除行）。
+- 批量运行：设置次数和轮间隔，显示进度和待发送条数，可随时停止；端口断开时自动中止，并记录停在哪一行。
+- 自动保存；也可以 **另存为** / **加载** JSON。编辑区的字号、行高、字体可调（设置 → 扩展 → 快捷指令）。
+
+### 数据处理
+
+右侧 **数据处理** 页签里有三个工具，可以在设置里单独隐藏：
+
+- **帧构造器**：固定四段 `[帧头][长度][数据][校验]`。
+  - 长度字段可选 无 / 1 字节 / 2 字节，支持大小端，覆盖范围可选数据 / 数据+校验 / 整帧。
+  - 数据来源：手动输入、随机字符（可勾选字符类型并设最少数量）、随机字节、全 00、全 FF、递增、自定义循环。
+  - 校验：CRC16（Modbus / CCITT-FALSE / XModem / ARC）、CRC32、SUM8、XOR8，可选是否把帧头、长度纳入计算。
+  - 实时预览，可以直接发送、填入发送框或存为模板。单帧上限 64 KiB。
+- **编解码**：文本 ⇄ Hex、Base64 编解码、转义文本 ⇄ Hex（`\r \n \t \0 \xHH` 等）。编码可选 UTF-8 / GBK / UTF-16LE / UTF-16BE，GBK 由原生层处理。
+- **短信**：
+  - 解析 PDU：支持 `+CMGR` / `+CMT` / `+CMGL` 的返回内容，可粘贴多段长短信合并解析。
+  - 生成 PDU：编码可选 GSM 7-bit / UCS-2 / 自动，支持短信中心地址、有效期和长短信拆分（最多 255 段），同时给出 `AT+CMGS=<长度>`。
+
+### 指令联想与指令查询
+
+需要一个提供"手册 AT 指令索引"的知识库服务（HTTP 接口 `GET /api/v1/commands/documents`、`GET /api/v1/commands?document_id=&page=&page_size=`，鉴权头为 `X-API-Key`）。没配置时，联想只用发送历史。
+
+- **配置**：设置 → 扩展 → 指令联想，填写服务地址和 API Key，点 **刷新指令库**。指令会缓存到本地，可以设为启动时自动刷新。
+  - API Key 用 DPAPI 加密存放，不会写进 `settings.json`。
+  - 刷新是增量的：手册的 `updated_at` 和条数都没变就沿用缓存。单本手册可以强制刷新。
+  - 手册按知识库里的分组折叠显示，可以勾选哪些手册参与联想。
+- **输入框联想**：默认去掉 `AT+` 前缀后输入满 2 个字符就弹出候选，门槛可调。匹配不区分大小写，输入 `csq` 也能命中 `AT+CSQ`，中文名也能搜。
+  - 候选附带中文名、语法、参数表、示例、来源手册和页码。同名指令在多本手册里时合并成一条，可以切换查看各本的版本。
+  - 发送历史按前缀匹配，排在手册候选前面。两者各自限量（默认手册 20 条、历史 10 条），互不挤占。
+  - 键盘：`↑` 进入列表并选中最佳候选，继续 `↑` 向上翻，`↓` 往回；`Tab` 或高亮状态下回车只填入、不发送；`Esc` 收起。没有高亮时回车照常发送。输入框为空时按 `↑` 可以翻看发送历史。
+- **指令查询页签**：在右侧面板独立模糊搜索手册指令，可以用键盘浏览，点示例行就填进输入框。
+
+### 多窗口与后台运行
+
+- 点标题栏的 **+** 开新窗口。所有窗口地位相同，没有"主窗口"：连接不属于某个窗口，窗口只是连接的视图。
+- agent 建立的连接、或者窗口关掉后留下的连接，会在 **+** 上显示红点。悬停可以看到这些连接，点一下就开窗口接上，并回填历史日志。
+- **托盘常驻**（设置 → 通用 → 后台与退出，默认关）：
+  - **开启**：关窗口不断开连接，后台继续收发、存日志、跑序列；关掉所有窗口后应用留在托盘，MCP 照常可用。托盘菜单可以新建窗口、打开或切换到某个连接、退出。
+  - **关闭**：关窗口会断开该窗口建立的连接（agent 建立的连接交还给 agent）；关掉最后一个窗口就退出。如果这时 agent 的连接还活着，会先弹窗确认。
+
+### 外观
+
+- 4 套预设主题（3 浅 1 深），另有自定义主题编辑器：分类编辑颜色、主窗口实时预览、悬停高亮对应区域，可导入导出 JSON。
+- 无边框窗口与自定义标题栏（新窗口、置顶、折叠右侧面板、设置），自定义右键菜单与下拉框。
+
+### 自动更新
+
+- 默认开启自动检查（每天最多一次，可在设置 → 关于里关闭）。有新版本时标题栏版本号旁会出现提示，可以稍后提醒（7 天）或忽略该版本，也可以在设置 → 关于里手动检查。
+- 更新源优先用自建镜像 `dl.neo.loc.cc`（国内可达），失败后改用 GitHub Releases。更新包经 minisign 签名校验，安装后自动重启。
+
+### 快捷键
+
+| 按键 | 作用 |
+|------|------|
+| `Enter` | 发送（联想列表有高亮时改为填入） |
+| `↑` / `↓` / `Tab` / `Esc` | 联想列表导航 / 填入 / 收起；输入框为空时 `↑` 打开发送历史 |
+| `Ctrl+F`，`F3` / `Shift+F3` | 搜索日志，跳到下一个/上一个匹配 |
+| `Ctrl+A` | 只全选当前聚焦的区域（日志区、MCP 记录、指令详情） |
+
+## AI agent 接入（MCP）
+
+NeoSerial 启动时会在 `127.0.0.1` 起一个 MCP（Streamable HTTP）服务，默认端口 `34594`，被占用时向上顺延。串口始终由 NeoSerial 持有，agent 不直接打开端口，所以人和 agent 可以同时操作同一个连接。
+
+### 添加到客户端
+
+最简单的方式是用 **设置 → 扩展 → MCP 服务** 里的接入向导：选客户端和生效范围，复制命令或配置，再用"本机服务自检"确认服务正常。下面是用户级配置的写法（端口以设置页显示的为准）：
+
+<details>
+<summary>Claude Code</summary>
 
 ```bash
-npm install          # 安装前端依赖
-npm run tauri dev    # 开发模式（同时启动 Vite + Cargo）
-npm run tauri build  # 发布构建（生成 NSIS 安装包）
+claude mcp add --scope user --transport http neoserial http://127.0.0.1:34594/mcp
+```
+</details>
+
+<details>
+<summary>Codex</summary>
+
+```bash
+codex mcp add neoserial --url http://127.0.0.1:34594/mcp
 ```
 
-### 可选：编译期注入默认知识库接入
+或者合并进 `~/.codex/config.toml`：
 
-指令联想要连知识库(见下)。构建时设这两个环境变量,会编译进二进制作为**运行时兜底**——内网用户
-装上即可用,不必手填地址与 Key;用户在设置页填了则以用户值为准(地址存 `settings.json`,
-Key 存 DPAPI 加密的凭据文件)。
+```toml
+[mcp_servers.neoserial]
+url = "http://127.0.0.1:34594/mcp"
+```
+</details>
 
-注入值**不写进配置文件、也不下发给界面**:设置页那两个框是空的、只显示"已内置(留空即用)",
-`settings.json` 里不会出现内网地址,MCP 的 `get_settings` 与 devtools 里也拿不到 Key。
-清空输入框 = 回到内置值。
+<details>
+<summary>Cursor（<code>~/.cursor/mcp.json</code>）</summary>
+
+```json
+{ "mcpServers": { "neoserial": { "url": "http://127.0.0.1:34594/mcp" } } }
+```
+</details>
+
+<details>
+<summary>VS Code Copilot（<code>.vscode/mcp.json</code> 或用户配置）</summary>
+
+```json
+{ "servers": { "neoserial": { "type": "http", "url": "http://127.0.0.1:34594/mcp" } } }
+```
+</details>
+
+其他客户端：传输方式选 Streamable HTTP，名称填 `neoserial`，URL 填上面的地址。
+
+配好后可以在客户端里发这句话来验证：
+
+> 请调用 NeoSerial 的 list_ports，列出可用串口。只读取端口列表，不要连接串口，不要发送数据；如果工具不可用，请说明，不要猜测结果。
+
+右侧 **MCP 日志** 页签会实时显示 agent 的每次工具调用（工具名、参数、成败、耗时）。
+
+### 工具（19 个）
+
+所有工具都返回 `{ ok: bool, ... }`，`ok=false` 时 `error` 字段给出中文原因。
+
+| 工具 | 说明 |
+|------|------|
+| `list_ports` | 列出可用串口 |
+| `connect` / `disconnect` | 连接 / 断开。端口已被 GUI 或之前的连接占用时直接复用，返回 `reused`、实际 `baud` 和 `owner`（gui / agent） |
+| `get_status` | 连接状态、收发字节数、当前序号；硬件流控时附带 `cts` / `dsr` |
+| `send` | 只发送，不读响应 |
+| `send_and_read` | 发送后阻塞读取响应；`timeout_ms` 是静默间隙超时，只返回接收到的行 |
+| `get_history_since` | 拉取某序号之后的收发历史（带方向、`ts` / `ts_ms` 时间戳），被截断时可以续读，不会丢行 |
+| `reset_stats` | 清零收发字节统计 |
+| `send_file` | 发送文件，二进制安全，用于固件烧录；阻塞到全部写完才返回 |
+| `start_logging` / `stop_logging` | 开始 / 停止存盘 |
+| `sequence_run` / `sequence_stop` / `get_sequence_status` | 脚本序列：批量命令 + 循环 + 延时，可以轮询进度 |
+| `get_settings` / `save_settings` | 读写配置 |
+| `kb_search` / `kb_get` / `kb_manuals` | 查本地缓存的手册 AT 指令：搜索、取完整记录（语法/参数/示例）、列手册。不请求知识库，不消耗配额 |
+
+### agent 使用约定
+
+- **发现实例**：读 `%APPDATA%\neoserial\mcp-registry.json`（路径固定，便携模式也写在这里），取 `heartbeat_at` 在 30 秒内的条目，用它的 `port`；`connections` 里列出了已连的 COM 和波特率。没有有效条目说明 NeoSerial 没在运行，可以启动它再等它登记；也可以从 34594 起逐个端口调用 `get_status` 探测。
+- **波特率不一致会报错**：`connect` 已连着的端口时，如果请求的波特率和现有连接不同会直接报错，不会悄悄沿用旧值。要改波特率得先 `disconnect`，这会断开用户正在用的连接，应先征得用户同意。
+- **重连**：`disconnect` 后立即 `connect` 同一端口，极少数情况下驱动还没释放，会提示"端口被占用"，等 0.5–1 秒重试即可。
+- **枚举参数**（`ending`、`data_bits`、`parity`、`flow_control`）不区分大小写，但写错会直接报错，不会悄悄换成默认值。
+- **先查手册再发指令**：用 `kb_search` / `kb_get` 查语法。`also_in_count > 0` 说明不同手册里有不同版本，照语法发送前应先看 `kb_get` 的 `also_in`。
+
+> MCP 服务只监听本机回环地址，没有鉴权，本机任何进程都能调用。不需要时可以在设置里关闭（重启后生效）。
+
+## 配置与数据
+
+数据分两处存放：**配置目录**（默认 `%APPDATA%\neoserial`）放设置和用户内容，**缓存目录**（默认 `%LOCALAPPDATA%\neoserial`）放可重建或体积大的文件。缓存目录不随漫游配置同步。两个目录可以在设置 → 通用 → 数据目录里查看并直接打开。
+
+| 文件 | 位置 | 内容 |
+|------|------|------|
+| `settings.json` | 配置目录 | 串口默认值、界面偏好、主题、错误关键词、预设波特率、MCP、指令联想、更新检查等 |
+| `sequence.json` | 配置目录 | 快捷指令模块、数据处理工具的配置与模板 |
+| `send-history.json` | 配置目录 | 输入框发送历史（默认留 200 条，可调 50–1000） |
+| `kb-credential.dat` | 配置目录 | 知识库 API Key，用当前 Windows 用户的 DPAPI 加密 |
+| `command-index.json` | 缓存目录 | 手册指令缓存，可以重新刷新得到 |
+| `logs\` | 缓存目录 | 默认的日志存盘位置 |
+| `mcp-registry.json` | **固定** `%APPDATA%\neoserial` | MCP 端口与已连端口，供 agent 发现实例 |
+
+- **便携模式**：在 exe 同目录放一个空文件 `neoserial.portable`，配置和缓存都会存到 `<exe 目录>\data`，WebView2 数据也一样。也可以用环境变量 `NEOSERIAL_DATA_DIR` 指定目录，它的优先级更高。两种方式都只在启动时生效，已有数据不会自动搬过去。
+- **registry 不随便携目录移动**：它是 agent 找实例的约定位置。条目带心跳，读取方会检查是否新鲜，即使被漫游同步到别的机器也不会误导 agent。
+- 配置文件损坏时会改名为 `.bad` 备份，然后使用默认值；文件先写到临时文件再改名，断电不会留下写了一半的 JSON。
+- 多个窗口、agent 和主题编辑器同时修改设置时，只提交改动的字段，互不覆盖。
+
+## 开发
+
+### 环境
+
+- Windows 10/11 x64，已安装 WebView2
+- [Rust](https://rustup.rs/) stable（MSVC 工具链）与 Tauri 2 的 [系统依赖](https://v2.tauri.app/start/prerequisites/)
+- Node.js：构建前端用 20 及以上即可；`npm run test:unit` 依赖 Node 原生的 TypeScript 类型剥离，需要 **22.18 或更高**
+- 浏览器回归测试需要本机装有 Chrome 或 Edge
+
+### 构建
+
+```bash
+npm install
+npm run tauri dev                       # 开发模式（Vite + Cargo，前端改动热重载）
+npm run tauri build                     # 发布构建：NSIS 安装包 + 更新包签名
+npm run tauri build -- --no-bundle      # 只编译 exe，不打包
+```
+
+`tauri.conf.json` 开了 updater 产物签名，打安装包时需要设置 `TAURI_SIGNING_PRIVATE_KEY`（以及 `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`），否则打包这一步会报错。本地自用可以加 `--no-bundle`，产物在 `src-tauri/target/release/neoserial.exe`，可以直接运行。
+
+代码里保留了非 Windows 平台的 `serialport` 兜底路径，但目前只发布和测试 Windows 版。
+
+### 编译期注入默认知识库（可选）
+
+构建时设置下面两个环境变量，它们会编译进二进制作为兜底值：内网用户装上就能用指令联想，不用自己填地址和 Key。用户在设置页填了值的话，以用户填的为准。
 
 ```bash
 NEOSERIAL_KB_BASE_URL=http://kb.intranet:8200
 NEOSERIAL_KB_API_KEY=kb_xxxxxxxx
 ```
 
-不设 = 空 = 未配置(联想只用发送历史),与不注入时行为一致。CI 从 GitHub Secrets 取同名 secret,
-所以仓库里不存 Key;本地开发可写 `src-tauri/.cargo/config.toml` 的 `[env]` 段(已 gitignore),
-免得每次开终端都 export:
+- 注入值不会写进配置文件，也不会下发给界面：设置页只显示"已内置（留空即用）"，`get_settings` 和 devtools 里都拿不到。清空输入框就回到内置值。
+- 不设置就等于没配置，联想只用发送历史。CI 从 GitHub Secrets 读取同名变量。本地可以写在 `src-tauri/.cargo/config.toml` 的 `[env]` 段（已 gitignore）：
+  ```toml
+  [env]
+  NEOSERIAL_KB_BASE_URL = "http://kb.intranet:8200"
+  NEOSERIAL_KB_API_KEY = "kb_xxxxxxxx"
+  ```
+  注意 TOML 里要加引号，GitHub Secret 输入框和 shell export 里**不要加引号**。万一带上了引号，`clean_injected` 也会把外层引号去掉。
+- 改了变量要重新编译才生效（`build.rs` 声明了 `rerun-if-env-changed`）。
+- **注入的 Key 会随二进制一起分发，用 `strings` 就能看到。** Secrets 只能保证 Key 不进 git 历史，不能保证安装包里没有 Key。所以这种方式只适合内网只读接口；要彻底解决，得让客户端不持有长期 Key。
 
-```toml
-[env]
-NEOSERIAL_KB_BASE_URL = "http://kb.intranet:8200"
-NEOSERIAL_KB_API_KEY = "kb_xxxxxxxx"
-```
-
-注意 TOML 的 `[env]` 段语法上要引号,而 **GitHub secret 输入框、shell export 都不要引号**——
-两边写法不同,容易把引号一起粘进值里。真粘进去了也不会坏事:注入值会先剥掉外层引号
-(见 `clean_injected`),但填的时候别带。
-
-改了变量要重新编译才生效(`build.rs` 里声明了 `rerun-if-env-changed`)。
-
-注意**注入的 Key 随二进制分发、`strings` 可见**:Secrets 保护的是"Key 不进 git 历史、看源码的人
-拿不到",不是"编出来的包里没有 Key"。客户端内嵌的长期密钥无法对拿到 exe 的人保密(这是原理性的,
-混淆只是提高门槛),所以只适合内网只读接口这类场景;要根治得让客户端不持长期 Key(短期 token
-或匿名只读接口)。
-
-## 技术栈
-
-- **前端**: Svelte 5（$state 响应式）+ TypeScript + Tailwind CSS + Vite + lucide-svelte（图标）
-- **后端**: Rust + Tauri 2 + windows-sys（原生 overlapped I/O，绕过 serialport 同步 WriteFile 阻塞）+ crossbeam-channel + rmcp 3.1（MCP streamable HTTP）
-- **插件**: tauri-plugin-dialog / fs / shell / updater / process / single-instance / notification
-- **通信**: Tauri IPC（invoke + 定向 emit_to）+ MCP HTTP
-
-## 多窗口 + MCP 共享串口
-
-核心特性：一个 exe 开多个独立窗口，每个窗口连一个串口；同时内嵌一个 MCP server，AI agent 与人**共享同一串口连接**——agent 发的命令显示在 GUI 窗口，人发的命令 agent 能读到历史。
-
-- **多窗口**：点标题栏 `+` 开新窗口（完整界面的复制品），各窗口独立选端口连接，并发收发不阻塞。窗口 label 用 `win-{自增}`，与连接解耦。
-- **MCP 共享连接**：agent `connect` 一个已被 GUI 连的端口 → 复用，不报冲突。`ConnectionHandle.window_label`（`Arc<RwLock>`）记录连接归属窗口，GUI 接管 MCP 连接时改此值，reader/writer 线程下次 emit 自动用新 label，无需重启线程。
-- **事件定向**：所有事件（rx-line/tx-line/sequence-progress 等）用 `emit_to(window_label)` 定向到归属窗口，前端用 `getCurrentWebview().listen` 接收，多窗口不串流。
-- **能力（capability）**：`capabilities/default.json` 的 `windows: ["main", "win-*"]` 用通配符授权所有窗口的监听/窗口控制/文件读写等权限。
-- **窗口平等**：启动时的窗口和 `+` 开出的窗口行为完全一致，没有"主窗口"；连接不属于窗口，窗口只是它的视图。
-- **后台运行（设置项，默认关，托盘常驻）**：开启时关窗口不断开连接——连接留在后台继续收发、存日志、跑序列，关掉最后一个窗口应用留在托盘，MCP 照常；首次收后台发一条系统通知说明。托盘 tooltip 列出占用的端口，右键菜单：新建窗口 / 每个连接一项（无窗口的"打开"=开新窗口挂上并回填历史日志，有窗口的"切到"）/ 退出。关闭时（轻量模式）不显示托盘，关窗口断开该窗口自己建的连接（agent 建的交还 agent），关掉最后一个窗口即退出——若此时 agent 建的连接还活着，先弹确认（取消 / 开启后台运行并收起 / 仍然退出），避免顺手关窗把 agent 会话掐断。改开关即时生效。
-- **单实例**：再次启动 exe 只把已有窗口拉到前台（没有窗口就新建一个），不会起第二个进程去抢 COM 口和 MCP 端口。
-
-### MCP 工具（19 个）
-
-| 工具 | 能力 |
-|------|------|
-| `list_ports` | 列可用串口 |
-| `connect` / `disconnect` | 连接/断开（已连的口复用不重开，返回 `reused` 与实际 `baud`；波特率不一致报错） |
-| `get_status` | 查连接状态 + rx 序号 |
-| `send` | 发数据（不读） |
-| `send_and_read` | 发后阻塞读响应（静默间隙超时） |
-| `get_history_since` | 拉收发历史（tx+rx，带方向，seq 基准，截断可续读不丢行） |
-| `reset_stats` | 清零收发字节统计 |
-| `send_file` | 发送文件（二进制安全，固件/烧录） |
-| `start_logging` / `stop_logging` | 开始/停止存盘（全局） |
-| `sequence_run` / `sequence_stop` | 脚本序列（批量命令+循环+延时，自动化测试） |
-| `get_sequence_status` | 查序列运行状态（端口断开导致中止后 running=false） |
-| `get_settings` / `save_settings` | 读/写配置（持久化） |
-| `kb_search` | 搜手册 AT 指令（多关键词，匹配指令名/中文名/摘要），返回指令+中文名+来源手册+页码+同名手册数 |
-| `kb_get` | 取一条指令的完整记录（语法/参数表/示例/摘要/来源，含"也见于"其他手册的版本，各带自己的语法/参数/示例） |
-| `kb_manuals` | 列本地缓存里的手册（标题/条数/提取状态/分组），知道能查到什么范围 |
-
-后三个是**知识库指令查询**：agent 发指令前先查手册语法，不必凭记忆猜。只读本地缓存
-（`command-index.json`），不请求知识库、不耗 rpm/日配额；缓存为空时返回 `ok:false` 并说明是"未配置"
-还是"没刷新过"，让 agent 能告诉用户去点哪里。搜索范围不受"参与联想的手册"勾选影响——那个勾选是
-输入框联想的减噪开关，agent 查手册该能查到缓存里的全部（返回带来源手册名）。
-
-agent 发现实例：读 `%APPDATA%/neoserial/mcp-registry.json`（单实例下只有一条，记录实际 MCP 端口与已连端口，心跳 5s），没有新鲜（30s 内）条目就启动 NeoSerial；再退化为从默认端口 34594 起逐端口 `get_status` 探测。Claude Code 配置：
-
-```
-claude mcp add --transport http neoserial http://localhost:34594/mcp
-```
-
-约定见项目根 `CLAUDE.md`。
-
-## 指令联想
-
-发送输入框输入到一定长度弹出候选(默认:去掉 `AT+` 前缀后 ≥2 个字符;HEX发送开着时不弹。门槛与条数上限可配,见下):
-
-- **知识库手册指令索引**:设置 → 指令联想 填知识库服务器地址与 API Key,"刷新指令库"按手册拉缓存到 `%LOCALAPPDATA%/neoserial/command-index.json`(启动时可自动刷新),可勾选参与联想的手册。候选带中文名、语法、参数表、示例(以 AT 开头的示例行可点填入)、来源手册与页码;同名指令合并成一条(手册徽标只报排最前那本,后面标 `+N` 表示另有 N 本也收录了),"也见于"可切换其他手册的记录。
-  - **增量刷新**:接口有 rpm 限流与日配额,"刷新指令库"只重拉有变化的手册——手册列表报的 `updated_at` 与缓存一致、且缓存条数与 `cmd_count` 相等就沿用缓存(条数不符说明上次那本没拉全,照样重拉)。换了知识库地址则全部重拉。
-  - **单本刷新**:手册列表每行末尾有刷新按钮,只拉这一本(顺带更新手册列表,新上传的手册也会出现),不做增量判断——知识库刚重新提取完、`updated_at`/`cmd_count` 又没变时用它强制拉一次。与全量刷新共用一把写入锁,一次只能刷一本。行内条数显示的是**本地缓存**的条数,与服务器报的不一致时补出"服务器 N"提示该刷新。
-  - **按分组折叠**:手册列表接口带 `group_names`(管理员在知识库 Web 端按手册归的组),设置页据此显示分组头——组头勾选框三态(全选/部分/全不选)可整组开关参与联想,点组名折叠该组。一本手册属多个分组就在每组下各出现一次,勾选联动;`group_names` 为空的进"未分组"垫底。**所有手册都没有分组时按平铺显示**,与不带分组时完全一致。排除名单存的始终是手册 id,分组只是批量勾选的入口——知识库那边调整分组不会让已有的排除项漂移。
-  - **设置页分节折叠**:子页四节(知识库服务器 / 参与联想的手册 / 联想行为 / 发送历史)默认只展开手册那节,其余收起、头部显示当前值摘要(如 `忽略 AT+ · ≥2 字符 · 手册 20 / 历史 10`),收起也看得见状态,不必一次面对全部设置项。刷新状态行不进折叠节——单本刷新的按钮在手册节里,消息若藏在收起的知识库节里就等于没反馈。展开状态不落盘,每次开设置页复位。
-- **发送历史**:输入框手动发过的内容(`send-history.json`,留存条数上限可配、默认 200,去重),补手册没收录的私有指令与带参数的完整命令。历史按前缀匹配、排在手册候选之前,与手册候选各自限量互不挤占;输入为空时按 ↑ 弹出历史列表(最近在前)。
-
-键盘:弹层在输入框上方、列表自下而上(最佳候选贴着输入框)——**↑ 进入列表并选中最佳候选,继续 ↑ 向上翻;↓ 仅在高亮时向回走**。Tab / 有高亮时回车 = 填入(不发送),Esc 收起;**无高亮时回车照旧发送**。匹配大小写无关,输入不带 `AT+` 也能命中(`csq` → `AT+CSQ`),中文名也可搜。
-
-弹出时机与条数可配(设置 → 扩展 → 指令联想 → 联想行为):
-
-- **算长度时忽略 AT+ 前缀**(默认开)+ **最少输入 N 字符**(默认 2):模组指令几乎全以 `AT+` 开头,按输入的字符数算门槛时 `AT`、`AT+` 就命中整本手册,而它们是打任何一条指令的必经之路。忽略前缀后 `AT`/`AT+`/`AT+M` 不弹,`AT+MI` 才弹。关掉该开关即回到按字符数算。
-- **候选条数上限**:手册指令(默认 20)与发送历史(默认 10)**各自限量**,历史再多也挤不掉手册卡片;被上限挡住的条数显示在弹层顶部("还有 N 条,继续输入以收窄")。历史上限设 0 = 联想里不出历史;空输入按 ↑ 翻历史不受此限。
-- **发送历史留存上限**(默认 200,50–1000):`send-history.json` 里总共留几条,与上面"联想里显示几条"是两回事。调小后保存,多出来的旧记录当场裁掉(GUI 与 MCP 两条保存路径都会裁)。
-
-## 界面布局
-
-自定义无边框窗口，左主区 + 右脚本面板（可拖拽调宽、可折叠），信息密度高、一屏完成常用操作：
-
-```
-┌──────────────────────────────────────────────────────────────┐
-│ 标题栏：应用名 | + 新窗口 | 置顶 | 脚本折叠 | 设置 | 窗口控制   │
-├──────────────────────────────────────────────┬───────────────┤
-│ 串口配置（端口/波特率/数据位/校验/停止位/流控）│               │
-├──────────────────────────────────────────────┤    脚本序列    │
-│                                              │   侧边栏       │
-│                  数据显示区                   │  （可折叠/     │
-│              （HEX/ASCII、时间戳、            │   可拖拽调宽） │
-│               方向标签、错误高亮）             │               │
-│                                              │  模块 → 页签   │
-├──────────────────────────────────────────────┤  → 命令表格    │
-│ 工具条 + 开关组 + 发送输入                    │               │
-│ 文件发送 / 日志保存（可折叠）                  │               │
-├──────────────────────────────────────────────┤               │
-│ 状态栏：连接状态 / Tx / Rx / 清零             │               │
-└──────────────────────────────────────────────┴───────────────┘
-```
-
-## 架构
-
-连接为中心：每个 ConnectionHandle 是自包含单元（串口句柄 + 读/写线程 + per-conn 收发历史 + window_label），UI 是它的视图。
-
-### 数据通路
-
-```
-设备 → WinPort overlapped read → LineAssembler(跨 read 拼行)
-     → LogLine(预存 raw/ascii/hex) → emit_to(window_label, "rx-line") → 该窗口 logLines[]
-                                  → 喂 per-conn RxHistory(供 MCP 阻塞读/历史查询)
-                                  → FileLogger channel → 存盘线程写文件
-```
-
-### 线程模型
-
-- **读线程**: overlapped read（20ms 超时）→ `LineAssembler` 按 `\r\n` / `\n` / `\r` 切行 → 构造 `LogLine` → 批量 `emit_to`（攒够 16 行或超过 5ms）+ push per-conn `RxHistory`。超时时 flush 不换行的残尾。
-- **写线程**: crossbeam channel（容量 64）接收 `WriteCommand`，逐条 `write_all`（overlapped write，等待上限按 长度/波特率 推算，短写循环补写，零进展的超时重试至累计 3s 才判设备卡住，不合并积压命令）+ `emit_to` tx-line/tx-update。文件发送用 `FileChunk`（带 `FileSendTracker`，写线程每块写完累加实际写出字节；`send_file` 据此报进度并等最后一块写完才返回——"100%" 指驱动已收下全部字节，不是塞满了队列；某块写失败后同一文件余下的块直接丢弃）；手动发送/脚本序列/MCP 用 `SendSilent`（发起方已乐观回显，避免被写阻塞拖慢节奏）。
-- **存盘线程**: `FileLogger` 独立线程 + `BufWriter`，全局单份（多连接收发进同一文件）。开始/停止/写盘失败都广播 `logging-changed`，各窗口据此同步按钮与路径（窗口挂载时 `get_logging_status` 拉一次）；停止记录与退出应用都等存盘线程把缓冲写完再返回，写失败会摘掉 logger 并把原因显示在按钮上。
-- **监控线程**: 等待读/写线程都退出后清理状态并通知归属窗口断开。
-
-### 连接模式
-
-`WinPort::open()`（`CreateFileW` + `FILE_FLAG_OVERLAPPED`）+ `DuplicateHandle` 克隆 → overlapped I/O 模式（读/写各持独立句柄，`WriteFile` 立即返回不阻塞，超时 `CancelIo` 后以 `GetOverlappedResult(bWait=TRUE)` 等 I/O 真正完成再释放缓冲）。DCB 显式设 `fBinary` + DTR/RTS `*_CONTROL_ENABLE`（硬件流控为 `fOutxCtsFlow` + `RTS_CONTROL_HANDSHAKE`），驱动级写超时关闭、读超时 20ms。绕过 serialport 的同步 `WriteFile`，解决 USB 驱动缓冲满时阻塞数秒的问题。
-
-### per-connection 收发历史隔离
-
-每个 `ConnectionHandle` 持 `Arc<RxHistory>`（存 (seq, Dir, LogLine)，tx+rx 共用序号）。reader 喂 Rx、`emit_tx_line` 喂 Tx。`send_and_read` 从该连接 history 读、`get_history_since` 返回该连接的，多连接不串数据。
-
-`get_history_since` 的游标契约：返回的 `latest_seq` 是**本次实际返回的最后一行**的 seq，不是全量最大序号。被 `max_lines` 截断时 `truncated=true`，agent 用 `latest_seq` 继续拉即可无缝续读；若返回全量最大序号，被截掉那批行会被游标跳过而永久丢失。每行另带 `seq` 供精确续读/去重。缓冲容量（10,000 行）溢出导致游标之后有行被挤出时 `dropped=true`，让 agent 能区分“数据不完整”与“没有新数据”。
-
-### 连接建立不阻塞其它端口
-
-`WinPort::open()` + DTR/RTS 拉高是阻塞驱动调用（实测可卡数秒）。connect 只在持 `connections` 锁期间做检查并往 `connecting` 集合插入占位（`ConnectingGuard`，RAII 保证任何失败路径都清位），阻塞的打开放到锁外，完成后重取锁 insert。占位守住 TOCTOU（并发第二个 connect 被挡回而非二次 spawn），同时打开某端口期间其它已连端口的 send/disconnect/get_status 不受影响。MCP 侧的 `connect` 另经 `spawn_blocking` 执行，避免占死 tokio worker 拖住整个 MCP server。
-
-### 前端
-
-- Svelte 5 `$state` 响应式 store 管理全部 UI 状态
-- `logLines` 上限 10,000 行，超出丢弃最旧
-- 自动滚动：日志有更新即跳最新（`$effect` + `requestAnimationFrame` 兜底）
-- IME 组合处理：中文输入法首次 Enter 用于确认上屏时，`compositionend` 补发发送
-- 端口下拉默认显示上次连的端口（不在可用列表则取第一个）
-
-### 配置与持久化
-
-数据分两处：**配置目录**（默认 `%APPDATA%\neoserial`）放配置与用户内容，**缓存目录**（默认 `%LOCALAPPDATA%\neoserial`）放可重建或体积大的东西——后者不跟着漫游用户配置文件同步，域环境登录不会被指令缓存拖慢。设置 → 扩展 → 指令联想 → 知识库服务器里显示当前两个目录，可一键打开。
-
-| 文件 | 位置 | 说明 |
-|------|------|------|
-| 设置 | 配置目录 `settings.json` | 串口默认值、UI 偏好、命令组、错误关键词、预设波特率、主题、MCP 设置、指令联想（知识库地址、参与手册、弹出门槛与条数上限、发送历史留存上限）|
-| 脚本序列 | 配置目录 `sequence.json` | 脚本模块/页签/命令、数据处理(帧构造器配置与模板)(防抖自动保存)|
-| 发送历史 | 配置目录 `send-history.json` | 输入框手动发过的内容，留存上限可配 |
-| 知识库凭据 | 配置目录 `kb-credential.dat` | 用户填的 API Key，DPAPI（当前 Windows 用户）加密。**不在 settings.json 里**——那份会下发给前端、会被 agent 的 `get_settings` 读到、还整份落盘 |
-| 指令缓存 | 缓存目录 `command-index.json` | 手册指令索引，可重建（刷新指令库）|
-| 日志文件 | 缓存目录 `logs\` | 默认存盘目录（界面上选了路径就写你选的地方）|
-| MCP registry | **固定** `%APPDATA%\neoserial\mcp-registry.json` | 实例 MCP 端口 + 已连 COM 列表（供 agent 发现，心跳 5s）|
-
-- **便携模式**：exe 同目录放一个空文件 `neoserial.portable`，配置与缓存全落在 `<exe>\data`（缓存在 `data\cache`），WebView2 的数据目录也跟着走，不往系统盘写。环境变量 `NEOSERIAL_DATA_DIR=D:\ns-data` 同理且优先级更高
-- registry **不跟便携目录走**：它是 agent 找 MCP 端口的汇合点，必须在众所周知的位置，所以便携模式下仍写 `%APPDATA%\neoserial`（除它之外不碰系统盘）。条目带心跳、读方有 30s 新鲜度检查，被漫游同步过来也无害
-- 旧版本升级自动迁移：指令缓存从配置目录搬到缓存目录（搬不动就当缓存丢弃，下次刷新重建）；`settings.json` 里的明文 `api_key` 搬进凭据文件，原文件先备份为 `settings.json.bak.pre-secret` 再重写，明文当场从磁盘消失
-- 配置损坏自动备份为 `.bad` 并回退默认值；写入先落临时文件再改名，断电不留半个 JSON
-- 设置写回走 `patch_settings`（以后端内存态为底深合并）：主界面开关改了就回写本窗口改动的字段（防抖 200ms），连接成功时记 `last_port`/串口参数，设置页/主题编辑器只提交改过的项——多窗口、agent、主题编辑器并存时互不覆盖。主题/字体/编码/预设波特率与时间戳/行号/记录发送三个全局开关跨窗口同步；端口下拉、HEX 显示、回车换行各窗口独立
-- 时间戳固定 UTC+8
-
-## 功能
-
-### 串口通信
-
-- 串口参数配置（端口/波特率/数据位 5-8/校验/停止位 1·2/流控）
-- 手动发送（HEX/ASCII、行尾 CR/LF/CRLF/None、回车发送、Ctrl-Z）
-- 文件发送（1024 字节分块 + 进度条）
-- 端口冲突提示（同一端口已连时显示淡红提示）
-- 串口热插拔检测（未连接时每 2 秒轮询端口列表）
-
-### 数据显示
-
-- ASCII / HEX 显示切换
-- 时间戳（HH:MM:SS.mmm）
-- 方向标签（Tx/Rx 或 发送/接收，可切换）
-- 错误关键词高亮（默认 ERROR/FAIL/+CME ERROR/+CMS ERROR，设置 → 通用 里增删；只判定接收行、大小写无关；reader 每秒重取一次，改了不必重连）
-- 日志保留行数可调（设置 → 通用，1000–100000，默认 5000；超出后从最旧的丢，调小立即裁到位，不影响文件存盘）
-- 暂停/继续、清空、字号行高可调
-
-### 日志记录
-
-- 可选记录发送内容（开关即时同步后端）
-- 新建覆盖 / 续写同一文件
-- 存盘格式：不可打印字节转 `\xHH`
-
-### 脚本序列
-
-- 模块 → 页签 → 命令行结构（预置"快捷指令"模块）
-- 每行：启用/命令/HEX/回车/延时/注释
-- 单行发送、批量切换、拖拽排序
-- 批量运行：运行次数、循环间隔、进度条、执行状态
-- 右键菜单：重命名/删除页签、编辑注释、删除行
-- 自动保存/加载，另存为/手动加载 JSON
-
-### 主题与外观
-
-- 4 套预设主题 + 自定义主题编辑器（主窗口实时预览、颜色分类编辑、悬停高亮定位）
-- 自定义标题栏（新窗口、置顶、脚本折叠、设置、关于）
-- 自定义右键菜单（输入框/日志区/脚本行分层处理，全局禁用浏览器原生菜单）
-- 自定义下拉框（圆角列表、键盘导航、边界检测，波特率下拉内置"添加…"入口）
-- 窗口最小尺寸硬约束
-
-### 自动更新
-
-- 设置 → 关于 → 检查更新（手动，避免每次开设置都请求）
-- 主源 `dl.neo.loc.cc`（自建服务器，国内可达）+ GitHub release fallback
-- minisign 签名验证，下载安装后自动 relaunch
-- CI：打 `v*` tag 触发 GitHub Actions（tauri-action）构建+签名+发布；镜像源由外部同步 latest.json
-
-### 统计
-
-- 收发字节数实时统计（Tx/Rx），支持清零
-
-## 测试
+### 测试
 
 ```bash
-cargo test                # Rust 单元测试
-npm run test:unit         # 前端纯函数与源码契约测试
-npm run test:persistence  # 面板自动保存、设置保存并发的隔离浏览器回归测试
-npm run test:ui           # 快捷指令表格、发送区开关与窗口布局的隔离浏览器回归测试
-npm run check             # Svelte/TypeScript 类型检查
+cd src-tauri && cargo test     # Rust 单元测试
+npm run test:unit              # 前端纯函数与源码契约测试（node --test，Node ≥ 22.18）
+npm run check                  # svelte-check 类型检查
+npm run test:ui                # 界面回归：快捷指令表、发送区开关、窗口布局
+npm run test:persistence       # 持久化回归：面板自动保存、设置并发保存
 ```
 
-`test:persistence` 和 `test:ui` 不需要 Rust 或串口设备：它启动临时 Vite 服务和独立的无界面 Chrome/Edge，使用模拟 IPC，不读取或修改真实配置。需本机安装 Chromium 系浏览器；自动查找失败时可用 `BROWSER_BINARY` 指定浏览器可执行文件路径。
+- `test:ui` 和 `test:persistence` 不需要 Rust 和串口设备：它们会启动临时 Vite 服务和独立的无头 Chrome/Edge，使用模拟 IPC，不读写真实配置。找不到浏览器时，用 `BROWSER_BINARY` 指定可执行文件路径。
+- `npm run test:ui -- --screenshots <目录>` 会额外输出浅色、深色和最小窗口尺寸的截图（数据为模拟）。
+- `tests/browser/` 下还有按功能拆分的回归脚本：
+  - 用同一套无头环境、可以直接 `node tests/browser/<名称>.mjs` 运行的：`com-selection`、`mcp-setup`、`motion-regressions`、`settings-groups`、`settings-help`、`settings-reuse`、`settings-scrollbar`、`settings-shortcuts`、`titlebar-layout`、`update-reminder`。
+  - 其余脚本（`codec-*`、`log-*`、`mcp-settings`、`port-tip`、`settings-close`、`theme-window`）需要先手动起 Vite 和远程调试浏览器，或者需要一个**一次性**的原生实例（单独的 `NEOSERIAL_DATA_DIR` 并开启 WebView2 远程调试）。运行方式见各脚本头部注释，不要对着自己日常用的配置跑。
 
-如需同时生成浅色、深色及最小窗口尺寸的预览截图：`npm run test:ui -- --screenshots <输出目录>`。截图中的串口和日志均为模拟数据。
+### 发布
 
-## 源码
+1. 同步修改版本号：`package.json`、`src-tauri/Cargo.toml`、`src-tauri/tauri.conf.json`，以及 `src/components/SettingsDialog.svelte`、`src/components/UpdaterCard.svelte` 里的版本兜底文案；`package-lock.json` 和 `Cargo.lock` 会随之更新，一并提交。
+2. 更新 `.github/workflows/release.yml` 里的 `releaseBody`（本次更新说明）。
+3. 推送 `v*` tag。CI 会构建并签名 NSIS 安装包、生成 `latest.json`、上传免安装版，然后把安装包和改写过下载地址的 `latest.json` 同步到镜像服务器。
 
-[github.com/Alzeros/NeoSerial](https://github.com/Alzeros/NeoSerial)
+需要配置的 Secrets：
+
+| Secret | 用途 |
+|--------|------|
+| `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 更新包签名（必需） |
+| `NEOSERIAL_KB_BASE_URL` / `NEOSERIAL_KB_API_KEY` | 编译期注入默认知识库（可选，不配就不注入） |
+| `SERVER_SSH_KEY_B64` / `MIRROR_HOST` / `MIRROR_USER` / `MIRROR_PATH` | 同步到更新镜像（可选，这一步失败不影响发布） |
+
+### 技术栈与架构
+
+前端 Svelte 5 + TypeScript + Tailwind CSS + Vite；后端 Rust + Tauri 2 + windows-sys（overlapped I/O）+ crossbeam-channel + rmcp（MCP）。线程模型、数据通路、多窗口事件路由、MCP 内部实现和目录结构见 [ARCHITECTURE.md](ARCHITECTURE.md)。
+
+## 已知限制
+
+- 只提供 Windows x64 版本。
+- 时间戳固定按 UTC+8 显示（`src-tauri/src/util/time_fmt.rs`）。
+- 日志存盘是全局单文件，多个连接同时存盘时内容会交织在一起。
+- MCP 服务没有鉴权（见上文）。
 
 ## 许可证
 
