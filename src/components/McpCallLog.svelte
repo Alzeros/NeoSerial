@@ -110,7 +110,9 @@
         <thead class="sticky top-0" style="background: var(--background-elevated);">
           <tr class="text-[var(--muted-foreground)]" style="border-bottom: 1px solid var(--border);">
             <th class="px-2 py-1 text-left font-medium" style="width: 96px;">时间</th>
-            <th class="px-2 py-1 text-left font-medium" style="width: 120px;">工具</th>
+            <!-- 工具名无空格(最长 get_sequence_status)。168px 按 12px 等宽字体留足一行;
+                 再窄也 break-all 在格内折行,不会画到入参上 -->
+            <th class="px-2 py-1 text-left font-medium" style="width: 168px;">工具</th>
             <th class="px-2 py-1 text-left font-medium">入参</th>
             <th class="px-2 py-1 text-left font-medium" style="width: 52px;">耗时</th>
           </tr>
@@ -119,7 +121,7 @@
           {#each records as r, i (i)}
             <tr style="border-bottom: 1px solid var(--border-subtle); {r.ok ? '' : 'background: var(--error-bg, transparent);'}">
               <td class="px-2 py-1 align-top whitespace-nowrap" style="font-family: var(--font-mono); color: var(--muted-foreground);">{fmtTime(r.ts)}</td>
-              <td class="px-2 py-1 align-top" style="font-family: var(--font-mono); color: var(--foreground);">{r.tool}</td>
+              <td class="px-2 py-1 align-top break-all" style="font-family: var(--font-mono); color: var(--foreground);">{r.tool}</td>
               <td class="px-2 py-1 align-top break-all" style="font-family: var(--font-mono); color: {r.ok ? 'var(--muted-foreground)' : 'var(--error)'};">
                 {r.ok ? r.args : (r.error || r.args)}
               </td>
