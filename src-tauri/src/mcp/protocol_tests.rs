@@ -19,10 +19,28 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 
 use super::server::{
-    build_tools, http_config, mcp_router, server_info, tool_list_response,
+    build_tools, mcp_router, server_info, tool_list_response,
 };
 use super::state::test_support::{fake_connection, test_shared};
 use super::state::McpShared;
+
+/// 连接表里的端口名快照。
+///
+/// 单独一个同步函数:锁只在这个函数的作用域里,不跨 await——
+/// std Mutex 的 guard 跨 await 会占死 tokio worker,clippy 也会报
+/// `await_holding_lock`(它不认显式 `drop()` 结束 guard 生命周期)。
+fn connection_ports(shared: &McpShared) -> Vec<String> {
+    let conns = shared.connections.lock().unwrap();
+    conns.keys().cloned().collect()
+}
+
+/// 该端口的连接是否仍然存活(同上:锁不跨 await)。
+fn connection_running(shared: &McpShared, port: &str) -> bool {
+    let conns = shared.connections.lock().unwrap();
+    conns.get(port)
+        .map(|h| h.running.load(std::sync::atomic::Ordering::SeqCst))
+        .unwrap_or(false)
+}
 
 /// MCP 协议版本(新版,无状态路径)。
 const PROTOCOL_2026: &str = "2026-07-28";
@@ -35,7 +53,6 @@ const PROTOCOL_2025: &str = "2025-11-25";
 #[derive(Debug, Clone)]
 struct RawResponse {
     status: u16,
-    reason: String,
     headers: Vec<(String, String)>,
     body: Vec<u8>,
 }
@@ -197,7 +214,6 @@ async fn send_raw_inner(port: u16, req: &RawRequest, chunked_request: bool) -> R
     let mut parts = status_line.splitn(3, ' ');
     let _version = parts.next().unwrap_or("");
     let status: u16 = parts.next().unwrap_or("0").parse().unwrap_or(0);
-    let reason = parts.next().unwrap_or("").to_string();
     let mut headers = Vec::new();
     for line in lines {
         if let Some((k, v)) = line.split_once(':') {
@@ -242,7 +258,7 @@ async fn send_raw_inner(port: u16, req: &RawRequest, chunked_request: bool) -> R
             body.extend_from_slice(&buf[..n]);
         }
     }
-    RawResponse { status, reason, headers, body }
+    RawResponse { status, headers, body }
 }
 
 fn find_sub(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -946,10 +962,9 @@ async fn forged_session_id_does_not_touch_business_state() {
     assert_eq!(legacy.status, 404, "旧版伪造 session 应 404,实际 {}", legacy.status);
 
     // 业务状态没被动过
-    let conns = shared.connections.lock().unwrap();
-    assert_eq!(conns.len(), 1, "伪造 session 不该动连接表");
-    assert!(conns.contains_key("COM-forged"));
-    drop(conns);
+    let ports = connection_ports(&shared);
+    assert_eq!(ports.len(), 1, "伪造 session 不该动连接表");
+    assert!(ports.contains(&"COM-forged".to_string()));
     assert_eq!(
         shared.call_log.lock().unwrap().snapshot().len(),
         before_log,
@@ -1119,10 +1134,11 @@ async fn deleting_a_session_keeps_connections_and_call_log() {
     assert!(del.status < 300, "DELETE session 应被接受: {}", del.status);
 
     // 串口连接没被清掉
-    let conns = shared.connections.lock().unwrap();
-    assert!(conns.contains_key("COM-keep"), "删 session 不该断串口连接");
-    assert!(conns.get("COM-keep").unwrap().running.load(std::sync::atomic::Ordering::SeqCst));
-    drop(conns);
+    assert!(
+        connection_ports(&shared).contains(&"COM-keep".to_string()),
+        "删 session 不该断串口连接"
+    );
+    assert!(connection_running(&shared, "COM-keep"), "删 session 不该把连接置为断开");
     // 调用日志没被清掉
     assert_eq!(shared.call_log.lock().unwrap().snapshot().len(), log_before);
 

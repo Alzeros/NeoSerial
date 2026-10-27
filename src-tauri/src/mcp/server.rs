@@ -888,12 +888,12 @@ impl ServerHandler for NeoserialHandler {
         server_info()
     }
 
-    fn list_tools(
+    async fn list_tools(
         &self,
         _request: Option<PaginatedRequestParams>,
         _ctx: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + Send + '_ {
-        async move { Ok(tool_list_response(build_tools())) }
+    ) -> Result<ListToolsResult, rmcp::ErrorData> {
+        Ok(tool_list_response(build_tools()))
     }
 
     fn call_tool(
@@ -940,9 +940,9 @@ impl ServerHandler for NeoserialHandler {
                     );
                     recorder.set_result(false, error.clone());
                     let payload = serde_json::json!({ "ok": false, "error": error });
-                    let mut result =
-                        CallToolResult::success(vec![ContentBlock::text(payload.to_string())]);
-                    result.structured_content = Some(payload);
+                    // 走统一构造器(文本 + structuredContent 双表示),只额外标上
+                    // isError=true——表示"这次调用没执行",与业务失败区分开。
+                    let mut result = content_text(payload);
                     result.is_error = Some(true);
                     return Ok(result.into());
                 }
