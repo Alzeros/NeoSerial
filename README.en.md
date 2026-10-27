@@ -228,7 +228,9 @@ Every tool returns `{ ok: bool, ... }`; when `ok=false`, the `error` field gives
 - **Enum parameters** (`ending`, `data_bits`, `parity`, `flow_control`) are case-insensitive, but invalid values are rejected rather than silently replaced with defaults.
 - **Check the manual before sending**: look up syntax with `kb_search` / `kb_get`. `also_in_count > 0` means different manuals have different versions, so check `also_in` from `kb_get` before following a syntax.
 
-> The MCP server listens on loopback only and has no authentication, so any local process can call it. Turn it off in settings if you don't need it (takes effect after restart).
+> The MCP server listens on loopback only and has no authentication, so any local process can call it. It also enforces Origin validation: every request carrying an `Origin` header (i.e. any browser context, including DNS rebinding) is rejected with 403, and only native MCP clients without an Origin (Claude Code / Codex / Cursor / VS Code, etc.) can connect — in-browser MCP clients are not a supported entry point. Turn it off in settings if you don't need it (takes effect after restart).
+>
+> Under overload: when the HTTP entry is saturated the server returns `429` (with `Retry-After: 1`); when the tool-execution layer is saturated, calls get a result with `isError=true` and a "server busy" message (the call was not executed and has no side effects, so retrying is safe — note the two conditions are signalled differently). `disconnect`, `sequence_stop` and status queries use a dedicated quota and remain available while the server is overloaded.
 
 ## Configuration and data
 

@@ -324,7 +324,9 @@ pub fn spawn_connection(
 
     #[cfg(not(target_os = "windows"))]
     let (reader_port, writer_port, status_port, mode_str) = {
-        let port = serialport::new(&params.port, params.baud_rate)
+        // Unix 上 serialport::new 返回 Box<dyn SerialPort>,下面的
+        // write_data_terminal_ready 等需要 &mut self,故此处必须 mut。
+        let mut port = serialport::new(&params.port, params.baud_rate)
             .data_bits(data_bits)
             .parity(parity)
             .stop_bits(stop_bits)

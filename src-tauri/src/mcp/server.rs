@@ -7,13 +7,14 @@ use rmcp::ServerHandler;
 use tauri::Emitter;
 use rmcp::model::{
     CallToolRequestParams, CallToolResponse, CallToolResult, ContentBlock, JsonObject, ListToolsResult,
-    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool,
+    PaginatedRequestParams, ServerCapabilities, ServerConfig, Tool, ToolAnnotations,
 };
 use rmcp::service::RequestContext;
 use rmcp::transport::streamable_http_server::StreamableHttpServerConfig;
 use rmcp::transport::streamable_http_server::StreamableHttpService;
 use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
-use serde_json::Value;
+use axum::response::IntoResponse;
+use serde_json::{json, Value};
 
 use super::state::McpShared;
 use super::tools;
@@ -24,11 +25,35 @@ fn schema(json: serde_json::Value) -> Arc<JsonObject> {
     Arc::new(map)
 }
 
-fn tool_list_response(tools: Vec<Tool>) -> ListToolsResult {
+pub(crate) fn tool_list_response(tools: Vec<Tool>) -> ListToolsResult {
     // 2026-07-28 的客户端要求这两个字段；0 表示不缓存，保留原来的即时获取行为。
     ListToolsResult { tools, ..Default::default() }
         .with_ttl_ms(0)
         .with_cache_scope(rmcp::model::CacheScope::Private)
+}
+
+/// MCP HTTP 传输配置。**生产与协议测试夹具必须共用这一份**,
+/// 否则会出现"测试全绿但线上配置没生效"。
+/// 默认值(rmcp 3.4.0):
+/// - allowed_hosts = ["localhost", "127.0.0.1", "::1"] —— 只接受回环 Host,挡 DNS rebinding;
+/// - legacy_session_mode = true —— 旧客户端(2025-11-25 等)保留 initialize/session 路径;
+/// - max_request_body_bytes = 4 MiB —— 流式读 body 时限长,超了返回 413;
+/// - allowed_origins = [] —— **强制校验**:任何带 Origin 的请求一律拒绝(见下)。
+///
+/// **Origin 强制校验(S1)**:不设白名单,调用 `enforce_origin_validation()` 让
+/// "带 Origin 但不在白名单"与"白名单为空"都变成拒绝。挡住的是网页通过
+/// DNS rebinding 调本机串口 MCP 的路径:浏览器发请求必带 Origin,而原生
+/// MCP 客户端(Claude Code / Codex / Cursor / VS Code 等)不发 Origin,照常通过。
+/// 代价:浏览器内嵌的 MCP 客户端会被拒——本轮按保守策略接受,确有需求再单独设计白名单。
+pub fn http_config() -> StreamableHttpServerConfig {
+    StreamableHttpServerConfig::default().enforce_origin_validation()
+}
+
+/// server 能力与身份信息。生产与协议测试夹具共用。
+pub fn server_info() -> ServerConfig {
+    // server name 设为 NeoSerial(应用名),否则 rmcp 默认用 from_build_env 显示 "rmcp"。
+    let info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
+    info.with_server_info(rmcp::model::Implementation::new("NeoSerial", env!("CARGO_PKG_VERSION")))
 }
 
 /// 从 start_port 起递增找空闲端口,上限 start_port+20。
@@ -76,19 +101,463 @@ impl NeoserialHandler {
     }
 }
 
-impl ServerHandler for NeoserialHandler {
-    fn get_info(&self) -> ServerConfig {
-        // server name 设为 NeoSerial(应用名),否则 rmcp 默认用 from_build_env 显示 "rmcp"。
-        let info = ServerConfig::new(ServerCapabilities::builder().enable_tools().build());
-        info.with_server_info(rmcp::model::Implementation::new("NeoSerial", env!("CARGO_PKG_VERSION")))
+/// 19 个工具的输出 schema(2026-07-28 客户端据此校验结果结构)。
+///
+/// 覆盖成功与业务失败两种形态:`ok` 必填;成功字段与错误字段各自可选
+/// (成功响应没有 error,失败响应没有成功字段)。
+/// 手写而不是从 Rust 类型派生:派生要动配置模型,收益不抵风险;
+/// 这份由 protocol_tests 用**真实响应**逐个校验,和实际响应漂移会被测出来。
+pub(crate) fn output_schema(tool: &str) -> serde_json::Value {
+    match tool {
+        LIST_PORTS => json!({
+            "type": "object",
+            "description": "列出当前可用串口",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "ports": { "type": "array", "items": { "type": "string" }, "description": "可用串口名" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        CONNECT => json!({
+            "type": "object",
+            "description": "连接串口",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "mode": { "type": ["string", "null"], "description": "连接模式;复用时为 reused" },
+                "reused": { "type": "boolean", "description": "是否复用了已有连接" },
+                "baud": { "type": "integer", "description": "连接实际波特率" },
+                "owner": { "type": ["string", "null"], "description": "gui 或 agent" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        DISCONNECT => json!({
+            "type": "object",
+            "description": "断开串口连接",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        GET_STATUS => json!({
+            "type": "object",
+            "description": "查询连接状态",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "connected": { "type": "boolean" },
+                "port": { "type": ["string", "null"], "description": "串口名" },
+                "baud": { "type": ["integer", "null"], "description": "波特率" },
+                "tx_bytes": { "type": ["integer", "null"], "description": "已发送字节数" },
+                "rx_bytes": { "type": ["integer", "null"], "description": "已接收字节数" },
+                "seq": { "type": "integer", "description": "收发历史当前最大序号" },
+                "cts": { "type": ["boolean", "null"], "description": "CTS 电平(仅硬件流控时有值)" },
+                "dsr": { "type": ["boolean", "null"], "description": "DSR 电平(仅硬件流控时有值)" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        SEND => json!({
+            "type": "object",
+            "description": "发送数据",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "sent": { "type": "boolean", "description": "是否已交给写队列" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        SEND_AND_READ => json!({
+            "type": "object",
+            "description": "发送并读取响应",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "sent": { "type": "boolean", "description": "命令是否已发出" },
+                "responses": { "type": "array", "items": { "type": "string" }, "description": "收到的行" },
+                "timed_out": { "type": "boolean", "description": "是否因静默间隙超时结束" },
+                "seq0": { "type": "integer", "description": "发送前的游标" },
+                "seq1": { "type": "integer", "description": "本次实际收到的最后序号" },
+                "cancelled": { "type": "boolean", "description": "本次调用被取消" },
+                "retryable": { "type": "boolean", "description": "取消后能否安全重发(命令已发出时为 false)" },
+                "error": { "type": "string", "description": "失败/取消说明" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        GET_HISTORY_SINCE => json!({
+            "type": "object",
+            "description": "拉取收发历史",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "lines": {
+                    "type": "array",
+                    "description": "历史行",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "dir": { "type": "string", "description": "rx 或 tx" },
+                            "text": { "type": "string" },
+                            "ts": { "type": "string", "description": "到达时间 HH:MM:SS.mmm" },
+                            "ts_ms": { "type": "integer", "description": "到达时间 Unix 毫秒" },
+                            "index": { "type": "integer", "description": "本次连接的行号" },
+                            "seq": { "type": "integer", "description": "全局序号,可当游标" }
+                        },
+                        "required": ["dir", "text", "ts", "ts_ms", "index", "seq"],
+                        "additionalProperties": false
+                    }
+                },
+                "latest_seq": { "type": "integer", "description": "下次查询应传的游标" },
+                "truncated": { "type": "boolean", "description": "还有更多新行未返回" },
+                "dropped": { "type": "boolean", "description": "游标之后有行已被挤出" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        RESET_STATS => json!({
+            "type": "object",
+            "description": "清零收发字节统计",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        SEND_FILE => json!({
+            "type": "object",
+            "description": "发送文件",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "sent": { "type": "integer", "description": "实际写进串口的字节数(取消时为取消瞬间的下界快照,可能比最终实际写出少一个块)" },
+                "total": { "type": ["integer", "null"], "description": "文件总字节数" },
+                "cancelled": { "type": "boolean", "description": "本次发送被取消" },
+                "retryable": { "type": "boolean", "description": "取消后能否安全重发(一律 false)" },
+                "error": { "type": "string", "description": "失败/取消说明" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        START_LOGGING => json!({
+            "type": "object",
+            "description": "开始存盘",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "path": { "type": "string", "description": "日志文件绝对路径" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        STOP_LOGGING => json!({
+            "type": "object",
+            "description": "停止存盘",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        SEQUENCE_RUN => json!({
+            "type": "object",
+            "description": "跑脚本序列",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        SEQUENCE_STOP => json!({
+            "type": "object",
+            "description": "停止运行中的序列",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        GET_SEQUENCE_STATUS => json!({
+            "type": "object",
+            "description": "查询序列运行状态",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "running": { "type": "boolean", "description": "序列是否还在跑" },
+                "completed": { "type": "boolean", "description": "是否全部执行完毕" },
+                "current_index": { "type": "integer", "description": "当前/中止的命令索引(0-based)" },
+                "total": { "type": "integer", "description": "命令总数" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        GET_SETTINGS => json!({
+            "type": "object",
+            "description": "读取当前配置",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "settings": {
+                    "type": ["object", "null"],
+                    "description": "完整 Settings 快照(不含知识库 API Key——那存在凭据文件里)"
+                },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        SAVE_SETTINGS => json!({
+            "type": "object",
+            "description": "保存配置",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        KB_SEARCH => json!({
+            "type": "object",
+            "description": "搜手册指令",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "total": { "type": "integer", "description": "命中总数(未截断)" },
+                "items": {
+                    "type": "array",
+                    "description": "命中项",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "command": { "type": "string" },
+                            "name": { "type": "string" },
+                            "manual": { "type": "string", "description": "来源手册标题" },
+                            "page_no": { "type": ["integer", "null"], "description": "页码" },
+                            "also_in_count": { "type": "integer", "description": "同名指令还在几本别的手册里" }
+                        },
+                        "required": ["command", "name", "manual", "page_no", "also_in_count"],
+                        "additionalProperties": false
+                    }
+                },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        KB_GET => json!({
+            "type": "object",
+            "description": "取一条指令的完整手册记录",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "command": { "type": "string" },
+                "name": { "type": "string" },
+                "syntax": { "type": "string" },
+                "parameters": { "$ref": "#/$defs/parameters" },
+                "example": { "type": "string" },
+                "summary": { "type": "string" },
+                "manual": { "type": "string", "description": "来源手册标题" },
+                "page_no": { "type": ["integer", "null"], "description": "页码" },
+                "also_in": {
+                    "type": "array",
+                    "description": "同名指令在其他手册里的记录",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "manual": { "type": "string" },
+                            "page_no": { "type": ["integer", "null"] },
+                            "name": { "type": "string" },
+                            "syntax": { "type": "string" },
+                            "parameters": { "$ref": "#/$defs/parameters" },
+                            "example": { "type": "string" }
+                        },
+                        "required": ["manual", "page_no", "name", "syntax", "parameters", "example"],
+                        "additionalProperties": false
+                    }
+                },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false,
+            "$defs": {
+                "parameters": {
+                    "type": "array",
+                    "description": "参数表",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "name": { "type": "string" },
+                            "required": { "type": "boolean", "description": "是否必选" },
+                            "description": { "type": "string" }
+                        },
+                        "required": ["name", "required", "description"],
+                        "additionalProperties": false
+                    }
+                }
+            }
+        }),
+        KB_MANUALS => json!({
+            "type": "object",
+            "description": "列本地缓存的手册",
+            "properties": {
+                "ok": { "type": "boolean" },
+                "fetched_at": { "type": ["string", "null"], "description": "上次全量刷新时间" },
+                "manuals": {
+                    "type": "array",
+                    "description": "手册列表",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "id": { "type": "integer" },
+                            "title": { "type": "string" },
+                            "cached_commands": { "type": "integer", "description": "本地缓存条数" },
+                            "server_commands": { "type": "integer", "description": "服务器报的条数" },
+                            "cmd_status": { "type": "string", "description": "指令提取状态" },
+                            "groups": { "type": "array", "items": { "type": "string" }, "description": "分组名" }
+                        },
+                        "required": ["id", "title", "cached_commands", "server_commands", "cmd_status", "groups"],
+                        "additionalProperties": false
+                    }
+                },
+                "error": { "type": "string", "description": "失败原因" }
+            },
+            "required": ["ok"],
+            "additionalProperties": false
+        }),
+        other => panic!("没有为工具 {} 定义输出 schema", other),
     }
+}
 
-    fn list_tools(
-        &self,
-        _request: Option<PaginatedRequestParams>,
-        _ctx: RequestContext<RoleServer>,
-    ) -> impl Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + Send + '_ {
-        let tools = vec![
+/// 19 个工具的保守注解(客户端可据此决定确认 UI 与并行策略)。
+/// **只是 hint**:不改变工具权限、不新增确认弹窗、不影响实际执行。
+///
+/// 基线(与 protocol_tests 的 EXPECTED_ANNOTATIONS 逐项对齐,改这里必须同步改测试):
+/// - 只读(不碰环境):list_ports / get_status / get_history_since / get_sequence_status /
+///   get_settings / kb_search / kb_get / kb_manuals;
+/// - 幂等(同参数重入无额外副作用):只读组 + connect(复用)/ disconnect / reset_stats /
+///   sequence_stop / stop_logging / save_settings(完整快照覆盖);
+/// - 破坏性(发任意设备指令、覆盖文件、写设置):send / send_and_read / send_file /
+///   sequence_run / start_logging(传 path 时覆盖)/ save_settings;
+/// - openWorld:与外部串口设备交互的为 true;纯本地操作(内存/文件/设置/缓存)为 false。
+fn annotations(tool: &str) -> ToolAnnotations {
+    match tool {
+        LIST_PORTS => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        CONNECT => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(true),
+        DISCONNECT => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(true),
+        GET_STATUS => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(true),
+        SEND => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(false)
+            .open_world(true),
+        SEND_AND_READ => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(false)
+            .open_world(true),
+        GET_HISTORY_SINCE => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        RESET_STATS => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        SEND_FILE => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(false)
+            .open_world(true),
+        START_LOGGING => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(false)
+            .open_world(false),
+        STOP_LOGGING => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        SEQUENCE_RUN => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(false)
+            .open_world(true),
+        SEQUENCE_STOP => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(true),
+        GET_SEQUENCE_STATUS => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        GET_SETTINGS => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        SAVE_SETTINGS => ToolAnnotations::new()
+            .read_only(false)
+            .destructive(true)
+            .idempotent(true)
+            .open_world(false),
+        KB_SEARCH => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        KB_GET => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        KB_MANUALS => ToolAnnotations::new()
+            .read_only(true)
+            .destructive(false)
+            .idempotent(true)
+            .open_world(false),
+        other => panic!("没有为工具 {} 定义注解", other),
+    }
+}
+
+/// 给工具挂上输出 schema 与注解。
+fn with_output(tool: Tool, name: &str) -> Tool {
+    tool.with_raw_output_schema(schema(output_schema(name)))
+        .with_annotations(annotations(name))
+}
+
+/** 19 个工具的固定顺序清单。
+ * 生产 `list_tools` 与协议测试夹具共用同一份:顺序、名称、描述、inputSchema 的任何改动
+ * 都会同时反映到 tools/list 响应与快照测试,不会出现"测试里的清单"与"线上的清单"两套。
+ */
+pub fn build_tools() -> Vec<Tool> {
+    vec![
+        with_output(
             Tool::new(
                 LIST_PORTS,
                 "列出当前可用的串口。无参数。返回 { ok, ports: [端口号] }。",
@@ -98,6 +567,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            LIST_PORTS,
+        ),
+        with_output(
             Tool::new(
                 CONNECT,
                 "连接串口。参数: port(如 COM3), baud_rate, data_bits(Five|Six|Seven|Eight), \
@@ -120,6 +592,9 @@ impl ServerHandler for NeoserialHandler {
                     "required": ["port", "baud_rate"]
                 })),
             ),
+            CONNECT,
+        ),
+        with_output(
             Tool::new(
                 DISCONNECT,
                 "断开指定串口连接。参数: port(要断开的串口名,如 COM3)。返回 { ok: true } 或 { ok:false, error }。",
@@ -132,6 +607,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            DISCONNECT,
+        ),
+        with_output(
             Tool::new(
                 GET_STATUS,
                 "查询指定端口的连接状态与 rx 序号。参数: port。返回 { ok, connected, port, baud, tx_bytes, rx_bytes, seq, cts, dsr }。\
@@ -145,6 +623,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            GET_STATUS,
+        ),
+        with_output(
             Tool::new(
                 SEND,
                 "发送数据到串口(不读响应)。参数: port, text, ending(Cr|Lf|Crlf|None,默认 Crlf,大小写不敏感,\
@@ -160,12 +641,19 @@ impl ServerHandler for NeoserialHandler {
                     "required": ["port", "text"]
                 })),
             ),
+            SEND,
+        ),
+        with_output(
             Tool::new(
                 SEND_AND_READ,
                 "发送数据并阻塞读取响应。参数: port, text, timeout_ms(静默间隙超时), \
                  ending(默认 Crlf), is_hex(默认 false)。\
                  超时语义:持续有数据时阻塞可远超 timeout,静默 gap 后返回。\
-                 返回 { ok, sent, responses: [行], timed_out, seq0, seq1 } 或 { ok:false, error }。",
+                 返回 { ok, sent, responses: [行], timed_out, seq0, seq1 } 或 { ok:false, error }。\
+                 **取消语义**:被取消(发取消通知;新版 2026-07-28 客户端断开连接也会取消)时返回 \
+                 cancelled:true、retryable:false,并保留已收到的 responses 与 seq0/seq1 游标。\
+                 命令可能已被设备接收,**不要重发**——用 get_history_since(port, seq1) 续读已到达的数据。\
+                 旧版 2025-11-25 session 客户端直接断开**不会**中断已提交的调用,取消须发 notifications/cancelled。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -178,6 +666,9 @@ impl ServerHandler for NeoserialHandler {
                     "required": ["port", "text", "timeout_ms"]
                 })),
             ),
+            SEND_AND_READ,
+        ),
+        with_output(
             Tool::new(
                 GET_HISTORY_SINCE,
                 "获取指定端口的收发历史(tx+rx,带方向)。参数: port, seq(基准序号), max_lines(可选,截断最旧), is_hex(可选,默认 false 返回 ascii;true 返回 hex dump,纯 hex 数据应传 true 否则 ascii 显示空)。\
@@ -197,6 +688,9 @@ impl ServerHandler for NeoserialHandler {
                     "required": ["port", "seq"]
                 })),
             ),
+            GET_HISTORY_SINCE,
+        ),
+        with_output(
             Tool::new(
                 RESET_STATS,
                 "清零指定端口的收发字节统计。参数: port。返回 { ok } 或 { ok:false }。",
@@ -209,9 +703,12 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            RESET_STATS,
+        ),
+        with_output(
             Tool::new(
                 SEND_FILE,
-                "发送文件(二进制安全,用于固件/二进制烧录)。参数: port, path(文件绝对路径)。分块 1024 字节写入,阻塞到最后一字节写进串口驱动才返回(大文件按波特率可能要等几分钟),sent 等于文件大小。中途断开/写错返回 { ok:false, error }(带已写出 x/y 字节)。",
+                "发送文件(二进制安全,用于固件/二进制烧录)。参数: port, path(文件绝对路径)。分块 1024 字节写入,阻塞到最后一字节写进串口驱动才返回(大文件按波特率可能要等几分钟),sent 等于文件大小。中途断开/写错返回 { ok:false, error }(带已写出 x/y 字节)。**取消语义**:被取消时停止后续写出,返回 { ok:false, sent:已写字节数的下界(取消瞬间快照,在途最后一块可能随后完成,至多再写出一个 1024 字节块), total:文件总字节, cancelled:true, retryable:false }。设备可能已收到半个文件,**不要自动重发**,需人工确认设备状态后再决定是否重传。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -222,6 +719,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            SEND_FILE,
+        ),
+        with_output(
             Tool::new(
                 START_LOGGING,
                 "开始存盘(全局,所有连接的收发都进同一文件)。参数: path(可选,传则新建/覆盖该文件;不传用上次路径续写,无上次路径则生成默认路径)。返回 { ok, path }。",
@@ -233,6 +733,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            START_LOGGING,
+        ),
+        with_output(
             Tool::new(
                 STOP_LOGGING,
                 "停止存盘。无参数。返回 { ok }。",
@@ -242,9 +745,12 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            STOP_LOGGING,
+        ),
+        with_output(
             Tool::new(
                 SEQUENCE_RUN,
-                "跑脚本序列:多条命令批量下发,支持循环和行间延时(用于自动化测试/批量配置)。参数: port, commands(命令数组,每项含 command/hex/enter/delay_ms), run_count(循环次数), loop_interval(可选,轮间隔 ms)。返回 { ok } 或 { ok:false, error }。",
+                "跑脚本序列:多条命令批量下发,支持循环和行间延时(用于自动化测试/批量配置)。参数: port, commands(命令数组,每项含 command/hex/enter/delay_ms), run_count(循环次数),loop_interval(可选,轮间隔 ms)。返回 { ok } 或 { ok:false, error }。序列在后台跑:发完用 get_sequence_status(port) 查进度(running/completed/current_index)。若序列被中止(断开/stop/取消)或输出流断了,**不要重复启动**——先查状态确认再决定。",
                 schema(serde_json::json!({
                     "type": "object",
                     "properties": {
@@ -269,6 +775,9 @@ impl ServerHandler for NeoserialHandler {
                     "required": ["port", "commands", "run_count"]
                 })),
             ),
+            SEQUENCE_RUN,
+        ),
+        with_output(
             Tool::new(
                 SEQUENCE_STOP,
                 "停止指定 port 的运行序列。参数: port。返回 { ok } 或 { ok:false, error }。",
@@ -281,6 +790,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            SEQUENCE_STOP,
+        ),
+        with_output(
             Tool::new(
                 GET_SEQUENCE_STATUS,
                 "查询指定 port 的序列运行状态(含进度)。agent 发完 sequence_run 后可轮询:\
@@ -296,6 +808,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            GET_SEQUENCE_STATUS,
+        ),
+        with_output(
             Tool::new(
                 GET_SETTINGS,
                 "读取当前配置(波特率预设/显示模式/编码/MCP 设置等)。无参数。返回 { ok, settings }。",
@@ -305,6 +820,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            GET_SETTINGS,
+        ),
+        with_output(
             Tool::new(
                 SAVE_SETTINGS,
                 "保存配置(持久化到 settings.json)。参数: settings(完整 Settings 对象,从 get_settings 拿原值改后回传)。返回 { ok } 或 { ok:false, error }。注意:部分项(如 MCP 端口)改后需重启生效。",
@@ -317,6 +835,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            SAVE_SETTINGS,
+        ),
+        with_output(
             Tool::new(
                 KB_SEARCH,
                 "搜知识库手册里的 AT 指令(发指令前查语法,别凭记忆猜)。多关键词空格分隔,                 匹配指令名/中文名/摘要,大小写无关,不带 AT+ 也能命中(如 \"csq\"、\"mqtt 配置\")。                 参数: query, limit(可选,默认 10,最大 50)。返回 { ok, total, items:[{command,name,manual,page_no,also_in_count}] };                 total > items 长度说明还有更多,收窄 query。要完整语法/参数/示例用 kb_get;                 also_in_count>0 说明同名指令还在别的手册里(manual 只是排最前那本,各本语法可能不同),kb_get 的 also_in 里有各本的版本。                 **只读本地缓存,不请求知识库、不耗配额**;缓存空时返回 ok:false 并说明该让用户做什么。",
@@ -330,6 +851,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            KB_SEARCH,
+        ),
+        with_output(
             Tool::new(
                 KB_GET,
                 "取一条 AT 指令的完整手册记录:语法、参数表(名称/是否必选/说明)、示例、摘要、来源手册与页码;                 同名指令在别的手册里的记录进 also_in,各带自己的语法/参数表/示例(顶层字段只属于排最前那本手册,别拿它去套 also_in 的语法)。                 参数: command(完整指令名,大小写无关,如 AT+MIPLCREATE)。                 找不到返回 ok:false,改用 kb_search 按关键词找。只读本地缓存,不耗配额。",
@@ -342,6 +866,9 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
+            KB_GET,
+        ),
+        with_output(
             Tool::new(
                 KB_MANUALS,
                 "列本地缓存里有哪些手册(知道能查到什么范围)。无参数。返回 { ok, fetched_at, manuals:[{id,title,                 cached_commands,server_commands,cmd_status,groups}] };cached_commands 与 server_commands 不等                 说明那本没拉全,可让用户在设置页刷新。只读本地缓存,不耗配额。",
@@ -351,14 +878,28 @@ impl ServerHandler for NeoserialHandler {
                     "additionalProperties": false
                 })),
             ),
-        ];
-        async move { Ok(tool_list_response(tools)) }
+            KB_MANUALS,
+        ),
+    ]
+}
+
+impl ServerHandler for NeoserialHandler {
+    fn get_info(&self) -> ServerConfig {
+        server_info()
+    }
+
+    fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        _ctx: RequestContext<RoleServer>,
+    ) -> impl Future<Output = Result<ListToolsResult, rmcp::ErrorData>> + Send + '_ {
+        async move { Ok(tool_list_response(build_tools())) }
     }
 
     fn call_tool(
         &self,
         params: CallToolRequestParams,
-        _ctx: RequestContext<RoleServer>,
+        ctx: RequestContext<RoleServer>,
     ) -> impl Future<Output = Result<CallToolResponse, rmcp::ErrorData>> + Send + '_ {
         let name = params.name.clone();
         let args: Value = params
@@ -367,10 +908,45 @@ impl ServerHandler for NeoserialHandler {
             .map(Value::Object)
             .unwrap_or(Value::Null);
         let shared = self.shared.clone();
+        // 请求取消令牌:客户端断开/取消通知时 rmcp 会 cancel 它。
+        // 需要协作式取消的工具(长读、长文件发送)拿到它后停止等待或停止写出;
+        // 取消只停本地工作,绝不自动重放串口命令(见 S5 重试分类)。
+        let ct = ctx.ct.clone();
         async move {
             // 调用记录:Drop 守卫兜底所有退出路径(含 arg 解析失败的早返回 / panic),
             // 正常流在底部 set 真实 ok+error。守卫 drop 时写环形 + emit 给前端。
             let mut recorder = CallRecorder::new(shared.clone(), name.to_string(), &args);
+            // 工具执行层并发闸门:旧 session 路径的 POST 会先把 SSE 响应流交回去、
+            // 工具在后台跑,HTTP 中间件的 permit 等不到工具结束,盖不住这一段;
+            // 新版无状态路径已被中间件全程覆盖,这里再过一道闸只是多记一个额度。
+            // 主闸与中间件共用 32 的额度,工具执行总数(新旧相加)不会超过它;
+            // 恢复/诊断类工具走专用小配额,过载时仍可通过 MCP 断开、停序列、查状态。
+            // 拿不到立刻拒绝,不排队;被拒也留一条调用记录。
+            let gate = if PRIORITY_TOOLS.contains(&name.as_ref()) {
+                &shared.tool_gate_priority
+            } else {
+                &shared.tool_gate
+            };
+            let _tool_permit = match gate.clone().try_acquire_owned() {
+                Ok(permit) => permit,
+                Err(_) => {
+                    // 闸门拒绝发生在工具执行**之前**,不是业务失败:按协议语义标
+                    // isError=true,只看 isError 的客户端不会把"服务忙"当成功结果;
+                    // 业务失败的 isError=false 契约(S0 基线)不受影响。拒绝时工具
+                    // 未执行、无任何设备副作用,重试是安全的。
+                    let error = format!(
+                        "MCP 服务忙:并发工具调用已达上限({}),本次调用未执行,请稍后重试",
+                        MCP_MAX_CONCURRENT_REQUESTS
+                    );
+                    recorder.set_result(false, error.clone());
+                    let payload = serde_json::json!({ "ok": false, "error": error });
+                    let mut result =
+                        CallToolResult::success(vec![ContentBlock::text(payload.to_string())]);
+                    result.structured_content = Some(payload);
+                    result.is_error = Some(true);
+                    return Ok(result.into());
+                }
+            };
             let resp: Value = match name.as_ref() {
                 LIST_PORTS => {
                     // available_ports 在 Windows 走 SetupAPI 枚举(可卡几十~几百 ms),
@@ -394,7 +970,7 @@ impl ServerHandler for NeoserialHandler {
                     // MCP server 的其它 tool 调用一起卡住。丢到阻塞线程池执行。
                     let shared_for_tool = shared.clone();
                     let result = tokio::task::spawn_blocking(move || {
-                        tools::disconnect(&shared_for_tool, &shared_for_tool.app_handle, req)
+                        tools::disconnect(&shared_for_tool, req)
                     })
                     .await;
                     match result {
@@ -450,9 +1026,11 @@ impl ServerHandler for NeoserialHandler {
                         }
                     };
                     // 文件读取循环是阻塞 IO,丢到阻塞线程池执行。
+                    // 取消令牌 clone 进闭包:阻塞线程里也能看到取消信号。
                     let shared_for_tool = shared.clone();
+                    let ct_for_file = ct.clone();
                     let result = tokio::task::spawn_blocking(move || {
-                        tools::send_file(&shared_for_tool, req)
+                        tools::send_file(&shared_for_tool, req, Some(&ct_for_file))
                     })
                     .await;
                     match result {
@@ -592,7 +1170,7 @@ impl ServerHandler for NeoserialHandler {
                             return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
                         }
                     };
-                    match tools::send_and_read(&shared, req).await {
+                    match tools::send_and_read(&shared, req, Some(&ct)).await {
                         Ok(r) => serde_json::to_value(r).unwrap_or_default(),
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
@@ -680,13 +1258,115 @@ impl Drop for CallRecorder {
         if let Ok(mut log) = self.shared.call_log.lock() {
             log.push(rec.clone());
         }
-        let _ = self.shared.app_handle.emit("mcp-call", rec);
+        if let Some(app) = &self.shared.app_handle {
+            let _ = app.emit("mcp-call", rec);
+        }
     }
 }
 
-/// 把 JSON 结果包成 CallToolResult(is_error=false) 的 text content。
+/// 把 JSON 结果包成 CallToolResult(is_error=false)。
+///
+/// **统一构造器**:所有出口(正常、业务失败、参数解析失败、未知工具)都走这里,
+/// 保证双表示永远一致:
+/// - `content[0].text` = JSON 的字符串形式——**旧客户端只读文本也完全可用**;
+/// - `structuredContent` = 同一份 JSON 的结构化形式——新客户端直接读字段。
+///
+/// isError 保持 false(既有契约):业务失败不走上层协议错误,错误信息在 JSON 的
+/// `error` 字段里,让 agent 读到可操作的中文说明。
 fn content_text(json: Value) -> CallToolResult {
-    CallToolResult::success(vec![ContentBlock::text(json.to_string())])
+    let mut result = CallToolResult::success(vec![ContentBlock::text(json.to_string())]);
+    result.structured_content = Some(json);
+    result
+}
+
+/// `/mcp` 入口的最大并发请求数。
+///
+/// 32 是折中值:一个 agent 的正常批量调用远少于 32 个并发,而超过这个量之后
+/// 继续排队只会把串口服务与 Tauri 进程一起拖死,不如立刻回 429 让客户端重试。
+/// 常量写死、不做成设置项——它保护的是服务端资源,不是用户偏好。
+pub const MCP_MAX_CONCURRENT_REQUESTS: usize = 32;
+
+/// 恢复/诊断类工具的**专用**并发配额(与主闸相互独立)。
+///
+/// 过载(主闸占满)恰恰是需要 disconnect / sequence_stop 来恢复、get_status /
+/// list_ports / get_sequence_status 来确认状态的时刻——这些轻量工具不该和
+/// 发送类工具抢主闸 permit,否则会出现"服务过载到无法通过 MCP 恢复"的死结。
+/// 4 个并发远超任何真实 agent 的诊断/恢复需要,同时保持有界。
+pub const MCP_PRIORITY_TOOL_CONCURRENCY: usize = 4;
+
+/// 走专用配额的工具:只读诊断 + 紧急恢复,全部轻量、无长阻塞。
+const PRIORITY_TOOLS: &[&str] = &[
+    LIST_PORTS,
+    GET_STATUS,
+    GET_SEQUENCE_STATUS,
+    DISCONNECT,
+    SEQUENCE_STOP,
+];
+
+/// 过载拒绝累计次数。只用于日志,不参与限流判断(没有客户端身份,按人头限流无从谈起)。
+static MCP_OVERLOAD_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// `/mcp` 入口的并发闸门:拿不到 permit 就**立刻** 429,不排队。
+///
+/// permit 活到本次请求处理结束为止。新版无状态路径里 rmcp 会等工具执行完
+/// 才构造响应,permit 覆盖整个工具调用;**旧版 session 路径的 POST 会先把
+/// SSE 响应流交回去、工具在后台跑**,permit 只盖到流建立为止——那一段由
+/// call_tool 里的工具执行闸门(`McpShared.tool_gate`)兜底,两道闸共用同一额度。
+///
+/// 只拦 `/mcp`:GUI 命令走 Tauri IPC,不受影响;工具内部也没有第二套全局锁,
+/// 不会和连接锁、写队列锁叠加。
+async fn mcp_concurrency_gate(
+    limiter: Arc<tokio::sync::Semaphore>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    match limiter.clone().try_acquire_owned() {
+        Ok(permit) => {
+            let _permit = permit;
+            next.run(req).await
+        }
+        Err(_) => {
+            let rejected = MCP_OVERLOAD_REJECTED
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+                + 1;
+            log::warn!(
+                "MCP 过载拒绝(累计 {} 次):并发请求数已达上限 {}",
+                rejected,
+                MCP_MAX_CONCURRENT_REQUESTS
+            );
+            (
+                axum::http::StatusCode::TOO_MANY_REQUESTS,
+                [(axum::http::header::RETRY_AFTER, "1")],
+                format!(
+                    "MCP 服务忙:并发请求数已达上限({}),请稍后重试",
+                    MCP_MAX_CONCURRENT_REQUESTS
+                ),
+            )
+                .into_response()
+        }
+    }
+}
+
+/// 组装 `/mcp` 路由。**生产与协议测试夹具共用同一份路由、同一份 http_config()**,
+/// 避免"测试通过但线上配置没生效"。
+/// factory 每次请求 clone 同一个 Arc<McpShared>:业务状态是应用级的,
+/// HTTP session 只承载协议状态,绝不管理串口连接生命周期。
+pub fn mcp_router(shared: Arc<McpShared>) -> axum::Router {
+    let shared_for_factory = shared.clone();
+    let service = StreamableHttpService::new(
+        move || Ok(NeoserialHandler::new(shared_for_factory.clone())),
+        Arc::new(LocalSessionManager::default()),
+        http_config(),
+    );
+    // 这个 router 只有 /mcp 一个入口,所以整层限流等价于"只保护 /mcp"。
+    let limiter = Arc::new(tokio::sync::Semaphore::new(MCP_MAX_CONCURRENT_REQUESTS));
+    let limiter_for_layer = limiter.clone();
+    axum::Router::new()
+        .nest_service("/mcp", service)
+        .layer(axum::middleware::from_fn(move |req, next| {
+            let limiter = limiter_for_layer.clone();
+            async move { mcp_concurrency_gate(limiter, req, next).await }
+        }))
 }
 
 /// 起 MCP streamable HTTP server,bind 127.0.0.1:port/mcp。
@@ -694,13 +1374,7 @@ fn content_text(json: Value) -> CallToolResult {
 /// 在 lib.rs setup 里用 tauri::async_runtime::spawn 调用。
 pub async fn run_server(shared: Arc<McpShared>, listener: std::net::TcpListener) -> Result<(), String> {
     let port = listener.local_addr().map(|a| a.port()).unwrap_or(0);
-    let shared_for_factory = shared.clone();
-    let service = StreamableHttpService::new(
-        move || Ok(NeoserialHandler::new(shared_for_factory.clone())),
-        Arc::new(LocalSessionManager::default()),
-        StreamableHttpServerConfig::default(),
-    );
-    let app = axum::Router::new().nest_service("/mcp", service);
+    let app = mcp_router(shared);
     // from_std 接管已绑定的 listener,不会重新 bind
     listener.set_nonblocking(true).map_err(|e| format!("set_nonblocking 失败: {}", e))?;
     let tokio_listener = tokio::net::TcpListener::from_std(listener)
@@ -710,20 +1384,4 @@ pub async fn run_server(shared: Arc<McpShared>, listener: std::net::TcpListener)
         .await
         .map_err(|e| format!("axum serve 失败: {}", e))?;
     Ok(())
-}
-
-#[cfg(test)]
-mod protocol_tests {
-    use super::*;
-
-    #[test]
-    fn tool_list_has_cache_metadata_for_strict_clients() {
-        let tool = Tool::new("sample", "sample tool", schema(serde_json::json!({"type":"object"})));
-        let value = serde_json::to_value(tool_list_response(vec![tool])).unwrap();
-        assert_eq!(value["ttlMs"], 0);
-        assert_eq!(value["cacheScope"], "private");
-        assert_eq!(value["tools"][0]["name"], "sample");
-        // 旧客户端仍可以读取原有 tools；缓存字段是附加信息。
-        assert_eq!(value["tools"].as_array().unwrap().len(), 1);
-    }
 }

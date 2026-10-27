@@ -65,3 +65,9 @@ CLAUDE.md
 *.key
 # PowerShell ~ 未展开产生的本地密钥目录残留(私钥+公钥,pubkey 已配在 tauri.conf.json)
 ~/
+
+# Tauri 平台 schema 生成产物(构建时自动重新生成,三平台内容相同)
+src-tauri/gen/schemas/macOS-schema.json
+
+# 本机运行时 registry(APPDATA 缺失时的回退写入路径,不是源码)
+src-tauri/neoserial/

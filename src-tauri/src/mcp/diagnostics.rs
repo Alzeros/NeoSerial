@@ -194,4 +194,15 @@ mod tests {
         assert!(check_endpoint(port).await.err().unwrap().contains("1 MiB"));
         task.join().unwrap();
     }
+
+    /// 真实自检跑在开启 Origin 强制校验的 endpoint 上必须仍然成功:
+    /// 自检是原生客户端(不带 Origin),不该被自己的安全策略挡住。
+    #[tokio::test]
+    async fn real_self_check_still_passes_against_the_hardened_endpoint() {
+        let port = crate::mcp::protocol_tests::spawn_test_endpoint().await;
+        let result = check_endpoint(port).await.expect("自检应通过");
+        assert_eq!(result.server_name, "NeoSerial");
+        assert_eq!(result.protocol_version, PROTOCOL);
+        assert_eq!(result.tool_count, 19, "自检应看到 19 个工具");
+    }
 }

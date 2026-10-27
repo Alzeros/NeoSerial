@@ -192,13 +192,13 @@ fn start_mcp(handle: &tauri::AppHandle, state: &AppState) -> Option<mcp::registr
     }
     let registry = mcp::registry::RegistryHandle::register(port).ok();
     // 从 AppState 提取共享字段给 MCP(必须是同一 Arc clone),registry 同一 clone 供工具调 update_connections
-    let mcp_shared = std::sync::Arc::new(mcp::state::McpShared {
-        app_handle: handle.clone(),
-        connections: state.connections.clone(),
-        connecting: state.connecting.clone(),
-        registry: registry.clone(),
-        call_log: state.call_log.clone(),
-    });
+    let mcp_shared = std::sync::Arc::new(mcp::state::McpShared::new(
+        handle.clone(),
+        state.connections.clone(),
+        state.connecting.clone(),
+        registry.clone(),
+        state.call_log.clone(),
+    ));
     // 起 HTTP server(tauri::async_runtime::spawn,勿用 tokio::spawn)
     let shared_clone = mcp_shared.clone();
     tauri::async_runtime::spawn(async move {

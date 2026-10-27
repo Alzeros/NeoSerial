@@ -226,7 +226,9 @@ url = "http://127.0.0.1:34594/mcp"
 - **枚举参数**（`ending`、`data_bits`、`parity`、`flow_control`）不区分大小写，但写错会直接报错，不会悄悄换成默认值。
 - **先查手册再发指令**：用 `kb_search` / `kb_get` 查语法。`also_in_count > 0` 说明不同手册里有不同版本，照语法发送前应先看 `kb_get` 的 `also_in`。
 
-> MCP 服务只监听本机回环地址，没有鉴权，本机任何进程都能调用。不需要时可以在设置里关闭（重启后生效）。
+> MCP 服务只监听本机回环地址，没有鉴权，本机任何进程都能调用。并强制校验 Origin：所有携带 `Origin` 头的请求（即浏览器环境，包括 DNS rebinding）一律返回 403，只有不带 Origin 的原生 MCP 客户端（Claude Code / Codex / Cursor / VS Code 等）可以接入——浏览器内 MCP 客户端不是受支持的入口。不需要时可以在设置里关闭（重启后生效）。
+>
+> 并发过载时：HTTP 入口满返回 `429`（带 `Retry-After: 1`）；工具执行层满返回 `isError=true` 的「服务忙」结果（该次调用未执行、无副作用，重试安全，两者判别路径不同）。`disconnect`、`sequence_stop` 与状态查询走专用配额，服务过载时仍可执行。
 
 ## 配置与数据
 

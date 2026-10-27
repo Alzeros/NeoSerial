@@ -39,6 +39,11 @@ pub fn spawn_writer(
                     if tracker.as_ref().is_some_and(|t| t.failed()) {
                         continue;
                     }
+                    // 本次文件发送被取消:排队中还没写出的块直接丢弃,不再往串口里送。
+                    // 已经开始的那一次 write 不撤回(设备可能已经收到半个文件)。
+                    if tracker.as_ref().is_some_and(|t| t.cancelled()) {
+                        continue;
+                    }
                     // 一条命令一次完整写入,不合并积压命令。合并的问题:send_file 以内存速度
                     // 塞满 64 格 channel,合并后单次 write 几十 KB,线速下要跑几秒,必撞超时;
                     // FileChunk/SendSilent 混在一起却只按第一条决定是否回显(手动命令重复回显、

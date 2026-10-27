@@ -18,7 +18,7 @@ use super::state::McpShared;
 
 /// 所有工具的统一错误返回:{ ok: false, error } 。成功 { ok: true, ... }。
 /// 不走 MCP 协议级 error,让 agent 从结果文本读到可操作中文错误。
-#[derive(Clone, Serialize)]
+#[derive(Clone, Debug, Serialize)]
 pub struct ErrorResp {
     pub ok: bool,
     pub error: String,
@@ -90,7 +90,12 @@ pub struct DisconnectReq {
     pub port: String,
 }
 
-pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: DisconnectReq) -> Result<(), String> {
+pub fn disconnect(shared: &McpShared, req: DisconnectReq) -> Result<(), String> {
+    let app_handle = match shared.app() {
+        Some(a) => a,
+        // 无 GUI 上下文(协议测试夹具):没有窗口可通知,直接拒绝而不是假装断开成功。
+        None => return Err("无应用上下文,无法执行 disconnect".to_string()),
+    };
     // 先停该 port 的运行序列,避免 disconnect 后序列线程空转(写 dead channel)
     // 且 SEQUENCE_RUNNING 残留导致 reconnect 后新序列被拒。
     let seq_stopped = crate::commands::sequence::sequence_stop_inner(&shared.connections, &req.port)
@@ -137,7 +142,9 @@ pub fn disconnect(shared: &McpShared, app_handle: &tauri::AppHandle, req: Discon
         let _ = reg.update_connections(snapshot);
     }
     // 通知所有 GUI 窗口刷新"待接管"chip:agent 断了某端口,chip 应消失。
-    let _ = shared.app_handle.emit("mcp-connections-changed", ());
+    if let Some(app) = shared.app() {
+        let _ = app.emit("mcp-connections-changed", ());
+    }
     Ok(())
 }
 
@@ -215,8 +222,12 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     // 若用户后来在 GUI 窗口连同 port,GUI connect 应复用并把 window_label 改成该窗口 label
     // (见 Tauri connect 的复用逻辑)。这里只处理 MCP 首次建连。
     let window_label = crate::connection::detached_label(&req.port);
+    let app_handle = match shared.app() {
+        Some(a) => a.clone(),
+        None => return Err(ErrorResp::new("无应用上下文,无法执行 connect")),
+    };
     // 锁外执行阻塞的打开操作。任何 return 路径上 guard 都会析构并清掉占位。
-    let (handle, mode) = match spawn_connection(params, shared.app_handle.clone(), window_label, shared.connections.clone(), shared.registry.clone(), true) {
+    let (handle, mode) = match spawn_connection(params, app_handle, window_label, shared.connections.clone(), shared.registry.clone(), true) {
         Ok(h) => h,
         Err(e) => {
             let lower = e.to_lowercase();
@@ -247,7 +258,9 @@ pub fn connect(shared: &McpShared, req: ConnectReq) -> Result<ConnectResp, Error
     }
     // 通知所有 GUI 窗口刷新"待接管"chip 列表:agent 新连了端口,可能需要 GUI 接管。
     // 用全局 emit:chip 是全局连接视图,所有窗口都要看到变化。
-    let _ = shared.app_handle.emit("mcp-connections-changed", ());
+    if let Some(app) = shared.app() {
+        let _ = app.emit("mcp-connections-changed", ());
+    }
     Ok(ConnectResp { ok: true, mode: Some(mode), reused: false, baud: req.baud_rate, owner: None })
 }
 
@@ -387,6 +400,17 @@ pub struct SendAndReadResp {
     pub timed_out: bool,
     pub seq0: u64,
     pub seq1: u64,
+    /// 本次调用被取消(客户端取消通知或断开连接)。取消 = true 时不该重发命令。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancelled: Option<bool>,
+    /// 取消后能不能安全重发。
+    /// - 发送**前**被取消:命令没出去,重发安全 → true;
+    /// - 发送**后**被取消:命令可能已被设备接收 → false,只能续读。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+    /// 取消/失败时的说明,写清楚下一步该做什么(续读,而不是重发)。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// 解析发送数据:text + ending + is_hex → Vec<u8>。
@@ -410,7 +434,10 @@ fn parse_send_data(text: &str, ending: &Option<String>, is_hex: &Option<bool>) -
 fn do_send(shared: &McpShared, port: &str, data: Vec<u8>) -> Result<Arc<RxHistory>, String> {
     let conn = shared.connections.lock().map_err(|e| e.to_string())?;
     let handle = conn.get(port).ok_or_else(|| format!("端口 {} 未连接", port))?;
-    emit_tx_line(&shared.app_handle, &handle.rx_history, &handle.window_label, &handle.line_index, data.clone());
+    // 没有 GUI 上下文(协议测试夹具)时跳过 tx 回显,发送本身照常。
+    if let Some(app) = shared.app() {
+        emit_tx_line(app, &handle.rx_history, &handle.window_label, &handle.line_index, data.clone());
+    }
     handle.write_tx.send(WriteCommand::SendSilent(data)).map_err(|e| format!("发送队列写入失败: {}", e))?;
     Ok(handle.rx_history.clone())
 }
@@ -569,11 +596,38 @@ fn build_history_resp(
 /// 与旧全局 history 行为差异:旧实现读全局 history,disconnect 后全局仍可能被
 /// 其他连接的 reader push 唤醒(数据串连);新实现 per-conn history 隔离,断连后
 /// 该 history 静默,纯超时返回空——符合多连接隔离语义。
-pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<SendAndReadResp, ErrorResp> {
+///
+/// **取消语义(S6)**:客户端取消通知或断开连接 → rmcp cancel 请求令牌 →
+/// 这里停止等待,**保留已收到的 responses 与游标**。
+/// 取消检查同时覆盖收数据分支与等待分支:设备持续输出、静默间隙迟迟不出现时,
+/// 收数据分支的检查保证取消照样能生效。
+/// 命令已经发出去了,取消**不撤回**它,也**绝不自动重发**:
+/// 返回 cancelled=true / retryable=false,并在 error 里指路
+/// `get_history_since(port, seq1)` 续读。发送前就被取消的(命令没出去)
+/// 单独标记 retryable=true。
+pub async fn send_and_read(
+    shared: &McpShared,
+    req: SendAndReadReq,
+    ct: Option<&tokio_util::sync::CancellationToken>,
+) -> Result<SendAndReadResp, ErrorResp> {
     let data = match parse_send_data(&req.text, &req.ending, &req.is_hex) {
         Ok(d) => d,
         Err(e) => return Err(ErrorResp::new(e)),
     };
+    // 发送前先看取消:已经取消就别发命令——发出去没人读,还可能把设备搞懵。
+    if ct.is_some_and(|c| c.is_cancelled()) {
+        return Ok(SendAndReadResp {
+            ok: false,
+            sent: false,
+            responses: Vec::new(),
+            timed_out: false,
+            seq0: 0,
+            seq1: 0,
+            cancelled: Some(true),
+            retryable: Some(true),
+            error: Some("调用在发送前被取消:命令未发出,没有数据需要续读,可按需重发".to_string()),
+        });
+    }
     // do_send 内取该 port 的 per-conn rx_history 并返回 Arc,锁不跨 await。
     let rx_history = match do_send(shared, &req.port, data) {
         Ok(h) => h,
@@ -586,6 +640,7 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
     let mut responses: Vec<String> = Vec::new();
     let mut cur_seq = seq0;
     let mut timed_out = false;
+    let mut cancelled = false;
 
     loop {
         // 先查:有没有 seq > cur_seq 的新行(tx+rx 都会触发,但只收集 rx)
@@ -599,17 +654,34 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
                 responses.push(text);
             }
             cur_seq = latest; // 推进到最新(含已跳过的 tx)
+            // 取消检查必须也在收数据分支:设备持续输出时这里是唯一反复经过的地方,
+            // 只靠等待分支的 select 会让取消一直轮不到处理。先收下已到的行再退出,
+            // 不丢数据;游标停在已收的末行,取消后新到的数据用 get_history_since 续读。
+            if ct.is_some_and(|c| c.is_cancelled()) {
+                cancelled = true;
+                break;
+            }
             continue; // 拿到新 rx,刷新静默窗口:回循环顶重新等 gap
         }
-        // 无新 rx 行:等 Notify,带 gap 超时
+        // 无新 rx 行:等 Notify,带 gap 超时;同时盯着取消令牌。
+        // 取消时 select! 直接丢掉 notified future——不会留下"后台还在等"的任务。
         let notified = rx_history.notify().notified();
-        match timeout(gap, notified).await {
-            Ok(_) => {
+        let waited: Option<Result<(), tokio::time::error::Elapsed>> = match ct {
+            Some(c) => {
+                tokio::select! {
+                    r = timeout(gap, notified) => Some(r),
+                    _ = c.cancelled() => None,
+                }
+            }
+            None => Some(timeout(gap, notified).await),
+        };
+        match waited {
+            Some(Ok(_)) => {
                 // 被唤醒(有新行 push,可能是 tx 或 rx),回循环顶重查
                 continue;
             }
-            Err(_) => {
-                // 静默超时:再查一次(防止唤醒与查询的竞态漏数据)
+            Some(Err(_)) | None => {
+                // 静默超时或被取消:都再查一次(防止唤醒与查询的竞态漏数据)
                 let (rows, latest) = rx_history.since(cur_seq);
                 let new_rx: Vec<_> = rows.iter()
                     .filter(|(_, dir, _)| *dir == crate::buffer::log_line::Dir::Rx)
@@ -620,12 +692,38 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
                         responses.push(text);
                     }
                     cur_seq = latest;
+                    if waited.is_none() {
+                        // 取消时又收到新行:收下再退出,别丢数据
+                        cancelled = true;
+                        break;
+                    }
                     continue;
                 }
-                timed_out = true;
+                if waited.is_none() {
+                    cancelled = true;
+                } else {
+                    timed_out = true;
+                }
                 break;
             }
         }
+    }
+
+    if cancelled {
+        return Ok(SendAndReadResp {
+            ok: false,
+            sent: true,
+            responses,
+            timed_out: false,
+            seq0,
+            seq1: cur_seq,
+            cancelled: Some(true),
+            retryable: Some(false),
+            error: Some(format!(
+                "已发送后被取消:命令可能已被设备接收,不要重发;用 get_history_since({}, {}) 续读已到达的数据",
+                req.port, cur_seq
+            )),
+        });
     }
 
     Ok(SendAndReadResp {
@@ -635,6 +733,9 @@ pub async fn send_and_read(shared: &McpShared, req: SendAndReadReq) -> Result<Se
         timed_out,
         seq0,
         seq1: cur_seq,
+        cancelled: None,
+        retryable: None,
+        error: None,
     })
 }
 
@@ -676,22 +777,69 @@ pub struct SendFileReq {
 #[derive(Serialize)]
 pub struct SendFileResp {
     pub ok: bool,
+    /// 实际写进串口的字节数。取消时是**下界**(取消瞬间快照):在途的最后一块可能
+    /// 随后完成,最终实际写出至多比该值多一个写入块(1024 字节)。
     pub sent: usize,
+    /// 文件总字节数。
+    pub total: Option<usize>,
+    /// 本次发送被取消。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cancelled: Option<bool>,
+    /// 取消后能不能安全重发。一律 false:设备可能已收到半个文件,必须人工确认。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub retryable: Option<bool>,
+    /// 取消时的说明,写清楚下一步该做什么。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// 发送文件(二进制安全)。分块 1024 字节写入,写线程把最后一块写进驱动才返回,
 /// sent 即文件大小;中途断开/写错返回 ok:false 并带"已写出 x/y 字节"。
 /// 与 GUI 共用 connection::file_send 的实现,进度不回报(agent 只看返回)。
-pub fn send_file(shared: &McpShared, req: SendFileReq) -> Result<SendFileResp, ErrorResp> {
+///
+/// **取消语义(S7)**:客户端取消/断开 → 停止后续写出,已排队的块被丢弃,
+/// 返回已写出字节数与文件总长,cancelled=true、retryable=false。
+/// **不会**自动从文件头重发:设备可能已经收到半个文件,需要人工确认设备状态。
+pub fn send_file(
+    shared: &McpShared,
+    req: SendFileReq,
+    ct: Option<&tokio_util::sync::CancellationToken>,
+) -> Result<SendFileResp, ErrorResp> {
     let (write_tx, running) = {
         let conns = shared.connections.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
         let handle = conns.get(&req.port)
             .ok_or_else(|| ErrorResp::new(format!("端口 {} 未连接", req.port)))?;
         (handle.write_tx.clone(), handle.running.clone())
     };
-    let sent = crate::connection::file_send::send_file_tracked(&write_tx, &running, &req.path, |_, _| {})
-        .map_err(ErrorResp::new)?;
-    Ok(SendFileResp { ok: true, sent })
+    let outcome = crate::connection::file_send::send_file_tracked_with_cancel(
+        &write_tx,
+        &running,
+        &req.path,
+        ct,
+        |_, _| {},
+    )
+    .map_err(ErrorResp::new)?;
+    if outcome.cancelled {
+        return Ok(SendFileResp {
+            ok: false,
+            sent: outcome.written,
+            total: Some(outcome.total),
+            cancelled: Some(true),
+            retryable: Some(false),
+            error: Some(format!(
+                "发送文件被取消:已写出至少 {}/{} 字节(下界:在途的最后一块可能随后完成)。设备可能已收到半个文件,不要自动重发,请先人工确认设备状态再决定是否重传",
+                outcome.written, outcome.total
+            )),
+        });
+    }
+    Ok(SendFileResp {
+        ok: true,
+        sent: outcome.written,
+        total: Some(outcome.total),
+        cancelled: None,
+        retryable: None,
+        error: None,
+    })
 }
 
 // ============ logging (全局,不接 port) ============
@@ -710,7 +858,8 @@ pub struct StartLoggingResp {
 /// 开始存盘(全局,所有连接的收发都进同一文件)。传 path 新建/覆盖,不传用上次路径续写。
 /// 与 GUI 命令共用 start_logging_impl:默认目录创建、写失败回调、logging-changed 广播一处实现。
 pub fn start_logging(shared: &McpShared, req: StartLoggingReq) -> Result<StartLoggingResp, ErrorResp> {
-    let path = crate::commands::logging::start_logging_impl(&shared.app_handle, req.path)
+    let app = shared.app().ok_or_else(|| ErrorResp::new("无应用上下文,无法启动存盘"))?;
+    let path = crate::commands::logging::start_logging_impl(app, req.path)
         .map_err(ErrorResp::new)?;
     Ok(StartLoggingResp { ok: true, path })
 }
@@ -722,7 +871,8 @@ pub struct StopLoggingResp {
 
 /// 停止存盘(等缓冲写完再返回)。
 pub fn stop_logging(shared: &McpShared) -> Result<StopLoggingResp, ErrorResp> {
-    crate::commands::logging::stop_logging_impl(&shared.app_handle).map_err(ErrorResp::new)?;
+    let app = shared.app().ok_or_else(|| ErrorResp::new("无应用上下文,无法停止存盘"))?;
+    crate::commands::logging::stop_logging_impl(app).map_err(ErrorResp::new)?;
     Ok(StopLoggingResp { ok: true })
 }
 
@@ -764,7 +914,8 @@ pub fn sequence_run(shared: &McpShared, req: SequenceRunReq) -> Result<SequenceR
         enter: c.enter,
         delay_ms: c.delay_ms,
     }).collect();
-    sequence_run_inner(shared.app_handle.clone(), &shared.connections, &req.port, cmds, req.run_count, req.loop_interval)
+    let app_handle = shared.app().ok_or_else(|| ErrorResp::new("无应用上下文,无法启动序列"))?;
+    sequence_run_inner(app_handle.clone(), &shared.connections, &req.port, cmds, req.run_count, req.loop_interval)
         .map(|_| SequenceRunResp { ok: true })
         .map_err(ErrorResp::new)
 }
@@ -913,8 +1064,8 @@ fn load_kb_cache(shared: &McpShared) -> Result<crate::config::command_index::Com
     // 空缓存:把原因说清楚,agent 才能告诉用户去做什么。
     // 地址取生效值(用户配的或编译期内置的),Key 走 secret(不在 Settings 里)。
     let configured = shared
-        .app_handle
-        .try_state::<crate::state::AppState>()
+        .app()
+        .and_then(|a| a.try_state::<crate::state::AppState>())
         .and_then(|st| st.settings.lock().ok().map(|s| s.command_index.clone()))
         .map(|ci| !ci.effective_base_url().is_empty())
         .unwrap_or(false)
@@ -1022,7 +1173,7 @@ pub struct GetSettingsResp {
 
 /// 读当前配置(波特率预设/显示模式/编码/MCP 设置等)。
 pub fn get_settings(shared: &McpShared) -> GetSettingsResp {
-    let state = match shared.app_handle.try_state::<crate::state::AppState>() {
+    let state = match shared.app().and_then(|a| a.try_state::<crate::state::AppState>()) {
         Some(s) => s,
         None => return GetSettingsResp { ok: false, settings: None },
     };
@@ -1044,7 +1195,8 @@ pub struct SaveSettingsResp {
 /// 知识库 API Key 不在 Settings 里(见 config/secret.rs),因此既读不到也无法经此设置;
 /// 老客户端若还在 command_index 里带 api_key,会被 serde 静默忽略。
 pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSettingsResp, ErrorResp> {
-    let state = shared.app_handle.try_state::<crate::state::AppState>()
+    let app = shared.app().ok_or_else(|| ErrorResp::new("无应用上下文,无法保存配置"))?;
+    let state = app.try_state::<crate::state::AppState>()
         .ok_or_else(|| ErrorResp::new("无法访问应用状态"))?;
     let mut settings = req.settings;
     let mut s = state.settings.lock().map_err(|e| ErrorResp::new(e.to_string()))?;
@@ -1057,16 +1209,309 @@ pub fn save_settings(shared: &McpShared, req: SaveSettingsReq) -> Result<SaveSet
     drop(s);
     // 后台运行开关即时生效(sync_visibility 自己会取 settings 锁,先放锁);
     // 并让所有窗口刷新 settings 快照,免得窗口下次整份回写时把 agent 改的字段冲掉
-    crate::tray::sync_visibility(&shared.app_handle);
+    crate::tray::sync_visibility(app);
     // 发送历史上限被 agent 调小了也当场裁掉多余的(自带落盘与广播),与 GUI 两条保存路径一致
-    crate::commands::command_index::enforce_history_limit(&shared.app_handle, &state);
-    let _ = shared.app_handle.emit("settings-changed", ());
+    crate::commands::command_index::enforce_history_limit(app, &state);
+    if let Some(app) = shared.app() {
+        let _ = app.emit("settings-changed", ());
+    }
     Ok(SaveSettingsResp { ok: true })
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ============ send_and_read 取消语义(S6) ============
+
+    mod cancel {
+        use super::super::*;
+        use crate::buffer::log_line::{Dir, LogLine};
+        use crate::mcp::state::test_support::{fake_connection, test_shared};
+        use tokio_util::sync::CancellationToken;
+
+        fn req(port: &str) -> SendAndReadReq {
+            SendAndReadReq {
+                port: port.to_string(),
+                text: "AT".to_string(),
+                timeout_ms: 5000,
+                ending: None,
+                is_hex: None,
+            }
+        }
+
+        /// 发送前就取消:命令不许发出去,没有 TX、没有 RX。
+        #[tokio::test]
+        async fn cancelled_before_send_does_not_touch_the_port() {
+            let shared = test_shared();
+            let (handle, rx) = fake_connection("COM-cancel");
+            shared.connections.lock().unwrap().insert("COM-cancel".to_string(), handle);
+
+            let ct = CancellationToken::new();
+            ct.cancel();
+            let resp = send_and_read(&shared, req("COM-cancel"), Some(&ct)).await.unwrap();
+
+            assert!(!resp.ok, "被取消的调用不算成功");
+            assert!(!resp.sent, "命令不该发出去");
+            assert_eq!(resp.cancelled, Some(true));
+            assert_eq!(resp.retryable, Some(true), "没发出去,重发是安全的");
+            assert!(resp.responses.is_empty());
+            assert!(rx.try_recv().is_err(), "写队列应为空:命令没发出去");
+        }
+
+        /// 等待中被取消:及时返回,已收到的行与游标都不丢。
+        #[tokio::test]
+        async fn cancelled_while_waiting_keeps_received_lines_and_cursor() {
+            let shared = test_shared();
+            let (handle, _rx) = fake_connection("COM-cancel");
+            let history = handle.rx_history.clone();
+            shared.connections.lock().unwrap().insert("COM-cancel".to_string(), handle);
+
+            let ct = CancellationToken::new();
+            let ct2 = ct.clone();
+            let shared_for_call = shared.clone();
+            let call = tokio::spawn(async move {
+                send_and_read(&shared_for_call, req("COM-cancel"), Some(&ct2)).await.unwrap()
+            });
+
+            // 先来一行 rx,再取消:已收到的行不能丢
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            history.push(Dir::Rx, LogLine::new("08:00:00.000".into(), Dir::Rx, b"OK-1".to_vec(), &[], 1));
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            ct.cancel();
+
+            // 取消后应很快返回(远小于 timeout_ms=5000)
+            let started = std::time::Instant::now();
+            let resp = tokio::time::timeout(std::time::Duration::from_secs(3), call)
+                .await
+                .expect("取消后应很快返回")
+                .expect("任务不该 panic");
+            assert!(started.elapsed() < std::time::Duration::from_secs(3));
+
+            assert!(!resp.ok, "被取消的调用不算成功");
+            assert!(resp.sent, "命令已经发出去了");
+            assert_eq!(resp.cancelled, Some(true));
+            assert_eq!(resp.retryable, Some(false), "命令可能已被设备接收,不能重发");
+            assert_eq!(resp.responses, vec!["OK-1".to_string()], "已收到的行不能丢");
+            assert!(resp.seq1 >= 1, "游标要指向已收到的行,实际 {}", resp.seq1);
+            let err = resp.error.expect("取消要有说明");
+            assert!(err.contains("get_history_since"), "错误信息要指路续读: {}", err);
+
+            // 取消后新到的数据仍能按 seq1 续读
+            history.push(Dir::Rx, LogLine::new("08:00:00.001".into(), Dir::Rx, b"OK-2".to_vec(), &[], 2));
+            let after = get_history_since(
+                &shared,
+                GetHistorySinceReq { port: "COM-cancel".into(), seq: resp.seq1, max_lines: None, is_hex: None },
+            );
+            assert_eq!(after.lines.len(), 1, "取消后新到的数据应能续读到");
+            assert_eq!(after.lines[0].text, "OK-2");
+        }
+
+        /// 设备持续输出时取消:收数据分支是唯一反复经过的地方,取消必须在这里生效,
+        /// 不能等到静默间隙出现。已收到的行与游标都保留,取消后新数据可续读。
+        #[tokio::test]
+        async fn cancelled_while_device_streams_stops_promptly() {
+            let shared = test_shared();
+            let (handle, _rx) = fake_connection("COM-stream");
+            let history = handle.rx_history.clone();
+            shared.connections.lock().unwrap().insert("COM-stream".to_string(), handle);
+
+            let ct = CancellationToken::new();
+            let ct_for_call = ct.clone();
+            let shared_for_call = shared.clone();
+            let call = tokio::spawn(async move {
+                send_and_read(&shared_for_call, req("COM-stream"), Some(&ct_for_call)).await.unwrap()
+            });
+
+            // 模拟设备持续输出:每 2ms 一行,持续压过静默间隙
+            let feeder_history = history.clone();
+            let feeder = tokio::spawn(async move {
+                let mut i = 0u64;
+                loop {
+                    tokio::time::sleep(std::time::Duration::from_millis(2)).await;
+                    i += 1;
+                    feeder_history.push(
+                        Dir::Rx,
+                        LogLine::new(format!("08:00:00.{:03}", i % 1000), Dir::Rx, format!("L{}", i).into_bytes(), &[], i),
+                    );
+                }
+            });
+
+            // 让流跑一会儿再取消:调用必须立即返回,不能等满 timeout_ms=5000
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            ct.cancel();
+            let started = std::time::Instant::now();
+            let resp = tokio::time::timeout(std::time::Duration::from_secs(3), call)
+                .await
+                .expect("持续输出时取消也应很快返回")
+                .expect("任务不该 panic");
+            feeder.abort();
+            assert!(started.elapsed() < std::time::Duration::from_secs(3));
+
+            assert_eq!(resp.cancelled, Some(true));
+            assert_eq!(resp.retryable, Some(false), "命令已发出,不能重发");
+            assert!(!resp.responses.is_empty(), "已收到的行要保留");
+            assert!(resp.seq1 >= 1, "游标要推进到已收的末行,实际 {}", resp.seq1);
+            let err = resp.error.expect("取消要有说明");
+            assert!(err.contains("get_history_since"), "错误信息要指路续读: {}", err);
+
+            // 取消后新到的数据仍能按 seq1 续读
+            history.push(Dir::Rx, LogLine::new("08:00:59.000".into(), Dir::Rx, b"L-after".to_vec(), &[], 999));
+            let after = get_history_since(
+                &shared,
+                GetHistorySinceReq { port: "COM-stream".into(), seq: resp.seq1, max_lines: None, is_hex: None },
+            );
+            assert_eq!(after.lines.len(), 1, "取消后新到的数据应能续读到");
+            assert_eq!(after.lines[0].text, "L-after");
+        }
+
+        /// 没有令牌时行为不变:仍然按静默间隙超时返回。
+        #[tokio::test]
+        async fn without_token_behaviour_is_unchanged() {
+            let shared = test_shared();
+            let (handle, _rx) = fake_connection("COM-plain");
+            shared.connections.lock().unwrap().insert("COM-plain".to_string(), handle);
+            let mut r = req("COM-plain");
+            r.timeout_ms = 120;
+            let resp = send_and_read(&shared, r, None).await.unwrap();
+            assert!(resp.ok);
+            assert!(resp.sent);
+            assert!(resp.timed_out, "没有响应时应静默超时");
+            assert_eq!(resp.cancelled, None, "正常路径不该带 cancelled 字段");
+            assert_eq!(resp.retryable, None, "正常路径不该带 retryable 字段");
+            assert_eq!(resp.error, None, "正常路径不该带 error 字段");
+        }
+    }
+
+    // ============ send_file 取消语义(S7) ============
+
+    mod cancel_file {
+        use super::*;
+        use crate::mcp::state::test_support::{fake_connection, test_shared};
+        use tokio_util::sync::CancellationToken;
+
+        fn temp_file(name: &str, len: usize) -> std::path::PathBuf {
+            let p = std::env::temp_dir().join(format!("neoserial_mcp_{}_{}", std::process::id(), name));
+            std::fs::write(&p, vec![0xA5u8; len]).unwrap();
+            p
+        }
+
+        fn req(port: &str, path: &str) -> SendFileReq {
+            SendFileReq { port: port.to_string(), path: path.to_string() }
+        }
+
+        /// 取消的文件发送:如实报告已写出字节与总长,不许自动重发。
+        #[tokio::test]
+        async fn cancelled_file_send_reports_partial_progress() {
+            let shared = test_shared();
+            let (handle, _rx) = fake_connection("COM-file");
+            shared.connections.lock().unwrap().insert("COM-file".to_string(), handle);
+            let p = temp_file("cancelled", 4096);
+            let ct = CancellationToken::new();
+            ct.cancel();
+            let resp = send_file(&shared, req("COM-file", p.to_str().unwrap()), Some(&ct)).unwrap();
+            assert!(!resp.ok, "被取消的文件发送不算成功");
+            assert_eq!(resp.cancelled, Some(true));
+            assert_eq!(resp.retryable, Some(false), "设备可能已收到半个文件,不能自动重发");
+            assert_eq!(resp.total, Some(4096));
+            assert!(resp.sent <= 4096, "已写字节数不能超过文件总长");
+            let err = resp.error.expect("取消要有说明");
+            assert!(err.contains("不要自动重发"), "错误说明要写清不能自动重发: {}", err);
+            let _ = std::fs::remove_file(p);
+        }
+
+        /// 没被取消时行为不变:整份文件发完,ok=true。
+        #[tokio::test]
+        async fn normal_file_send_is_unchanged() {
+            let shared = test_shared();
+            let (handle, rx) = fake_connection("COM-file");
+            shared.connections.lock().unwrap().insert("COM-file".to_string(), handle);
+            // send_file 要等写线程把最后一块写进驱动才返回:这里补一个假写线程
+            // (2048 字节 = 2 块;写完这两块就收工,免得 join 一直等下去)
+            let writer = std::thread::spawn(move || {
+                let mut chunks = 0;
+                while let Ok(cmd) = rx.recv() {
+                    if let crate::connection::WriteCommand::FileChunk(data, tracker) = cmd {
+                        tracker.record(data.len(), None);
+                        chunks += 1;
+                        if chunks >= 2 {
+                            break;
+                        }
+                    }
+                }
+            });
+            let p = temp_file("normal", 2048);
+            let resp = send_file(&shared, req("COM-file", p.to_str().unwrap()), None).unwrap();
+            assert!(resp.ok);
+            assert_eq!(resp.sent, 2048);
+            assert_eq!(resp.total, Some(2048));
+            assert_eq!(resp.cancelled, None, "正常路径不该带 cancelled 字段");
+            assert_eq!(resp.retryable, None, "正常路径不该带 retryable 字段");
+            assert_eq!(resp.error, None, "正常路径不该带 error 字段");
+            writer.join().ok();
+            let _ = std::fs::remove_file(p);
+        }
+    }
+
+    /// KB 成功形态对照 outputSchema:结构由构造的缓存数据经**真实转换函数**生成
+    /// (无需真实缓存文件与 GUI),防止 schema 与响应 struct 字段漂移。
+    /// 空缓存/未配置等错误形态已由 HTTP 黑盒覆盖。
+    #[test]
+    fn test_kb_success_shapes_match_output_schema() {
+        fn validate(tool: &str, instance: &serde_json::Value) {
+            let schema = crate::mcp::server::output_schema(tool);
+            crate::mcp::protocol_tests::validate_schema(&schema, instance, &schema, "$")
+                .unwrap_or_else(|e| panic!("{} 的成功形态不符合 outputSchema: {} ({})", tool, e, instance));
+        }
+        let cache = crate::config::command_index::CommandIndexCache {
+            documents: vec![kb_doc(1, "手册A"), kb_doc(2, "手册B")],
+            commands: vec![
+                crate::config::command_index::ManualCommand {
+                    syntax: "AT+QCFG=<a>".into(),
+                    parameters: vec![param("a")],
+                    ..kb_cmd(10, 1, "AT+QCFG")
+                },
+                crate::config::command_index::ManualCommand {
+                    syntax: "AT+QCFG=<x>,<y>".into(),
+                    parameters: vec![param("x"), param("y")],
+                    ..kb_cmd(11, 2, "AT+QCFG")
+                },
+                kb_cmd(12, 1, "AT+CSQ"),
+            ],
+            ..Default::default()
+        };
+        let entries = crate::config::command_index::merged_entries(&cache);
+
+        // kb_get:含 also_in 与参数表的完整形态(取跨手册重复的 AT+QCFG)
+        let qcfg = entries
+            .iter()
+            .find(|e| e.key == "AT+QCFG")
+            .expect("前置:构造的缓存里应有 AT+QCFG");
+        let resp = to_get_resp(qcfg, &cache.documents);
+        assert_eq!(resp.also_in.len(), 1, "前置:应含别本记录");
+        validate("kb_get", &serde_json::to_value(resp).unwrap());
+
+        // kb_search:列表形态
+        let items: Vec<KbSearchItem> =
+            entries.iter().map(|e| to_search_item(e, &cache.documents)).collect();
+        let resp = KbSearchResp { ok: true, total: items.len(), items };
+        validate("kb_search", &serde_json::to_value(resp).unwrap());
+
+        // kb_manuals:手册列表形态(直接构造 struct)
+        let resp = KbManualsResp {
+            ok: true,
+            fetched_at: Some("2026-10-28T00:00:00+08:00".into()),
+            manuals: vec![KbManualItem {
+                id: 1,
+                title: "手册A".into(),
+                cached_commands: 2,
+                server_commands: 2,
+                cmd_status: "done".into(),
+                groups: vec!["分组1".into()],
+            }],
+        };
+        validate("kb_manuals", &serde_json::to_value(resp).unwrap());
+    }
 
     #[test]
     fn test_parse_send_ascii_default_crlf() {
