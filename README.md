@@ -19,7 +19,6 @@
 </p>
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshot-dark.png">
   <img src="assets/screenshot.png" alt="NeoSerial 主界面">
 </picture>
 
