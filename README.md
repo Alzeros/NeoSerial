@@ -201,7 +201,7 @@ url = "http://127.0.0.1:34594/mcp"
 
 ### 工具（19 个）
 
-所有工具都返回 `{ ok: bool, ... }`，`ok=false` 时 `error` 字段给出中文原因。
+工具执行结果返回 `{ ok: bool, ... }`，`ok=false` 时 `error` 字段给出中文原因，并标记 `isError=true`；成功结果为 `isError=false`。文本 JSON 与 `structuredContent` 内容一致。参数结构错误（如缺少必填字段、字段类型错误）和未知工具名返回 JSON-RPC `-32602` 错误，不包含工具 `result`。
 
 | 工具 | 说明 |
 |------|------|
@@ -228,7 +228,9 @@ url = "http://127.0.0.1:34594/mcp"
 
 > MCP 服务只监听本机回环地址，没有鉴权，本机任何进程都能调用。并强制校验 Origin：所有携带 `Origin` 头的请求（即浏览器环境，包括 DNS rebinding）一律返回 403，只有不带 Origin 的原生 MCP 客户端（Claude Code / Codex / Cursor / VS Code 等）可以接入——浏览器内 MCP 客户端不是受支持的入口。不需要时可以在设置里关闭（重启后生效）。
 >
-> 并发过载时：HTTP 入口满返回 `429`（带 `Retry-After: 1`）；工具执行层满返回 `isError=true` 的「服务忙」结果（该次调用未执行、无副作用，重试安全，两者判别路径不同）。`disconnect`、`sequence_stop` 与状态查询走专用配额，服务过载时仍可执行。
+> 并发过载时：普通 HTTP 入口限制 32 并发，满时返回 `429`（带 `Retry-After: 1`）。`list_ports`、`get_status`、`get_sequence_status`、`disconnect`、`sequence_stop` 另有 4 个保留 HTTP 槽位，普通长调用占满入口后，新版无状态请求和已有旧版 session 的恢复请求仍可接入；保留槽位也满时同样返回 `429`。保留入口会核对正文中的方法与工具名，不信任单独的请求头，仍执行完整的 Origin、Host 与协议元数据校验；正文限长 4 MiB（超限 `413`），读取限时 1 秒（超时 `408`）。这些恢复工具同时使用独立的工具执行配额。
+>
+> 工具执行层满时，返回 `isError=true` 的「服务忙」结果，消息明确说明「本次调用未执行」，这种拒绝可以重试。**不能仅凭 `isError=true` 判断没有设备副作用或可以重发**：业务失败和取消同样会标记错误；已经发送的串口命令、部分写出的文件不可盲目重发，应检查 `sent`、`cancelled`、`retryable` 和错误说明，必要时续读或人工确认设备状态。
 
 ## 配置与数据
 

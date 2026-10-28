@@ -203,7 +203,7 @@ The **MCP log (MCP 日志)** tab on the right shows every tool call from the age
 
 ### Tools (19)
 
-Every tool returns `{ ok: bool, ... }`; when `ok=false`, the `error` field gives the reason (in Chinese).
+Tool execution results return `{ ok: bool, ... }`: `ok=false` includes an `error` reason (in Chinese) and sets `isError=true`; successful results set `isError=false`. Text JSON and `structuredContent` contain the same payload. Malformed argument structures (such as missing required fields or incorrect field types) and unknown tool names return JSON-RPC error `-32602`, without a tool `result`.
 
 | Tool | Description |
 |------|-------------|
@@ -230,7 +230,9 @@ Every tool returns `{ ok: bool, ... }`; when `ok=false`, the `error` field gives
 
 > The MCP server listens on loopback only and has no authentication, so any local process can call it. It also enforces Origin validation: every request carrying an `Origin` header (i.e. any browser context, including DNS rebinding) is rejected with 403, and only native MCP clients without an Origin (Claude Code / Codex / Cursor / VS Code, etc.) can connect — in-browser MCP clients are not a supported entry point. Turn it off in settings if you don't need it (takes effect after restart).
 >
-> Under overload: when the HTTP entry is saturated the server returns `429` (with `Retry-After: 1`); when the tool-execution layer is saturated, calls get a result with `isError=true` and a "server busy" message (the call was not executed and has no side effects, so retrying is safe — note the two conditions are signalled differently). `disconnect`, `sequence_stop` and status queries use a dedicated quota and remain available while the server is overloaded.
+> Under overload: normal HTTP admission is limited to 32 concurrent requests; saturation returns `429` with `Retry-After: 1`. `list_ports`, `get_status`, `get_sequence_status`, `disconnect`, and `sequence_stop` have four additional reserved HTTP slots, so modern stateless requests and recovery calls on existing legacy sessions can still enter while normal long-running calls fill the entry point. A full reserve also returns `429`. Reserved admission checks the actual body method and tool name rather than trusting headers alone, and retains all Origin, Host, and protocol-metadata validation. Probe bodies are limited to 4 MiB (`413` on overflow) and a one-second read deadline (`408` on timeout). Recovery tools also have a separate tool-execution quota.
+>
+> A full tool-execution quota returns an `isError=true` busy result explicitly stating that the call was not executed; that rejection is safe to retry. **Do not infer absence of device side effects or safe replay from `isError=true` alone**: execution failures and cancellation also set the error flag. Never blindly resend serial commands that may already have been sent or files that may have been partially written. Check `sent`, `cancelled`, `retryable`, and the error explanation; resume reading or confirm device state manually when needed.
 
 ## Configuration and data
 

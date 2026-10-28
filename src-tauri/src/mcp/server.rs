@@ -916,10 +916,11 @@ impl ServerHandler for NeoserialHandler {
             // 调用记录:Drop 守卫兜底所有退出路径(含 arg 解析失败的早返回 / panic),
             // 正常流在底部 set 真实 ok+error。守卫 drop 时写环形 + emit 给前端。
             let mut recorder = CallRecorder::new(shared.clone(), name.to_string(), &args);
+            let call = parse_tool_call(name.as_ref(), args, &mut recorder)?;
             // 工具执行层并发闸门:旧 session 路径的 POST 会先把 SSE 响应流交回去、
             // 工具在后台跑,HTTP 中间件的 permit 等不到工具结束,盖不住这一段;
             // 新版无状态路径已被中间件全程覆盖,这里再过一道闸只是多记一个额度。
-            // 主闸与中间件共用 32 的额度,工具执行总数(新旧相加)不会超过它;
+            // 普通工具的新旧协议合计最多 32 个,恢复工具另有 4 个专用额度;
             // 恢复/诊断类工具走专用小配额,过载时仍可通过 MCP 断开、停序列、查状态。
             // 拿不到立刻拒绝,不排队;被拒也留一条调用记录。
             let gate = if PRIORITY_TOOLS.contains(&name.as_ref()) {
@@ -930,25 +931,17 @@ impl ServerHandler for NeoserialHandler {
             let _tool_permit = match gate.clone().try_acquire_owned() {
                 Ok(permit) => permit,
                 Err(_) => {
-                    // 闸门拒绝发生在工具执行**之前**,不是业务失败:按协议语义标
-                    // isError=true,只看 isError 的客户端不会把"服务忙"当成功结果;
-                    // 业务失败的 isError=false 契约(S0 基线)不受影响。拒绝时工具
-                    // 未执行、无任何设备副作用,重试是安全的。
                     let error = format!(
                         "MCP 服务忙:并发工具调用已达上限({}),本次调用未执行,请稍后重试",
                         MCP_MAX_CONCURRENT_REQUESTS
                     );
                     recorder.set_result(false, error.clone());
                     let payload = serde_json::json!({ "ok": false, "error": error });
-                    // 走统一构造器(文本 + structuredContent 双表示),只额外标上
-                    // isError=true——表示"这次调用没执行",与业务失败区分开。
-                    let mut result = content_text(payload);
-                    result.is_error = Some(true);
-                    return Ok(result.into());
+                    return Ok(content_text(payload).into());
                 }
             };
-            let resp: Value = match name.as_ref() {
-                LIST_PORTS => {
+            let resp: Value = match call {
+                ToolCall::ListPorts => {
                     // available_ports 在 Windows 走 SetupAPI 枚举(可卡几十~几百 ms),
                     // 丢到阻塞线程池执行,不占 tokio worker。
                     let shared_for_tool = shared.clone();
@@ -958,13 +951,7 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("枚举串口任务异常终止: {}", e) }),
                     }
                 }
-                DISCONNECT => {
-                    let req: tools::DisconnectReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::Disconnect(req) => {
                     // tools::disconnect 会同步等 reader/writer 线程退出(最多 1s),
                     // 直接在 async 块里调会占死一个 tokio worker 线程,期间整个
                     // MCP server 的其它 tool 调用一起卡住。丢到阻塞线程池执行。
@@ -979,52 +966,22 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("断开任务异常终止: {}", e) }),
                     }
                 }
-                GET_STATUS => {
-                    let req: tools::StatusReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::GetStatus(req) => {
                     serde_json::to_value(tools::get_status(&shared, req)).unwrap_or_default()
                 }
-                SEND => {
-                    let req: tools::SendReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::Send(req) => {
                     match tools::send(&shared, req) {
                         Ok(r) => serde_json::to_value(r).unwrap_or_default(),
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
                 }
-                GET_HISTORY_SINCE => {
-                    let req: tools::GetHistorySinceReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::GetHistorySince(req) => {
                     serde_json::to_value(tools::get_history_since(&shared, req)).unwrap_or_default()
                 }
-                RESET_STATS => {
-                    let req: tools::ResetStatsReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::ResetStats(req) => {
                     serde_json::to_value(tools::reset_stats(&shared, req)).unwrap_or_default()
                 }
-                SEND_FILE => {
-                    let req: tools::SendFileReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::SendFile(req) => {
                     // 文件读取循环是阻塞 IO,丢到阻塞线程池执行。
                     // 取消令牌 clone 进闭包:阻塞线程里也能看到取消信号。
                     let shared_for_tool = shared.clone();
@@ -1039,13 +996,7 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("发送文件任务异常终止: {}", e) }),
                     }
                 }
-                START_LOGGING => {
-                    let req: tools::StartLoggingReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::StartLogging(req) => {
                     // 文件创建/目录创建是阻塞 IO,丢到阻塞线程池执行。
                     let shared_for_tool = shared.clone();
                     let result = tokio::task::spawn_blocking(move || {
@@ -1058,7 +1009,7 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("启动日志任务异常终止: {}", e) }),
                     }
                 }
-                STOP_LOGGING => {
+                ToolCall::StopLogging => {
                     // 文件句柄释放等阻塞操作,丢到阻塞线程池执行。
                     let shared_for_tool = shared.clone();
                     let result = tokio::task::spawn_blocking(move || {
@@ -1071,46 +1022,22 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("停止日志任务异常终止: {}", e) }),
                     }
                 }
-                SEQUENCE_RUN => {
-                    let req: tools::SequenceRunReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::SequenceRun(req) => {
                     match tools::sequence_run(&shared, req) {
                         Ok(r) => serde_json::to_value(r).unwrap_or_default(),
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
                 }
-                SEQUENCE_STOP => {
-                    let req: tools::SequenceStopReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::SequenceStop(req) => {
                     match tools::sequence_stop(&shared, req) {
                         Ok(r) => serde_json::to_value(r).unwrap_or_default(),
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
                 }
-                GET_SEQUENCE_STATUS => {
-                    let req: tools::SequenceStatusReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::SequenceStatus(req) => {
                     serde_json::to_value(tools::sequence_status(req)).unwrap_or_default()
                 }
-                KB_SEARCH => {
-                    let req: tools::KbSearchReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::KbSearch(req) => {
                     // 读缓存文件(百 KB 级 JSON 解析),丢到阻塞线程池,不占 tokio worker
                     let shared_for_tool = shared.clone();
                     match tokio::task::spawn_blocking(move || tools::kb_search(&shared_for_tool, req)).await {
@@ -1119,13 +1046,7 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("查询任务异常终止: {}", e) }),
                     }
                 }
-                KB_GET => {
-                    let req: tools::KbGetReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::KbGet(req) => {
                     let shared_for_tool = shared.clone();
                     match tokio::task::spawn_blocking(move || tools::kb_get(&shared_for_tool, req)).await {
                         Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
@@ -1133,7 +1054,7 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("查询任务异常终止: {}", e) }),
                     }
                 }
-                KB_MANUALS => {
+                ToolCall::KbManuals => {
                     let shared_for_tool = shared.clone();
                     match tokio::task::spawn_blocking(move || tools::kb_manuals(&shared_for_tool)).await {
                         Ok(Ok(r)) => serde_json::to_value(r).unwrap_or_default(),
@@ -1141,20 +1062,14 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("查询任务异常终止: {}", e) }),
                     }
                 }
-                GET_SETTINGS => {
+                ToolCall::GetSettings => {
                     serde_json::to_value(tools::get_settings(&shared)).unwrap_or_default()
                 }
-                SAVE_SETTINGS => {
-                    let req: tools::SaveSettingsReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::SaveSettings(req) => {
                     // settings.save() 写磁盘 JSON,丢到阻塞线程池执行。
                     let shared_for_tool = shared.clone();
                     let result = tokio::task::spawn_blocking(move || {
-                        tools::save_settings(&shared_for_tool, req)
+                        tools::save_settings(&shared_for_tool, *req)
                     })
                     .await;
                     match result {
@@ -1163,25 +1078,13 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("保存设置任务异常终止: {}", e) }),
                     }
                 }
-                SEND_AND_READ => {
-                    let req: tools::SendAndReadReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::SendAndRead(req) => {
                     match tools::send_and_read(&shared, req, Some(&ct)).await {
                         Ok(r) => serde_json::to_value(r).unwrap_or_default(),
                         Err(e) => serde_json::json!({ "ok": false, "error": e.error }),
                     }
                 }
-                CONNECT => {
-                    let req: tools::ConnectReq = match serde_json::from_value(args) {
-                        Ok(r) => r,
-                        Err(e) => {
-                            return Ok(content_text(serde_json::json!({ "ok": false, "error": e.to_string() })).into());
-                        }
-                    };
+                ToolCall::Connect(req) => {
                     // tools::connect 内含阻塞的 serialport open(实测可卡数秒),
                     // 直接在这个 async 块里调会占死一个 tokio worker 线程,期间整个
                     // MCP server 的其它 tool 调用一起卡住。丢到阻塞线程池执行。
@@ -1197,7 +1100,6 @@ impl ServerHandler for NeoserialHandler {
                         Err(e) => serde_json::json!({ "ok": false, "error": format!("连接任务异常终止: {}", e) }),
                     }
                 }
-                _ => serde_json::json!({ "ok": false, "error": format!("未知工具: {}", name) }),
             };
             // 正常流(到此处)记真实 ok/error;早返回的 arg 解析失败由守卫兜底记录。
             recorder.set_result(
@@ -1264,17 +1166,83 @@ impl Drop for CallRecorder {
     }
 }
 
-/// 把 JSON 结果包成 CallToolResult(is_error=false)。
+enum ToolCall {
+    ListPorts,
+    Connect(tools::ConnectReq),
+    Disconnect(tools::DisconnectReq),
+    GetStatus(tools::StatusReq),
+    Send(tools::SendReq),
+    SendAndRead(tools::SendAndReadReq),
+    GetHistorySince(tools::GetHistorySinceReq),
+    ResetStats(tools::ResetStatsReq),
+    SendFile(tools::SendFileReq),
+    StartLogging(tools::StartLoggingReq),
+    StopLogging,
+    SequenceRun(tools::SequenceRunReq),
+    SequenceStop(tools::SequenceStopReq),
+    SequenceStatus(tools::SequenceStatusReq),
+    GetSettings,
+    SaveSettings(Box<tools::SaveSettingsReq>),
+    KbSearch(tools::KbSearchReq),
+    KbGet(tools::KbGetReq),
+    KbManuals,
+}
+
+fn parse_tool_call(
+    name: &str,
+    args: Value,
+    recorder: &mut CallRecorder,
+) -> Result<ToolCall, rmcp::ErrorData> {
+    match name {
+        LIST_PORTS => Ok(ToolCall::ListPorts),
+        CONNECT => parse_tool_args(args, recorder).map(ToolCall::Connect),
+        DISCONNECT => parse_tool_args(args, recorder).map(ToolCall::Disconnect),
+        GET_STATUS => parse_tool_args(args, recorder).map(ToolCall::GetStatus),
+        SEND => parse_tool_args(args, recorder).map(ToolCall::Send),
+        SEND_AND_READ => parse_tool_args(args, recorder).map(ToolCall::SendAndRead),
+        GET_HISTORY_SINCE => parse_tool_args(args, recorder).map(ToolCall::GetHistorySince),
+        RESET_STATS => parse_tool_args(args, recorder).map(ToolCall::ResetStats),
+        SEND_FILE => parse_tool_args(args, recorder).map(ToolCall::SendFile),
+        START_LOGGING => parse_tool_args(args, recorder).map(ToolCall::StartLogging),
+        STOP_LOGGING => Ok(ToolCall::StopLogging),
+        SEQUENCE_RUN => parse_tool_args(args, recorder).map(ToolCall::SequenceRun),
+        SEQUENCE_STOP => parse_tool_args(args, recorder).map(ToolCall::SequenceStop),
+        GET_SEQUENCE_STATUS => parse_tool_args(args, recorder).map(ToolCall::SequenceStatus),
+        GET_SETTINGS => Ok(ToolCall::GetSettings),
+        SAVE_SETTINGS => parse_tool_args(args, recorder)
+            .map(|req| ToolCall::SaveSettings(Box::new(req))),
+        KB_SEARCH => parse_tool_args(args, recorder).map(ToolCall::KbSearch),
+        KB_GET => parse_tool_args(args, recorder).map(ToolCall::KbGet),
+        KB_MANUALS => Ok(ToolCall::KbManuals),
+        _ => {
+            let error = format!("未知工具: {}", name);
+            recorder.set_result(false, error.clone());
+            Err(rmcp::ErrorData::invalid_params(error, None))
+        }
+    }
+}
+
+fn parse_tool_args<T: serde::de::DeserializeOwned>(
+    args: Value,
+    recorder: &mut CallRecorder,
+) -> Result<T, rmcp::ErrorData> {
+    serde_json::from_value(args).map_err(|error| {
+        let message = error.to_string();
+        recorder.set_result(false, message.clone());
+        rmcp::ErrorData::invalid_params(message, None)
+    })
+}
+
+/// 把 JSON 执行结果包成 CallToolResult,业务失败标记 isError=true。
 ///
-/// **统一构造器**:所有出口(正常、业务失败、参数解析失败、未知工具)都走这里,
+/// **统一构造器**:正常与业务失败结果都走这里,
 /// 保证双表示永远一致:
 /// - `content[0].text` = JSON 的字符串形式——**旧客户端只读文本也完全可用**;
 /// - `structuredContent` = 同一份 JSON 的结构化形式——新客户端直接读字段。
 ///
-/// isError 保持 false(既有契约):业务失败不走上层协议错误,错误信息在 JSON 的
-/// `error` 字段里,让 agent 读到可操作的中文说明。
 fn content_text(json: Value) -> CallToolResult {
     let mut result = CallToolResult::success(vec![ContentBlock::text(json.to_string())]);
+    result.is_error = Some(json.get("ok").and_then(Value::as_bool) == Some(false));
     result.structured_content = Some(json);
     result
 }
@@ -1306,45 +1274,76 @@ const PRIORITY_TOOLS: &[&str] = &[
 /// 过载拒绝累计次数。只用于日志,不参与限流判断(没有客户端身份,按人头限流无从谈起)。
 static MCP_OVERLOAD_REJECTED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
-/// `/mcp` 入口的并发闸门:拿不到 permit 就**立刻** 429,不排队。
-///
-/// permit 活到本次请求处理结束为止。新版无状态路径里 rmcp 会等工具执行完
-/// 才构造响应,permit 覆盖整个工具调用;**旧版 session 路径的 POST 会先把
-/// SSE 响应流交回去、工具在后台跑**,permit 只盖到流建立为止——那一段由
-/// call_tool 里的工具执行闸门(`McpShared.tool_gate`)兜底,两道闸共用同一额度。
-///
-/// 只拦 `/mcp`:GUI 命令走 Tauri IPC,不受影响;工具内部也没有第二套全局锁,
-/// 不会和连接锁、写队列锁叠加。
+fn mcp_overloaded_response() -> axum::response::Response {
+    let rejected = MCP_OVERLOAD_REJECTED
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+        + 1;
+    log::warn!(
+        "MCP 过载拒绝(累计 {} 次):并发请求数已达上限 {}",
+        rejected,
+        MCP_MAX_CONCURRENT_REQUESTS
+    );
+    (
+        axum::http::StatusCode::TOO_MANY_REQUESTS,
+        [(axum::http::header::RETRY_AFTER, "1")],
+        format!(
+            "MCP 服务忙:并发请求数已达上限(普通 {},恢复 {}),请稍后重试",
+            MCP_MAX_CONCURRENT_REQUESTS,
+            MCP_PRIORITY_TOOL_CONCURRENCY
+        ),
+    )
+        .into_response()
+}
+
 async fn mcp_concurrency_gate(
     limiter: Arc<tokio::sync::Semaphore>,
-    req: axum::extract::Request,
+    priority_limiter: Arc<tokio::sync::Semaphore>,
+    mut req: axum::extract::Request,
     next: axum::middleware::Next,
 ) -> axum::response::Response {
-    match limiter.clone().try_acquire_owned() {
-        Ok(permit) => {
-            let _permit = permit;
-            next.run(req).await
-        }
+    let permit = match limiter.try_acquire_owned() {
+        Ok(permit) => permit,
         Err(_) => {
-            let rejected = MCP_OVERLOAD_REJECTED
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                + 1;
-            log::warn!(
-                "MCP 过载拒绝(累计 {} 次):并发请求数已达上限 {}",
-                rejected,
-                MCP_MAX_CONCURRENT_REQUESTS
-            );
-            (
-                axum::http::StatusCode::TOO_MANY_REQUESTS,
-                [(axum::http::header::RETRY_AFTER, "1")],
-                format!(
-                    "MCP 服务忙:并发请求数已达上限({}),请稍后重试",
-                    MCP_MAX_CONCURRENT_REQUESTS
-                ),
-            )
-                .into_response()
+            if req.method() != axum::http::Method::POST
+                || req.headers().get("mcp-method").is_some_and(|method| method != "tools/call")
+                || req.headers().get("mcp-name").is_some_and(|name| {
+                    !PRIORITY_TOOLS.iter().any(|tool| name == *tool)
+                })
+            {
+                return mcp_overloaded_response();
+            }
+            let Ok(permit) = priority_limiter.try_acquire_owned() else {
+                return mcp_overloaded_response();
+            };
+            let (parts, body) = req.into_parts();
+            let body = match tokio::time::timeout(
+                std::time::Duration::from_secs(1),
+                axum::body::to_bytes(body, http_config().max_request_body_bytes),
+            ).await {
+                Ok(Ok(body)) => body,
+                Ok(Err(error)) => return (
+                    axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+                    format!("MCP 请求体读取失败或超过大小限制: {error}"),
+                ).into_response(),
+                Err(_) => return (
+                    axum::http::StatusCode::REQUEST_TIMEOUT,
+                    "MCP 恢复请求体读取超时",
+                ).into_response(),
+            };
+            let priority = serde_json::from_slice::<Value>(&body).ok().is_some_and(|message| {
+                message["method"] == "tools/call"
+                    && message["params"]["name"].as_str()
+                        .is_some_and(|name| PRIORITY_TOOLS.contains(&name))
+            });
+            if !priority {
+                return mcp_overloaded_response();
+            }
+            req = axum::extract::Request::from_parts(parts, axum::body::Body::from(body));
+            permit
         }
-    }
+    };
+    let _permit = permit;
+    next.run(req).await
 }
 
 /// 组装 `/mcp` 路由。**生产与协议测试夹具共用同一份路由、同一份 http_config()**,
@@ -1360,12 +1359,13 @@ pub fn mcp_router(shared: Arc<McpShared>) -> axum::Router {
     );
     // 这个 router 只有 /mcp 一个入口,所以整层限流等价于"只保护 /mcp"。
     let limiter = Arc::new(tokio::sync::Semaphore::new(MCP_MAX_CONCURRENT_REQUESTS));
-    let limiter_for_layer = limiter.clone();
+    let priority_limiter = Arc::new(tokio::sync::Semaphore::new(MCP_PRIORITY_TOOL_CONCURRENCY));
     axum::Router::new()
         .nest_service("/mcp", service)
         .layer(axum::middleware::from_fn(move |req, next| {
-            let limiter = limiter_for_layer.clone();
-            async move { mcp_concurrency_gate(limiter, req, next).await }
+            let limiter = limiter.clone();
+            let priority_limiter = priority_limiter.clone();
+            async move { mcp_concurrency_gate(limiter, priority_limiter, req, next).await }
         }))
 }
 

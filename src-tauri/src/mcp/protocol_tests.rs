@@ -544,7 +544,7 @@ async fn modern_tool_call_returns_text_content() {
     .await;
     assert_eq!(call.status, 200, "tools/call 应成功: {}", call.body_text());
     let result = call.result().expect("tools/call 应有 result");
-    assert_eq!(result["isError"], false, "业务失败仍保持 isError=false 契约");
+    assert_eq!(result["isError"], false, "成功查询不应标记为工具错误");
     assert!(result["content"].is_array(), "必须有 content 文本表示");
     // S0 基线:文本表示就是完整 JSON,旧客户端只读文本即可
     let text = result["content"][0]["text"].as_str().unwrap();
@@ -1349,7 +1349,7 @@ fn call_args_for(tool: &str) -> Value {
         "send_file" => json!({"port": "COM-no-such-port", "path": "/tmp/neoserial-no-such-file"}),
         "start_logging" => json!({}),
         "sequence_run" => json!({"port": "COM-no-such-port", "commands": [{"command": "AT"}], "run_count": 1}),
-        "save_settings" => json!({"settings": {}}),
+        "save_settings" => json!({"settings": crate::config::settings::Settings::default_settings()}),
         "kb_search" => json!({"query": "csq"}),
         "kb_get" => json!({"command": "AT+CSQ"}),
         other => panic!("没给 {} 准备入参", other),
@@ -1391,61 +1391,47 @@ async fn every_tool_returns_matching_text_and_structured_content() {
             "{} 的两种表示不一致",
             tool
         );
+        assert_eq!(result["isError"], from_text["ok"] == false, "{} 的错误标志不匹配", tool);
         // 旧客户端只读文本:JSON 里有 ok 字段
         assert!(from_text.get("ok").is_some(), "{} 的结果应有 ok 字段", tool);
     }
 }
 
-/// 参数解析失败与未知工具也走统一构造器(不能只给文本)。
 #[tokio::test]
-async fn argument_errors_and_unknown_tools_also_use_the_unified_constructor() {
-    let port = spawn_test_endpoint().await;
+async fn argument_errors_and_unknown_tools_return_protocol_errors() {
+    let shared = test_shared();
+    let port = spawn_test_endpoint_with(shared.clone()).await;
+    let session = legacy_initialize(port).await;
+    let mut cases: Vec<_> = build_tools().into_iter()
+        .filter(|tool| tool.input_schema.get("required")
+            .and_then(Value::as_array).is_some_and(|fields| !fields.is_empty()))
+        .map(|tool| (tool.name.to_string(), json!({})))
+        .collect();
+    cases.push(("start_logging".to_string(), json!({"path": 123})));
+    cases.push(("send".to_string(), json!({"port": "COM-not-open", "text": 123})));
+    cases.push(("no_such_tool".to_string(), json!({})));
 
-    // 缺必填参数:serde 反序列化失败
-    let bad_args = send_raw(
-        port,
-        &RawRequest::new("POST", "/mcp")
-            .with_headers(modern_headers("tools/call", Some("get_status")))
-            .body(modern_body(
-                1,
-                "tools/call",
-                json!({"name": "get_status", "arguments": {"not_port": "x"}}),
-            )),
-    )
-    .await;
-    assert_eq!(bad_args.status, 200);
-    let result = bad_args.result().expect("应有 result");
-    assert_eq!(result["isError"], false, "既有契约:业务失败也是 isError=false");
-    assert!(result["structuredContent"].is_object(), "参数错误也要有 structuredContent");
-    let text = result["content"][0]["text"].as_str().unwrap();
-    let from_text: Value = serde_json::from_str(text).unwrap();
-    assert_eq!(from_text, result["structuredContent"]);
-    assert_eq!(from_text["ok"], false);
-
-    // 未知工具
-    let unknown = send_raw(
-        port,
-        &RawRequest::new("POST", "/mcp")
-            .with_headers(modern_headers("tools/call", Some("no_such_tool")))
-            .body(modern_body(
-                2,
-                "tools/call",
-                json!({"name": "no_such_tool", "arguments": {}}),
-            )),
-    )
-    .await;
-    assert_eq!(unknown.status, 200);
-    let result = unknown.result().expect("应有 result");
-    assert!(result["structuredContent"].is_object(), "未知工具也要有 structuredContent");
-    let text = result["content"][0]["text"].as_str().unwrap();
-    let from_text: Value = serde_json::from_str(text).unwrap();
-    assert_eq!(from_text, result["structuredContent"]);
-    assert_eq!(from_text["ok"], false);
-    assert!(
-        from_text["error"].as_str().unwrap().contains("未知工具"),
-        "错误说明要写明未知工具: {}",
-        from_text
-    );
+    for legacy in [false, true] {
+        for (index, (tool, args)) in cases.iter().enumerate() {
+            let id = 100 + index as u32;
+            let response = if legacy {
+                legacy_call(port, &session, id, tool, args.clone()).await
+            } else {
+                send_raw(port, &RawRequest::new("POST", "/mcp")
+                    .with_headers(modern_headers("tools/call", Some(tool)))
+                    .body(modern_body(id, "tools/call", json!({"name": tool, "arguments": args}))))
+                    .await
+            };
+            let error = response.jsonrpc().expect("expected JSON-RPC response");
+            assert_eq!(error["id"], id);
+            assert_eq!(error["error"]["code"], -32602, "legacy={legacy}, tool={tool}: {error}");
+            assert!(error.get("result").is_none(), "{error}");
+            assert!(!error["error"]["message"].as_str().unwrap().is_empty());
+        }
+    }
+    let records = shared.call_log.lock().unwrap().snapshot();
+    assert_eq!(records.len(), cases.len() * 2);
+    assert!(records.iter().all(|record| !record.ok && !record.error.contains("早返回")));
 }
 
 /// 19 个工具都要有**有效**的 outputSchema:不能宽到只写 {},也不能严到拒绝合法响应。
@@ -1510,9 +1496,8 @@ async fn every_tool_result_validates_against_its_output_schema() {
     }
 }
 
-/// 参数错误(业务失败形态)也要符合该工具的 outputSchema。
 #[tokio::test]
-async fn argument_error_results_validate_against_the_tool_schema() {
+async fn business_error_results_validate_against_the_tool_schema() {
     let port = spawn_test_endpoint().await;
     let list = send_raw(
         port,
@@ -1524,24 +1509,19 @@ async fn argument_error_results_validate_against_the_tool_schema() {
     let tools = list.result().unwrap()["tools"].as_array().cloned().unwrap();
     let schema = tools
         .iter()
-        .find(|t| t["name"] == "get_status")
+        .find(|t| t["name"] == "send")
         .unwrap()["outputSchema"]
         .clone();
 
-    let resp = send_raw(
-        port,
-        &RawRequest::new("POST", "/mcp")
-            .with_headers(modern_headers("tools/call", Some("get_status")))
-            .body(modern_body(
-                2,
-                "tools/call",
-                json!({"name": "get_status", "arguments": {"wrong_field": 1}}),
-            )),
-    )
-    .await;
+    let resp = send_raw(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("send")))
+        .body(modern_body(2, "tools/call", json!({
+            "name": "send", "arguments": {"port": "COM-not-open", "text": "AT"}
+        })))).await;
     let result = resp.result().expect("应有 result");
+    assert_eq!(result["isError"], true);
     validate_schema(&schema, &result["structuredContent"], &schema, "$")
-        .unwrap_or_else(|e| panic!("参数错误的响应不符合 outputSchema: {}", e));
+        .unwrap_or_else(|error| panic!("business error violates outputSchema: {error}"));
 }
 
 // ============ 工具注解(2026-07-28 annotations) ============
@@ -1808,8 +1788,6 @@ async fn legacy_tool_calls_are_bounded_by_the_shared_tool_gate() {
         }));
     }
     // 轮询等工具闸占满:第 33 个普通工具调用应立刻收到"服务忙"结果。
-    // 闸门拒绝发生在工具执行之前,按协议语义标 isError=true(业务失败仍是 false),
-    // 这里只认 isError=true 的响应,顺带验证了这个语义区分。
     // 探测工具用 get_history_since(普通配额);get_status 属于专用配额,不能用来探测。
     let mut busy = None;
     for _ in 0..100 {
@@ -2287,5 +2265,251 @@ async fn modern_calls_see_is_error_when_the_tool_gate_is_full() {
 
     for c in calls {
         let _ = c.await;
+    }
+}
+
+async fn saturate_http_calls(
+    port: u16,
+    shared: &McpShared,
+) -> Vec<tokio::task::JoinHandle<RawResponse>> {
+    let calls = (0..super::server::MCP_MAX_CONCURRENT_REQUESTS)
+        .map(|index| tokio::spawn(async move {
+            send_raw(port, &RawRequest::new("POST", "/mcp")
+                .with_headers(modern_headers("tools/call", Some("send_and_read")))
+                .body(modern_body(1000 + index as u32, "tools/call", json!({
+                    "name": "send_and_read",
+                    "arguments": {"port": "COM-slow", "text": "AT", "timeout_ms": 60000}
+                })))).await
+        }))
+        .collect();
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        while shared.tool_gate.available_permits() != 0 {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("slow calls should occupy all normal HTTP slots");
+    calls
+}
+
+async fn abort_http_calls(calls: Vec<tokio::task::JoinHandle<RawResponse>>) {
+    for call in &calls {
+        call.abort();
+    }
+    for call in calls {
+        let _ = call.await;
+    }
+}
+
+#[tokio::test]
+async fn http_saturation_keeps_modern_and_legacy_recovery_tools_available() {
+    let shared = test_shared();
+    let (handle, _receiver) = fake_connection("COM-slow");
+    shared.connections.lock().unwrap().insert("COM-slow".to_string(), handle);
+    let port = spawn_test_endpoint_with(shared.clone()).await;
+    let session = legacy_initialize(port).await;
+    let calls = saturate_http_calls(port, &shared).await;
+
+    let ordinary = send_raw(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("get_history_since")))
+        .body(modern_body(2000, "tools/call", json!({
+            "name": "get_history_since", "arguments": {"port": "COM-slow", "seq": 0}
+        })))).await;
+    assert_eq!(ordinary.status, 429);
+    assert_eq!(ordinary.header("retry-after"), Some("1"));
+
+    for legacy in [false, true] {
+        for (index, tool) in ["list_ports", "get_status", "get_sequence_status", "disconnect", "sequence_stop"]
+            .into_iter().enumerate()
+        {
+            let args = if tool == "get_status" { json!({"port": "COM-slow"}) } else { call_args_for(tool) };
+            let response = if legacy {
+                legacy_call(port, &session, 2100 + index as u32, tool, args).await
+            } else {
+                send_raw(port, &RawRequest::new("POST", "/mcp")
+                    .with_headers(modern_headers("tools/call", Some(tool)))
+                    .body(modern_body(2100 + index as u32, "tools/call", json!({"name": tool, "arguments": args})))).await
+            };
+            assert_eq!(response.status, 200, "legacy={legacy}, tool={tool}: {}", response.body_text());
+            let result = response.result().expect("recovery tools should reach execution");
+            assert!(!result["structuredContent"]["error"].as_str().unwrap_or("").contains("服务忙"));
+            if tool == "get_status" {
+                assert_eq!(result["isError"], false);
+                assert_eq!(result["structuredContent"]["connected"], true);
+            }
+        }
+    }
+    abort_http_calls(calls).await;
+}
+
+#[tokio::test]
+async fn http_recovery_reserve_does_not_trust_headers_or_bypass_security() {
+    let shared = test_shared();
+    let (handle, _receiver) = fake_connection("COM-slow");
+    shared.connections.lock().unwrap().insert("COM-slow".to_string(), handle);
+    let port = spawn_test_endpoint_with(shared.clone()).await;
+    let calls = saturate_http_calls(port, &shared).await;
+
+    let forged = send_raw(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("get_status")))
+        .body(modern_body(3000, "tools/call", json!({
+            "name": "send_and_read", "arguments": {"port": "COM-slow", "text": "AT", "timeout_ms": 60000}
+        })))).await;
+    assert_eq!(forged.status, 429);
+    assert!(shared.call_log.lock().unwrap().snapshot().is_empty());
+
+    let mismatch = send_raw(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("disconnect")))
+        .body(modern_body(3001, "tools/call", json!({"name": "get_status", "arguments": {"port": "COM-slow"}})))).await;
+    assert_eq!(mismatch.status, 400);
+    assert_eq!(mismatch.jsonrpc().unwrap()["error"]["code"], -32020);
+
+    let origin = send_raw(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("get_status")))
+        .header("Origin", "https://evil.example")
+        .body(modern_body(3002, "tools/call", json!({"name": "get_status", "arguments": {"port": "COM-slow"}})))).await;
+    assert_eq!(origin.status, 403);
+
+    let host = send_raw(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("get_status")))
+        .host("evil.example")
+        .body(modern_body(3003, "tools/call", json!({"name": "get_status", "arguments": {"port": "COM-slow"}})))).await;
+    assert_eq!(host.status, 403);
+    assert!(shared.call_log.lock().unwrap().snapshot().is_empty());
+    abort_http_calls(calls).await;
+}
+
+#[tokio::test]
+async fn http_recovery_reserve_is_bounded_and_releases_abandoned_probes() {
+    let shared = test_shared();
+    let (handle, _receiver) = fake_connection("COM-slow");
+    shared.connections.lock().unwrap().insert("COM-slow".to_string(), handle);
+    let port = spawn_test_endpoint_with(shared.clone()).await;
+    let calls = saturate_http_calls(port, &shared).await;
+    let mut stalled = Vec::new();
+    for _ in 0..super::server::MCP_PRIORITY_TOOL_CONCURRENCY {
+        let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+        stream.write_all(format!(
+            "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nMcp-Method: tools/call\r\nMcp-Name: get_status\r\nMCP-Protocol-Version: {PROTOCOL_2026}\r\nContent-Length: 1024\r\n\r\n"
+        ).as_bytes()).await.unwrap();
+        stalled.push(stream);
+    }
+    let probe = RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("get_status")))
+        .body(modern_body(4000, "tools/call", json!({"name": "get_status", "arguments": {"port": "COM-slow"}})));
+    tokio::time::timeout(std::time::Duration::from_millis(750), async {
+        loop {
+            let response = send_raw(port, &probe).await;
+            if response.status == 429 {
+                assert_eq!(response.header("retry-after"), Some("1"));
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("the recovery reserve must have a finite capacity");
+    drop(stalled);
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if send_raw(port, &probe).await.status == 200 {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }).await.expect("abandoned probes should release their recovery slots");
+    abort_http_calls(calls).await;
+}
+
+#[tokio::test]
+async fn http_recovery_reserve_limits_request_body_size() {
+    let shared = test_shared();
+    let (handle, _receiver) = fake_connection("COM-slow");
+    shared.connections.lock().unwrap().insert("COM-slow".to_string(), handle);
+    let port = spawn_test_endpoint_with(shared.clone()).await;
+    let calls = saturate_http_calls(port, &shared).await;
+    let response = send_raw_chunked(port, &RawRequest::new("POST", "/mcp")
+        .with_headers(modern_headers("tools/call", Some("get_status")))
+        .body(modern_body(5000, "tools/call", json!({
+            "name": "get_status", "arguments": {"port": "COM-slow"}, "padding": "x".repeat(4 * 1024 * 1024)
+        })))).await;
+    assert_eq!(response.status, 413);
+    assert!(shared.call_log.lock().unwrap().snapshot().is_empty());
+    abort_http_calls(calls).await;
+}
+
+#[tokio::test]
+async fn http_recovery_reserve_times_out_stalled_request_bodies() {
+    let shared = test_shared();
+    let (handle, _receiver) = fake_connection("COM-slow");
+    shared.connections.lock().unwrap().insert("COM-slow".to_string(), handle);
+    let port = spawn_test_endpoint_with(shared.clone()).await;
+    let calls = saturate_http_calls(port, &shared).await;
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    stream.write_all(format!(
+        "POST /mcp HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\nAccept: application/json, text/event-stream\r\nMcp-Method: tools/call\r\nMcp-Name: get_status\r\nMCP-Protocol-Version: {PROTOCOL_2026}\r\nContent-Length: 1024\r\nConnection: close\r\n\r\n"
+    ).as_bytes()).await.unwrap();
+    let mut response = Vec::new();
+    tokio::time::timeout(std::time::Duration::from_secs(3), stream.read_to_end(&mut response))
+        .await.expect("stalled recovery probes must time out").unwrap();
+    assert!(String::from_utf8_lossy(&response).starts_with("HTTP/1.1 408"));
+    abort_http_calls(calls).await;
+}
+
+#[tokio::test]
+async fn modern_and_legacy_business_failures_are_tool_errors() {
+    let port = spawn_test_endpoint().await;
+    let session = legacy_initialize(port).await;
+    for legacy in [false, true] {
+        let args = json!({"port": "COM-not-open", "text": "AT"});
+        let response = if legacy {
+            legacy_call(port, &session, 6000, "send", args).await
+        } else {
+            send_raw(port, &RawRequest::new("POST", "/mcp")
+                .with_headers(modern_headers("tools/call", Some("send")))
+                .body(modern_body(6000, "tools/call", json!({"name": "send", "arguments": args})))).await
+        };
+        assert_eq!(response.status, 200);
+        let result = response.result().expect("execution failure should remain a tool result");
+        assert_eq!(result["isError"], true, "legacy={legacy}: {result}");
+        assert_eq!(result["structuredContent"]["ok"], false);
+        let text: Value = serde_json::from_str(result["content"][0]["text"].as_str().unwrap()).unwrap();
+        assert_eq!(text, result["structuredContent"]);
+    }
+}
+
+#[tokio::test]
+async fn protocol_errors_take_precedence_over_tool_quota_rejection() {
+    let shared = test_shared();
+    let _permits = shared.tool_gate.clone().acquire_many_owned(
+        super::server::MCP_MAX_CONCURRENT_REQUESTS as u32,
+    ).await.unwrap();
+    let port = spawn_test_endpoint_with(shared).await;
+    let session = legacy_initialize(port).await;
+    for legacy in [false, true] {
+        for (index, (tool, args)) in [
+            ("send", json!({})),
+            ("send", json!({"port": "COM-not-open", "text": 123})),
+            ("no_such_tool", json!({})),
+        ].into_iter().enumerate() {
+            let id = 7000 + index as u32;
+            let response = if legacy {
+                legacy_call(port, &session, id, tool, args).await
+            } else {
+                send_raw(port, &RawRequest::new("POST", "/mcp")
+                    .with_headers(modern_headers("tools/call", Some(tool)))
+                    .body(modern_body(id, "tools/call", json!({"name": tool, "arguments": args})))).await
+            };
+            let error = response.jsonrpc().expect("expected JSON-RPC response");
+            assert_eq!(error["error"]["code"], -32602, "legacy={legacy}, tool={tool}: {error}");
+            assert!(error.get("result").is_none());
+        }
+        let args = json!({"port": "COM-not-open", "text": "AT"});
+        let response = if legacy {
+            legacy_call(port, &session, 7100, "send", args).await
+        } else {
+            send_raw(port, &RawRequest::new("POST", "/mcp")
+                .with_headers(modern_headers("tools/call", Some("send")))
+                .body(modern_body(7100, "tools/call", json!({"name": "send", "arguments": args})))).await
+        };
+        let result = response.result().expect("valid calls should still obey the tool quota");
+        assert_eq!(result["isError"], true);
+        assert!(result["structuredContent"]["error"].as_str().unwrap().contains("未执行"));
     }
 }
