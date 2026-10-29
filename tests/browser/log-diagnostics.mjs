@@ -1,0 +1,153 @@
+import assert from 'node:assert/strict';
+import { withHeadlessBrowser } from './headless.mjs';
+
+await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) => {
+  await fresh('main');
+  assert.ok(await evaluate("Boolean(document.querySelector('[data-log-tools-toggle]'))"), 'diagnostic tools have a compact entry point');
+  await evaluate(`(()=>{
+    const stores=persistenceTest.stores;
+    stores.connected.value=true;stores.windowPort.value='COM8';stores.currentPort.value='COM8';stores.connectionParams.port='COM8';
+    stores.clearLogLines();
+    window.makeDiagnosticRow=(index)=>({ts:'12:00:00.'+String(index%1000).padStart(3,'0'),ts_ms:10000+index,
+      dir:index%2?'rx':'tx',ascii:(index%7===0?'ERROR ':'record ')+index,raw:[65,66],line_index:index,is_error:index%7===0});
+    stores.appendLogLines(Array.from({length:200},(_,index)=>makeDiagnosticRow(index+1)));
+    return persistenceTest.tick();
+  })()`);
+  await delay(80);
+  const atBottom = "(()=>{const element=document.querySelector('[role=log]');return Math.abs(element.scrollHeight-element.clientHeight-element.scrollTop)<5;})()";
+  assert.equal(await evaluate(atBottom), true);
+  await evaluate(`(()=>{const element=document.querySelector('[role=log]');element.dispatchEvent(new WheelEvent('wheel',{deltaY:-100,bubbles:true}));element.scrollTop=100;element.dispatchEvent(new Event('scroll'));return persistenceTest.tick();})()`);
+  const oldPosition = await evaluate("document.querySelector('[role=log]').scrollTop");
+  await evaluate('persistenceTest.stores.appendLogLine(makeDiagnosticRow(201));persistenceTest.tick()');
+  await delay(80);
+  assert.ok(Math.abs((await evaluate("document.querySelector('[role=log]').scrollTop"))-oldPosition)<3, 'new records do not steal the reading position');
+  assert.match(await evaluate("document.querySelector('[data-log-follow]').textContent"), /1.*新|新.*1/);
+  await evaluate("persistenceTest.stores.paused.value=true;persistenceTest.stores.appendLogLine(makeDiagnosticRow(202));persistenceTest.tick()");
+  assert.equal(await evaluate('persistenceTest.stores.logLines.length'),201,'the existing display-pause behavior is unchanged');
+  await evaluate('persistenceTest.stores.paused.value=false;persistenceTest.tick()');
+  assert.equal(await evaluate('persistenceTest.stores.autoScroll.value'),false,'resuming display does not resume following');
+  await evaluate("document.querySelector('[data-log-follow]').click();persistenceTest.tick()");
+  await delay(60);
+  assert.equal(await evaluate(atBottom),true);
+  assert.equal(await evaluate('persistenceTest.stores.autoScroll.value'),true);
+  await evaluate("(()=>{const element=document.querySelector('[role=log]');element.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,bubbles:true}));element.scrollTop-=1;element.dispatchEvent(new Event('scroll'));return persistenceTest.tick();})()");
+  assert.equal(await evaluate('persistenceTest.stores.autoScroll.value'),false,'a small upward scroll must stop following even inside the bottom threshold');
+  await evaluate("document.querySelector('[data-log-follow]').click();persistenceTest.tick()");
+  console.log('PASS: following is independent of display pause and preserves the reading position.');
+
+  await evaluate("document.querySelector('[data-log-tools-toggle]').click();persistenceTest.tick()");
+  const setInput = async (selector,value) => evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});element.value=${JSON.stringify(value)};element.dispatchEvent(new Event('input',{bubbles:true}));element.dispatchEvent(new Event('change',{bubbles:true}));return persistenceTest.tick();})()`);
+  await setInput('[data-log-include]','ERROR');
+  assert.ok(await evaluate("[...document.querySelectorAll('[data-log-row]')].every(element=>element.textContent.includes('ERROR'))"));
+  await setInput('[data-log-exclude]','14');
+  assert.ok(await evaluate("[...document.querySelectorAll('[data-log-row]')].every(element=>!element.textContent.includes('ERROR 14'))"));
+  await setInput('[data-log-direction]','rx');
+  assert.ok(await evaluate("[...document.querySelectorAll('[data-log-row]')].every(element=>element.querySelector('[data-dir=rx]'))"));
+  await evaluate("document.querySelector('[data-log-next-error]').click();persistenceTest.tick()");
+  await until("!persistenceTest.stores.autoScroll.value");
+  assert.ok(await evaluate("(()=>{const root=document.querySelector('[role=log]'),row=[...root.querySelectorAll('[data-log-row]')].find(element=>element.textContent.includes('ERROR 7'));return row.getBoundingClientRect().top>=root.getBoundingClientRect().top&&row.getBoundingClientRect().bottom<=root.getBoundingClientRect().bottom;})()"),'error navigation reveals an error in the filtered view');
+  await setInput('[data-log-include]','no-record-matches');
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),0);
+  assert.match(await evaluate("document.querySelector('[data-log-empty]').textContent"),/筛选/);
+  await evaluate("document.querySelector('[data-log-filter-reset]').click();persistenceTest.tick()");
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),201);
+  console.log('PASS: filters compose without deleting retained records.');
+
+  await evaluate("document.querySelector('[data-log-select-toggle]').click();persistenceTest.tick()");
+  await evaluate("document.querySelectorAll('[data-log-select-row]')[10].click();document.querySelectorAll('[data-log-select-row]')[12].click();persistenceTest.tick()");
+  assert.match(await evaluate("document.querySelector('[data-log-elapsed]').textContent"),/2\s*ms/);
+  await setInput('[data-log-marker-input]','开始测试');
+  await evaluate("document.querySelector('[data-log-marker-add]').click();persistenceTest.tick()");
+  assert.match(await evaluate("document.querySelector('[role=log]').textContent"),/开始测试/);
+  await evaluate(`window.diagnosticClipboard='';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async(text)=>{window.diagnosticClipboard=text;}}});document.querySelector('[data-log-snippet-copy]').click();`);
+  await until('diagnosticClipboard.includes("开始测试")');
+  const copied = await evaluate('diagnosticClipboard');
+  assert.match(copied,/COM8/);
+  assert.match(copied,/窗口当前设置/);
+  assert.match(copied,/record 1\b/);
+  assert.match(copied,/record 23\b/);
+  assert.doesNotMatch(copied,/record 24\b/);
+  if (process.env.SCREENSHOT_PATH) await screenshot(process.env.SCREENSHOT_PATH);
+  console.log('PASS: selection, time difference, local markers and contextual copy use original retained order.');
+
+  await evaluate("persistenceTest.reply('plugin:dialog|save','/isolated/snippet.txt');document.querySelector('[data-log-snippet-save]').click();");
+  await until("persistenceTest.calls.some(record=>record.cmd==='export_log_snippet')");
+  const saved = await evaluate("persistenceTest.calls.find(record=>record.cmd==='export_log_snippet').args");
+  assert.equal(saved.path,'/isolated/snippet.txt');
+  assert.match(saved.text,/开始测试/);
+
+  await evaluate("persistenceTest.reply('plugin:dialog|save',null);document.querySelector('[data-log-snippet-save]').click();");
+  await until("!document.querySelector('[data-log-snippet-save]').disabled");
+  assert.equal(await evaluate("persistenceTest.calls.filter(record=>record.cmd==='export_log_snippet').length"),1,'dialog cancellation never writes a file');
+  await evaluate("persistenceTest.reply('plugin:dialog|save','/isolated/snapshot.txt');persistenceTest.holdNext('plugin:dialog|save');document.querySelector('[data-log-snippet-save]').click();");
+  await until("document.querySelector('[data-log-snippet-save]').disabled");
+  await evaluate("persistenceTest.stores.currentPort.value='COM9';persistenceTest.stores.clearLogLines();persistenceTest.release();persistenceTest.tick();");
+  await until("persistenceTest.calls.filter(record=>record.cmd==='export_log_snippet').length===2");
+  const snapshot = await evaluate("persistenceTest.calls.filter(record=>record.cmd==='export_log_snippet')[1].args.text");
+  assert.match(snapshot,/COM8/);
+  assert.doesNotMatch(snapshot,/COM9/);
+  assert.match(snapshot,/开始测试/);
+  await evaluate("persistenceTest.stores.clearLogLines();persistenceTest.tick()");
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-select-row]:checked').length"),0);
+  console.log('PASS: export cancellation is a no-op and the file dialog cannot change the captured snippet.');
+
+  await evaluate("persistenceTest.stores.appendLogLines([makeDiagnosticRow(1),makeDiagnosticRow(2)]);persistenceTest.tick();");
+  await until("!document.querySelector('[data-log-snippet-save]').disabled");
+  await evaluate("persistenceTest.failNext('export_log_snippet');document.querySelector('[data-log-snippet-save]').click();");
+  await until("document.body.textContent.includes('导出日志片段失败')");
+  console.log('PASS: file export failures are visible without retrying.');
+
+  await fresh('main');
+  await evaluate(`(()=>{
+    const stores=persistenceTest.stores;
+    stores.cachedSettings.value.ui.ring_buffer_capacity=1000;
+    stores.clearLogLines();
+    window.makeDiagnosticRow=(index)=>({ts:'x',ts_ms:10000+index,dir:'rx',ascii:'record '+index,raw:[65],line_index:index,is_error:false});
+    stores.appendLogLines(Array.from({length:1000},(_,index)=>makeDiagnosticRow(index+1)));
+    return persistenceTest.tick();
+  })()`);
+  await delay(80);
+  await evaluate(`(()=>{const element=document.querySelector('[role=log]');element.dispatchEvent(new WheelEvent('wheel',{deltaY:-200,bubbles:true}));element.scrollTop=element.scrollHeight/2;element.dispatchEvent(new Event('scroll'));return persistenceTest.tick();})()`);
+  const anchor = "(()=>{const root=document.querySelector('[role=log]'),top=root.getBoundingClientRect().top;const row=[...root.querySelectorAll('[data-log-row]')].find(element=>element.getBoundingClientRect().bottom>top);return {id:row.dataset.logId,text:row.textContent,offset:row.getBoundingClientRect().top-top};})()";
+  const before = await evaluate(anchor);
+  await evaluate('persistenceTest.stores.appendLogLines(Array.from({length:100},(_,index)=>makeDiagnosticRow(index+1001)));persistenceTest.tick()');
+  await delay(80);
+  const after = await evaluate(anchor);
+  assert.equal(after.id,before.id,'the same surviving record stays visible during eviction');
+  assert.ok(Math.abs(after.offset-before.offset)<3,'the visual offset survives eviction');
+  assert.match(await evaluate("document.querySelector('[data-log-eviction]').textContent"),/100/);
+  assert.match(await evaluate("document.querySelector('[data-log-follow]').textContent"),/100/);
+  await evaluate("persistenceTest.stores.paused.value=true;document.querySelector('[data-log-follow]').click();persistenceTest.tick()");
+  assert.equal(await evaluate('persistenceTest.stores.paused.value'),true,'return-to-latest never unpauses display');
+  console.log('PASS: retention preserves surviving viewport anchors, reports eviction, and does not couple following to pause.');
+
+  await fresh('main');
+  await evaluate("document.querySelector('[data-log-tools-toggle]').click();persistenceTest.tick()");
+  await setInput('[data-log-direction]','rx');
+  await evaluate(`(()=>{
+    window.hexSlices=0;
+    window.hexComparisons=0;
+    window.originalLowerCase=String.prototype.toLocaleLowerCase;
+    String.prototype.toLocaleLowerCase=function(...args){if(/^[0-9A-F]{2} [0-9A-F]{2} /.test(String(this)))window.hexComparisons++;return originalLowerCase.apply(this,args);};
+    window.makeInstrumentedHexRow=(index)=>{
+      const raw=Array(32).fill(65);
+      raw.slice=function(...args){window.hexSlices++;return Array.prototype.slice.apply(this,args);};
+      return {ts:'x',ts_ms:10000+index,dir:'tx',ascii:'A',raw,line_index:index,is_error:false};
+    };
+    const stores=persistenceTest.stores;
+    stores.clearLogLines();stores.displayMode.value='hex';stores.appendLogLines([makeInstrumentedHexRow(1),makeInstrumentedHexRow(2)]);
+    return persistenceTest.tick();
+  })()`);
+  assert.equal(await evaluate('hexSlices'),0,'direction-only filters do not convert excluded HEX payloads');
+  await setInput('[data-log-include]','41');
+  await setInput('[data-log-direction]','tx');
+  assert.equal(await evaluate('hexSlices'),4,'each eligible record is formatted only once for filtering and rendering');
+  assert.equal(await evaluate('hexComparisons'),2);
+  await evaluate('persistenceTest.stores.appendLogLine(makeInstrumentedHexRow(3));persistenceTest.tick()');
+  assert.equal(await evaluate('hexSlices'),6,'appending converts only the new record, not the retained buffer');
+  assert.equal(await evaluate('hexComparisons'),3,'keyword comparisons are cached for unchanged retained records');
+  await evaluate('persistenceTest.stores.logLines[0].raw[0]=66;persistenceTest.tick()');
+  assert.match(await evaluate("document.querySelector('[data-log-row]').lastElementChild.textContent"),/^42/,'cached conversions still react to raw-byte edits');
+  await evaluate('String.prototype.toLocaleLowerCase=originalLowerCase');
+  console.log('PASS: metadata filters skip HEX conversion and reactive per-record caching avoids repeated formatting.');
+});

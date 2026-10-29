@@ -76,7 +76,15 @@ NeoSerial is **single-instance**: launching it again just brings the existing wi
 - Error keyword highlighting: `ERROR`, `FAIL`, `+CME ERROR`, `+CMS ERROR` by default, editable. Matches received lines only, case-insensitive, takes effect without reconnecting.
 - Retention is capped by both line count (1000–10000, default 5000) and raw bytes (1–16 MiB, default 4 MiB); the oldest lines are dropped first. A single oversized record is replaced with a placeholder. Log files on disk are unaffected.
 - `Ctrl+F` searches the log (`F3` / `Shift+F3` for next/previous). Copying rebuilds text by line and field, so soft wraps never sneak into the clipboard.
+- **Display pause and following are independent.** The existing Pause/Continue action still controls WebUI additions only: records arriving while paused are not backfilled on resume, and serial I/O and file logging are unaffected. Scrolling upward or searching stops following without stopping additions. Return to latest shows the new-record count and resumes following without unpausing. Retention eviction is reported and surviving records keep their reading position where possible.
+- **Filter / Tools** is collapsed by default. Combine direction, errors-only, literal case-insensitive include/exclude keywords, and previous/next error navigation. Filters affect the view only, never retained records or continuous log files.
+- Enable record selection to select at most two rows and inspect their real timestamp difference; missing timestamps are reported as unavailable. Local markers attach to the first selected or latest row, disappear when cleared/evicted, and never send anything to the device.
+- **Copy snippet / Export TXT** includes the selected interval plus 10 original records on each side (configurable 0–1000), including context hidden by filters. With no selection, it exports the filtered view. Text includes timestamps, direction, markers, and a snapshot of current window serial settings; historical records may span connections, so these are not claimed to be historical device parameters. Explicit file export uses a save dialog and does not change global continuous logging.
 - Fonts (monospace Latin font and CJK font set separately), font size and line height are adjustable with live preview.
+
+Snippet copying and file export are both limited to 32 MiB of UTF-8 text. Oversized snippets ask you to narrow the range without modifying an existing file.
+
+Connection, send, sequence, configuration and file-logging failures appear as dismissible nonmodal notifications with copyable details. Commands are never automatically resent. A submitted send is not confirmation that the device executed it or returned success.
 
 ### Logging to file
 
@@ -303,12 +311,14 @@ npm run test:unit              # frontend pure-function and source contract test
 npm run check                  # svelte-check type checking
 npm run test:ui                # UI regressions: quick command table, send area switches, window layout
 npm run test:persistence       # persistence regressions: panel autosave, concurrent settings saves
+npm run test:logs              # log follow/pause, diagnostics/export, copy, retention and performance
+npm run test:notifications     # failure feedback, deduplication, copy-details and window isolation
 ```
 
-- `test:ui` and `test:persistence` need neither Rust nor a serial device: they start a temporary Vite server and an isolated headless Chrome/Edge with mocked IPC, and never touch your real config. If the browser is not found, point `BROWSER_BINARY` at its executable.
+- The frontend browser regressions above need neither Rust nor a serial device: they start a temporary Vite server and an isolated headless Chrome/Edge with mocked IPC, and never touch your real config. If the browser is not found, point `BROWSER_BINARY` at its executable.
 - `npm run test:ui -- --screenshots <dir>` also writes light, dark and minimum-size screenshots (simulated data).
 - `tests/browser/` contains more per-feature regression scripts:
-  - Using the same headless setup, runnable directly with `node tests/browser/<name>.mjs`: `com-selection`, `mcp-setup`, `motion-regressions`, `settings-groups`, `settings-help`, `settings-reuse`, `settings-scrollbar`, `settings-shortcuts`, `titlebar-layout`, `update-reminder`.
+  - Using the same headless setup, runnable directly with `node tests/browser/<name>.mjs`: `com-selection`, `log-diagnostics`, `log-regressions`, `notifications`, `mcp-setup`, `motion-regressions`, `settings-groups`, `settings-help`, `settings-reuse`, `settings-scrollbar`, `settings-shortcuts`, `titlebar-layout`, `update-reminder`.
   - The rest (`codec-*`, `log-*`, `mcp-settings`, `port-tip`, `settings-close`, `theme-window`) need Vite and a remote-debugging browser started by hand, or a **disposable** native instance (its own `NEOSERIAL_DATA_DIR`, with WebView2 remote debugging on). See each script's header comment, and never run them against your everyday profile.
 
 ### Releasing

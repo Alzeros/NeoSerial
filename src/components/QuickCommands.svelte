@@ -21,6 +21,7 @@
   import type { QuickCommandsModule } from '$lib/types';
   import { openFileDialog, saveFileDialog, loadSequenceConfig, saveSequenceConfig, sequenceRun, sequenceStop, send } from '$lib/tauri';
   import { connected, windowPort } from '$lib/stores';
+  import { notifyError } from '$lib/notifications.svelte';
 
   // 模块切换栏只数快捷指令模块:data_processing 条目不在这一层出现
   const quickModules = $derived(
@@ -141,6 +142,7 @@
       await send(windowPort.value!, cmd.command, cmd.enter ? 'Crlf' : 'None', cmd.hex);
     } catch (e) {
       console.error('单行发送失败:', e);
+      notifyError('单行发送失败', e);
     }
   }
 
@@ -163,6 +165,7 @@
       // 后端在失败路径已复位 SEQUENCE_RUNNING 标志，这里把前端状态同步回去，
       // 否则 scriptRunning 卡在 true，停止按钮失效、也无法再次运行。
       console.error('序列执行失败:', e);
+      notifyError('序列执行失败', e);
       scriptRunning.value = false;
       scriptCurrentRow.value = -1;
       scriptRunState.finished = '';
@@ -185,29 +188,31 @@
       await sequenceStop(windowPort.value);
     } catch (e) {
       console.error('停止失败:', e);
+      notifyError('停止序列失败', e);
     }
   }
 
   async function handleSaveConfig() {
-    const path = await saveFileDialog(
-      '保存序列配置',
-      'sequence.json',
-      [{ name: 'JSON', extensions: ['json'] }]
-    );
-    if (!path) return;
     try {
+      const path = await saveFileDialog(
+        '保存序列配置',
+        'sequence.json',
+        [{ name: 'JSON', extensions: ['json'] }]
+      );
+      if (!path) return;
       await saveSequenceConfig(path, scriptModules);
     } catch (e) {
       console.error('保存配置失败:', e);
+      notifyError('保存配置失败', e);
     }
   }
 
   async function handleLoadConfig() {
-    const path = await openFileDialog('加载序列配置', [
-      { name: '配置文件', extensions: ['json', 'ini'] },
-    ]);
-    if (!path) return;
     try {
+      const path = await openFileDialog('加载序列配置', [
+        { name: '配置文件', extensions: ['json', 'ini'] },
+      ]);
+      if (!path) return;
       const modules = await loadSequenceConfig(path, scriptModules as any);
       if (modules && modules.length > 0) {
         scriptModules.length = 0;
@@ -217,6 +222,7 @@
       }
     } catch (e) {
       console.error('加载配置失败:', e);
+      notifyError('加载配置失败', e);
     }
   }
 

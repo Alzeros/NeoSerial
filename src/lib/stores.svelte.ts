@@ -38,7 +38,9 @@ const retainedLogs = new LogRetentionBuffer(reactiveLogLine);
 
 /** 行数/大小上限调小后立刻裁剪，不必等下一批数据到达。 */
 export function trimLogLines() {
+  const previousLength = logLines.length;
   if (retainedLogs.trim(resolveLogLimits(cachedSettings.value?.ui))) logVersion.value++;
+  logActivity.evicted += previousLength - logLines.length;
 }
 
 /** 集合变动由 logVersion 一次通知，避免头部淘汰逐项触发深度响应式数组的更新。
@@ -53,6 +55,7 @@ export const showTimestamp = $state<{ value: boolean }>({ value: true });
 export const showLineIndex = $state<{ value: boolean }>({ value: false });
 export const autoScroll = $state<{ value: boolean }>({ value: true });
 export const logVersion = $state<{ value: number }>({ value: 0 });
+export const logActivity = $state({ appended: 0, evicted: 0, cleared: 0 });
 /** LogView 滚动容器的 DOM 引用，供 App.svelte 的回调函数使用 */
 export const scrollContainerRef = $state<{ el: HTMLDivElement | null }>({ el: null });
 
@@ -70,7 +73,10 @@ export function appendLogLine(line: LogLine) {
  * LogView 的 $derived/$effect 每批只重算一次(Svelte 响应式开销 ↓)。 */
 export function appendLogLines(batch: LogLine[]) {
   if (paused.value || batch.length === 0) return;
+  const previousLength = logLines.length;
   retainedLogs.append(batch, resolveLogLimits(cachedSettings.value?.ui));
+  logActivity.appended += batch.length;
+  logActivity.evicted += previousLength + batch.length - logLines.length;
   logVersion.value++;
 }
 
@@ -78,13 +84,16 @@ export function appendLogLines(batch: LogLine[]) {
  *  不受 paused 影响——回填的是用户主动打开的连接的既有内容,不是新到的实时数据。 */
 export function insertLogLines(at: number, batch: LogLine[]) {
   if (batch.length === 0) return;
+  const previousLength = logLines.length;
   retainedLogs.insert(at, batch, resolveLogLimits(cachedSettings.value?.ui));
+  logActivity.evicted += previousLength + batch.length - logLines.length;
   logVersion.value++;
 }
 
 export function clearLogLines() {
   if (logLines.length === 0) return;
   retainedLogs.clear();
+  logActivity.cleared++;
   logVersion.value++;
 }
 

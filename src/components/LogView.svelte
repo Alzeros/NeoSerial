@@ -1,41 +1,202 @@
 <script lang="ts">
   import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
-  import { displayMode, textEncoding, logLines, logVersion, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused, connected } from '$lib/stores';
+  import { onDestroy, tick } from 'svelte';
+  import { displayMode, textEncoding, logLines, logVersion, logActivity, autoScroll, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused, connected, currentPort, connectionParams } from '$lib/stores';
   import type { LogLine } from '$lib/types';
   import { selectedLogText } from '$lib/logSelection';
+  import { matchesLog, snippetLines, elapsedMilliseconds, formatDiagnosticSnippet, type LogFilter } from '$lib/logDiagnostics';
+  import { exportLogSnippet, saveFileDialog } from '$lib/tauri';
+  import { notifyError, notifySuccess } from '$lib/notifications.svelte';
+  import LogToolbar from './LogToolbar.svelte';
 
   // 每批集合变化只发布一次浅快照，保留记录身份，避免数组移位使所有行重新失效。
-  const renderedLines = $derived.by(() => {
+  const retainedLines = $derived.by(() => {
     logVersion.value;
     return logLines.slice();
   });
+  let toolsOpen = $state(false);
+  let filter = $state<LogFilter>({ direction: 'all', errorsOnly: false, include: '', exclude: '' });
+  const filtering = $derived(filter.direction !== 'all' || filter.errorsOnly || !!filter.include.trim() || !!filter.exclude.trim());
+  const renderedLines = $derived(filtering ? retainedLines.filter(line => cachedRecord(line).matches()) : retainedLines);
+  let selectionMode = $state(false);
+  let selectedLines = $state<LogLine[]>([]);
+  let markerText = $state('');
+  let markers = $state<{ line: LogLine; text: string }[]>([]);
+  const markerLookup = $derived(new Map(markers.map(marker => [marker.line, marker.text])));
+  let contextCount = $state(10);
+  let snippetBusy = $state(false);
+  let errorCursor = $state<LogLine | null>(null);
+  const errorLines = $derived(renderedLines.filter(line => line.is_error));
+  const elapsed = $derived(selectedLines.length === 2 ? elapsedMilliseconds(selectedLines[0], selectedLines[1]) : null);
+  let seenAppended = $state(logActivity.appended);
+  let evictionBaseline = $state(logActivity.evicted);
+  let seenClear = logActivity.cleared;
+  const unreadCount = $derived(autoScroll.value ? 0 : Math.max(0, logActivity.appended - seenAppended));
+  const evictedCount = $derived(Math.max(0, logActivity.evicted - evictionBaseline));
+  const rowIds = new WeakMap<LogLine, number>();
+  let nextRowId = 0;
+  function rowId(line: LogLine): number {
+    let identifier = rowIds.get(line);
+    if (identifier === undefined) { identifier = ++nextRowId; rowIds.set(line, identifier); }
+    return identifier;
+  }
 
-  let scrollContainer: HTMLDivElement;
+  let scrollContainer = $state<HTMLDivElement>();
   // 同步给 App.svelte 用的容器引用（兜底 + 兼容旧调用）
   $effect(() => {
-    scrollContainerRef.el = scrollContainer;
+    scrollContainerRef.el = scrollContainer ?? null;
+    const container = scrollContainer;
+    const resize = new ResizeObserver(() => {
+      if (container && autoScroll.value) container.scrollTop = container.scrollHeight;
+    });
+    if (container) resize.observe(container);
     return () => {
+      resize.disconnect();
       if (scrollContainerRef.el === scrollContainer) {
         scrollContainerRef.el = null;
       }
     };
   });
 
-  /**
-   * 自动滚动：日志有更新就跳到最新一条（无条件跟随）
-   * 搜索打开时暂停自动滚动，避免与搜索定位冲突。
-   */
-  $effect(() => {
-    logVersion.value;
-    if (!scrollContainer) return;
-    if (searchOpen) return;
-    scrollContainer.scrollTop = scrollContainer.scrollHeight;
-    requestAnimationFrame(() => {
-      if (scrollContainer) {
+  let previousRendered: LogLine[] | null = null;
+  let suppressScroll = false;
+  let userGestureUntil = 0;
+
+  function visibleAnchor() {
+    if (!scrollContainer) return null;
+    const viewport = scrollContainer.getBoundingClientRect();
+    const hit = document.elementFromPoint(viewport.left + Math.min(80, viewport.width / 2), viewport.top + 2);
+    const hitRow = hit?.closest<HTMLElement>('[data-log-row]');
+    const element = hitRow && scrollContainer.contains(hitRow) ? hitRow :
+      Array.from(scrollContainer.querySelectorAll<HTMLElement>('[data-log-row]')).find(row => row.getBoundingClientRect().bottom > viewport.top);
+    return element ? { element, offset: element.getBoundingClientRect().top - viewport.top } : null;
+  }
+
+  $effect.pre(() => {
+    const rows = renderedLines;
+    const following = autoScroll.value;
+    const changed = rows !== previousRendered;
+    previousRendered = rows;
+    if (!scrollContainer || (!changed && !following)) return;
+    const anchor = following ? null : visibleAnchor();
+    suppressScroll = true;
+    let cancelled = false;
+    tick().then(() => {
+      if (cancelled || !scrollContainer) return;
+      if (autoScroll.value) {
         scrollContainer.scrollTop = scrollContainer.scrollHeight;
+      } else if (anchor?.element.isConnected && scrollContainer.contains(anchor.element)) {
+        scrollContainer.scrollTop += anchor.element.getBoundingClientRect().top - scrollContainer.getBoundingClientRect().top - anchor.offset;
+      } else if (anchor) {
+        scrollContainer.scrollTop = 0;
       }
+      requestAnimationFrame(() => { if (!cancelled) suppressScroll = false; });
     });
+    return () => { cancelled = true; suppressScroll = false; };
   });
+
+  $effect(() => {
+    if (autoScroll.value) seenAppended = logActivity.appended;
+    if (logActivity.cleared !== seenClear) {
+      seenClear = logActivity.cleared;
+      evictionBaseline = logActivity.evicted;
+      seenAppended = logActivity.appended;
+      selectedLines = [];
+      markers = [];
+      errorCursor = null;
+    }
+  });
+
+  $effect(() => {
+    const present = new Set(retainedLines);
+    for (const [line, cached] of renderCache) {
+      if (!present.has(line)) { cached.dispose(); renderCache.delete(line); }
+    }
+    if (selectedLines.some(line => !present.has(line))) selectedLines = selectedLines.filter(line => present.has(line));
+    if (markers.some(marker => !present.has(marker.line))) markers = markers.filter(marker => present.has(marker.line));
+    if (errorCursor && !present.has(errorCursor)) errorCursor = null;
+    if (!selectionMode && selectedLines.length) selectedLines = [];
+  });
+
+  function userScroll(event: WheelEvent | KeyboardEvent | PointerEvent) {
+    userGestureUntil = performance.now() + 600;
+    if ((event instanceof WheelEvent && event.deltaY < 0) ||
+      (event instanceof KeyboardEvent && ['ArrowUp', 'PageUp', 'Home'].includes(event.key))) autoScroll.value = false;
+  }
+
+  function handleScroll() {
+    if (!scrollContainer || (suppressScroll && performance.now() > userGestureUntil)) return;
+    const atBottom = scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop < 8;
+    if (!atBottom) autoScroll.value = false;
+  }
+
+  function returnToLatest() {
+    autoScroll.value = true;
+    seenAppended = logActivity.appended;
+    if (scrollContainer) scrollContainer.scrollTop = scrollContainer.scrollHeight;
+  }
+
+  function resetFilter() {
+    filter = { direction: 'all', errorsOnly: false, include: '', exclude: '' };
+  }
+
+  function selectLine(line: LogLine) {
+    if (selectedLines.includes(line)) selectedLines = selectedLines.filter(record => record !== line);
+    else if (selectedLines.length < 2) selectedLines = [...selectedLines, line];
+    else notifyError('最多选择两条记录', '请先取消一条选择，再选择新的记录。');
+  }
+
+  function goToError(step: number) {
+    if (!errorLines.length) return;
+    autoScroll.value = false;
+    const previous = errorCursor ? errorLines.indexOf(errorCursor) : -1;
+    const index = previous < 0 ? (step < 0 ? errorLines.length - 1 : 0) : (previous + step + errorLines.length) % errorLines.length;
+    errorCursor = errorLines[index];
+    const identifier = rowId(errorCursor);
+    tick().then(() => scrollContainer?.querySelector(`[data-log-id="${identifier}"]`)?.scrollIntoView({ block: 'center' }));
+  }
+
+  function addMarker() {
+    const selected = retainedLines.filter(line => selectedLines.includes(line));
+    const line = selected[0] ?? retainedLines.at(-1);
+    const text = markerText.trim().slice(0, 120);
+    if (!line || !text) return;
+    markers = [...markers.filter(marker => marker.line !== line), { line, text }];
+    markerText = '';
+  }
+
+  function snippetSnapshot(): string {
+    const rows = selectedLines.length ? snippetLines(retainedLines, selectedLines, contextCount) : [...renderedLines];
+    if (!rows.length) throw new Error('当前没有可导出的记录，请先调整筛选或等待日志。');
+    return formatDiagnosticSnippet({
+      rows, capturedAt: new Date().toISOString(), port: currentPort.value || connectionParams.port || null,
+      settings: `波特率 ${connectionParams.baudRate} / 数据位 ${connectionParams.dataBits} / 校验 ${connectionParams.parity} / 停止位 ${connectionParams.stopBits} / 流控 ${connectionParams.flowControl}`,
+      mode: `${displayMode.value} / ${textEncoding.value}`,
+      scope: selectedLines.length ? '选中记录及前后上下文（含被筛选隐藏的记录）' : '当前筛选结果（无额外上下文）',
+      render: renderLine, markers: markerLookup,
+    });
+  }
+
+  async function copySnippet() {
+    try {
+      const text = snippetSnapshot();
+      await navigator.clipboard.writeText(text);
+      notifySuccess('日志片段已复制');
+    } catch (error) { notifyError('复制日志片段失败', error); }
+  }
+
+  async function saveSnippet() {
+    if (snippetBusy) return;
+    snippetBusy = true;
+    try {
+      const text = snippetSnapshot();
+      const path = await saveFileDialog('导出日志片段', `neoserial_${currentPort.value || 'log'}_${Date.now()}.txt`, [{ name: '文本文件', extensions: ['txt'] }]);
+      if (!path) return;
+      await exportLogSnippet(path, text);
+      notifySuccess('日志片段已导出', path);
+    } catch (error) { notifyError('导出日志片段失败', error); }
+    finally { snippetBusy = false; }
+  }
 
   // ============ 搜索 ============
   let searchOpen = $state(false);
@@ -82,6 +243,7 @@
   });
 
   function openSearch() {
+    autoScroll.value = false;
     // 已开着再按 Ctrl/F3:只 focus 回搜索框,不动当前查询(避免覆盖正在编辑的词)。
     if (searchOpen) {
       searchInput?.focus();
@@ -112,6 +274,7 @@
   }
 
   function handleGlobalKeydown(e: KeyboardEvent) {
+    if (e.target instanceof Node && scrollContainer?.contains(e.target)) userScroll(e);
     if ((e.ctrlKey || e.metaKey) && e.key === 'f') {
       e.preventDefault();
       openSearch();
@@ -153,7 +316,7 @@
 
   async function ctxCopy() {
     const sel = window.getSelection();
-    if (sel) {
+    if (sel && scrollContainer) {
       const text = selectedLogText(scrollContainer, sel) ?? sel.toString();
       try { await navigator.clipboard.writeText(text); } catch { /* 剪贴板不可用 */ }
     }
@@ -220,6 +383,7 @@
     const lineIdx = matchIndices[currentMatch];
     if (lineIdx === undefined) return;
     const el = scrollContainer?.querySelector(`[data-idx="${lineIdx}"]`);
+    autoScroll.value = false;
     el?.scrollIntoView({ block: 'center' });
   }
 
@@ -320,7 +484,34 @@
    * - 'utf8'：UTF-8 解码，非法字节用 � 替换，过滤控制字符
    * - 'gbk'：GBK 解码（TextDecoder label 'gbk'，WebView2/Chromium 支持）
    */
+  const renderCache = new Map<LogLine, { read: () => string; matches: () => boolean; dispose: () => void }>();
+  onDestroy(() => {
+    for (const cached of renderCache.values()) cached.dispose();
+    renderCache.clear();
+  });
+
+  function cachedRecord(line: LogLine) {
+    let cached = renderCache.get(line);
+    if (!cached) {
+      let read = () => renderUncachedLine(line);
+      let matches = () => matchesLog(line, filter, read);
+      const dispose = $effect.root(() => {
+        const text = $derived(renderUncachedLine(line));
+        const accepted = $derived(matchesLog(line, filter, () => text));
+        read = () => text;
+        matches = () => accepted;
+      });
+      cached = { read, matches, dispose };
+      renderCache.set(line, cached);
+    }
+    return cached;
+  }
+
   function renderLine(line: LogLine): string {
+    return cachedRecord(line).read();
+  }
+
+  function renderUncachedLine(line: LogLine): string {
     if (line.omitted_bytes !== undefined) return line.ascii;
     if (displayMode.value === 'hex') {
       return renderHex(line);
@@ -380,10 +571,28 @@
   }
 </script>
 
-<svelte:window on:keydown={handleGlobalKeydown} on:copy={handleCopy} />
+<svelte:window on:keydown={handleGlobalKeydown} on:copy={handleCopy} on:pointerdown={(event) => { if (event.target instanceof Node && scrollContainer?.contains(event.target)) userScroll(event); }} />
 
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
 <div class="relative h-full overflow-hidden flex flex-col" data-theme-target="background-data" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
+  <div class="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-3 py-1 text-[12px] text-[var(--muted-foreground)]" style="background: var(--background-elevated);">
+    <button data-log-tools-toggle aria-expanded={toolsOpen} class="cursor-pointer hover:text-[var(--foreground)]" onclick={() => toolsOpen = !toolsOpen}>{toolsOpen ? '收起工具' : '筛选 / 工具'}</button>
+    <span class="tabular-nums">{filtering ? `显示 ${renderedLines.length} / ${retainedLines.length} 条` : `${retainedLines.length} 条`}</span>
+    {#if paused.value}<span>已暂停显示</span>{/if}
+    <button data-log-follow-toggle aria-pressed={autoScroll.value} class="ml-auto cursor-pointer hover:text-[var(--foreground)]" title={autoScroll.value ? '停止自动跟随（继续显示日志）' : '恢复跟随到最新（不解除暂停显示）'} onclick={() => autoScroll.value ? autoScroll.value = false : returnToLatest()}>{autoScroll.value ? '跟随中' : '已停止跟随'}</button>
+  </div>
+  {#if toolsOpen}
+    <LogToolbar bind:filter bind:selectionMode bind:context={contextCount} bind:marker={markerText}
+      selectedCount={selectedLines.length} {elapsed} hasRows={retainedLines.length > 0}
+      hasErrors={errorLines.length > 0} busy={snippetBusy} onreset={resetFilter} onerror={goToError}
+      onclearSelection={() => selectedLines = []} onmark={addMarker} oncopy={copySnippet} onsave={saveSnippet} />
+  {/if}
+  {#if evictedCount > 0}
+    <div data-log-eviction class="flex shrink-0 items-center gap-2 px-3 py-1 text-[11px] text-[var(--muted-foreground)]" style="background: var(--background-elevated);">
+      <span>缓存达到上限，已淘汰 {evictedCount.toLocaleString()} 条最旧记录；存盘文件不受影响。</span>
+      <button aria-label="关闭缓存淘汰提示" class="ml-auto cursor-pointer" onclick={() => evictionBaseline = logActivity.evicted}>×</button>
+    </div>
+  {/if}
   <!-- 搜索栏：右上角浮动，与浏览器 find bar 类似 -->
   {#if searchOpen}
     <div
@@ -444,6 +653,8 @@
     tabindex="-1"
     role="log"
     aria-label="串口日志"
+    onwheel={userScroll}
+    onscroll={handleScroll}
     class="flex-1 overflow-y-auto overflow-x-auto px-3 py-4 outline-none select-text"
     style="font-family: var(--log-font-family); font-size: var(--log-font-size); line-height: var(--log-line-height);"
   >
@@ -452,13 +663,18 @@
     {#each renderedLines as line (line)}
       <div
         data-idx={rowIndices?.get(line)}
+        data-log-id={rowId(line)}
         data-log-row
-        class="flex px-1 py-px {searchQuery && matchSet.has(line)
+        class="flex px-1 py-px {selectedLines.includes(line) || errorCursor === line ? 'bg-[var(--search-hit-active)]' : searchQuery && matchSet.has(line)
           ? (isCurrentMatch(line)
             ? 'bg-[var(--search-hit-active)]'
             : 'bg-[var(--search-hit)]')
           : 'hover:bg-[var(--overlay-hover)]'}"
       >
+        {#if selectionMode}
+          <input data-log-select-row type="checkbox" class="mr-2 mt-1 shrink-0" aria-label={`选择记录 ${line.line_index || rowId(line)}`}
+            checked={selectedLines.includes(line)} onchange={(event) => { selectLine(line); event.currentTarget.checked = selectedLines.includes(line); }} />
+        {/if}
         <!-- 行号(本次连接期间 index,最左列,等宽数字右对齐) -->
         {#if showLineIndex.value}
           <div data-log-field class="shrink-0 pr-2 mr-2 border-r border-[var(--border)] text-right tabular-nums text-[var(--muted-foreground)]" style="min-width: 3em;">
@@ -477,6 +693,9 @@
           </div>
         {/if}
         <!-- 内容：搜索匹配时高亮关键词片段 -->
+        {#if markerLookup.has(line)}
+          <span data-log-field data-log-marker class="mr-2 max-w-[12em] shrink-0 truncate rounded px-1 text-[12px] font-medium text-[var(--primary)]" style="background: var(--background-elevated);" title={markerLookup.get(line)}>标记：{markerLookup.get(line)}</span>
+        {/if}
         <span data-log-field class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
           {#if searchQuery && matchSet.has(line) && searchMatcher}
             {#each highlightSegments(renderLine(line), searchMatcher.globalRe) as seg}
@@ -499,7 +718,13 @@
     <div
       data-log-empty
       class="pointer-events-none absolute inset-0 flex items-center justify-center text-[13px] text-[var(--muted-foreground)]"
-    >{connected.value ? '等待数据…' : '连接串口后开始显示数据'}</div>
+    >{filtering && retainedLines.length ? '没有符合筛选条件的记录，原始日志仍保留在缓存中' : connected.value ? '等待数据…' : '连接串口后开始显示数据'}</div>
+  {/if}
+
+  {#if !autoScroll.value}
+    <button data-log-follow class="absolute bottom-3 right-4 z-10 rounded-md border border-[var(--border)] px-3 py-1.5 text-[12px] shadow-sm cursor-pointer" style="background: var(--background-elevated); color: var(--primary);" title="回到底部并恢复跟随；不解除暂停显示，新增条数包含被筛选隐藏的记录" onclick={returnToLatest}>
+      {unreadCount > 0 ? `${unreadCount.toLocaleString()} 条新日志 · ` : ''}回到最新 ↓
+    </button>
   {/if}
 
   {#if ctxMenu.show}

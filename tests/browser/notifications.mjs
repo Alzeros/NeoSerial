@@ -1,0 +1,147 @@
+import assert from 'node:assert/strict';
+import { withHeadlessBrowser } from './headless.mjs';
+
+await withHeadlessBrowser(async ({ base, call, evaluate, until, delay }) => {
+  await call('Page.navigate', { url: `${base}/tests/browser/notifications.html` });
+  await until('Boolean(window.notificationTest)', 30000);
+  await delay(150);
+  const action = expression => evaluate(`(async()=>{${expression};await notificationTest.tick();})()`);
+  const press = text => action(`notificationTest.button(${JSON.stringify(text)}).click()`);
+  const clear = () => evaluate('notificationTest.clear()');
+  const pointerClick = async selector => {
+    const point = await evaluate(`(()=>{const el=document.querySelector(${JSON.stringify(selector)}),rect=el.getBoundingClientRect(),x=rect.left+rect.width/2,y=rect.top+rect.height/2;return {x,y,reachable:el.contains(document.elementFromPoint(x,y))}})()`);
+    assert.equal(point.reachable, true, `${selector} remains pointer-accessible`);
+    await call('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, x: point.x, y: point.y });
+    await call('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, x: point.x, y: point.y });
+    await evaluate('notificationTest.tick()');
+  };
+  const expectError = async (title, detail) => {
+    await until(`Boolean([...document.querySelectorAll('[data-notification][data-kind="error"]')].find(el=>el.textContent.includes(${JSON.stringify(title)})&&el.textContent.includes(${JSON.stringify(detail)})))`);
+  };
+  const fails = async (command, title, trigger) => {
+    await clear();
+    await action(`notificationTest.failNext(${JSON.stringify(command)})`);
+    await trigger();
+    await expectError(title, `isolated ${command} failure`);
+  };
+  assert.equal(await evaluate('document.querySelectorAll("[data-notifications]").length'), 1, 'One host in the main window');
+  await action(`document.querySelector('input[placeholder="输入要发送的内容..."]').focus();
+    notificationTest.notifications.notifyError('连接失败','COM_TEST: busy');
+    notificationTest.notifications.notifyError('连接失败','COM_TEST: busy')`);
+  assert.equal(await evaluate('document.querySelectorAll("[data-notification]").length'), 1);
+  assert.equal(await evaluate('notificationTest.notifications.notifications.items[0].count'), 2);
+  assert.equal(await evaluate('document.activeElement.placeholder'), '输入要发送的内容...', 'Feedback does not steal focus');
+  await delay(4200);
+  await expectError('连接失败', 'COM_TEST: busy');
+  await action(`window.copiedText='';Object.defineProperty(navigator,'clipboard',{configurable:true,value:{async writeText(text){window.copiedText=text;}}})`);
+  await pointerClick('[data-copy-details]');
+  assert.match(await evaluate('window.copiedText'), /连接失败\nCOM_TEST: busy/);
+  await until('document.querySelector("[data-notification]").textContent.includes("已复制")');
+  await action(`Object.defineProperty(navigator,'clipboard',{configurable:true,value:{async writeText(){throw new Error('clipboard denied');}}})`);
+  await pointerClick('[data-copy-details]');
+  await expectError('复制错误详情失败', 'clipboard denied');
+  await pointerClick('[data-notification] button[aria-label="关闭通知"]');
+  assert.equal(await evaluate('document.querySelectorAll("[data-notification]").length'), 1);
+
+  for (const theme of ['preset-1', 'preset-2', 'preset-3', 'preset-4']) {
+    await action(`document.documentElement.dataset.theme=${JSON.stringify(theme)}`);
+    assert.deepEqual(await evaluate(`(()=>{const el=document.querySelector('[data-notifications]'),rect=el.getBoundingClientRect(),card=document.querySelector('[data-notification]'),style=getComputedStyle(card),probe=document.createElement('div');probe.style.background='var(--background-elevated)';document.body.append(probe);const themed=style.backgroundColor===getComputedStyle(probe).backgroundColor;probe.remove();return [rect.left>=0,rect.right<=innerWidth,rect.bottom<=innerHeight,style.color!==style.backgroundColor,el.scrollWidth<=el.clientWidth+1,themed]})()`), [true, true, true, true, true, true], `Compact readable ${theme} feedback fits and uses theme colors`);
+  }
+  await action(`for(let index=0;index<10;index++)notificationTest.notifications.notifyError('failure '+index,'x'.repeat(2000))`);
+  assert.equal(await evaluate('document.querySelectorAll("[data-notification]").length'), 3);
+  await action('notificationTest.stores.scriptPanelOpen.value=false;notificationTest.stores.connected.value=true');
+  await call('Emulation.setDeviceMetricsOverride', { width: 800, height: 640, deviceScaleFactor: 1, mobile: false });
+  await pointerClick('[data-notification] summary');
+  assert.equal(await evaluate('document.querySelector("[data-notification] details").open'), true, 'Full long details can be expanded');
+  assert.equal(await evaluate('document.querySelector("[data-notifications]").getBoundingClientRect().height<=innerHeight*0.3+1'), true, 'Expanded details remain in a bounded scrolling host');
+  assert.deepEqual(await evaluate(`(()=>{const host=document.querySelector('[data-notifications]').getBoundingClientRect();return ['[data-log-tools-toggle]','[data-log-follow-toggle]','[data-m-pause]','input[placeholder="输入要发送的内容..."]'].map(selector=>{const rect=document.querySelector(selector).getBoundingClientRect();return host.bottom<=rect.top&&rect.bottom<=innerHeight})})()`), [true, true, true, true], 'Persistent errors occupy bounded layout space above log controls, pause and input');
+  await pointerClick('[data-log-tools-toggle]');
+  assert.equal(await evaluate('document.querySelector("[data-log-tools-toggle]").ariaExpanded'), 'true');
+  await pointerClick('[data-log-tools-toggle]');
+  const followed = await evaluate('notificationTest.stores.autoScroll.value');
+  await pointerClick('[data-log-follow-toggle]');
+  assert.equal(await evaluate('notificationTest.stores.autoScroll.value'), !followed);
+  await pointerClick('[data-m-pause]');
+  assert.equal(await evaluate('notificationTest.stores.paused.value'), true);
+  await pointerClick('[data-m-pause]');
+  await pointerClick('input[placeholder="输入要发送的内容..."]');
+  assert.equal(await evaluate('document.activeElement.placeholder'), '输入要发送的内容...');
+  await call('Emulation.setDeviceMetricsOverride', { width: 1400, height: 900, deviceScaleFactor: 1, mobile: false });
+  await action('notificationTest.stores.connected.value=false');
+  await clear();
+  assert.equal(await evaluate('notificationTest.notifications.notifySuccess("配置已保存","sequence.json")'), undefined);
+  await until('Boolean(document.querySelector("[data-notification][data-kind=success][role=status]"))');
+  await clear();
+
+  await fails('connect', '连接失败', () => press('连接'));
+  await action('await notificationTest.connect()');
+  await fails('disconnect', '断开失败', () => press('断开'));
+  await action(`notificationTest.stores.sendText.value='AT'`);
+  await fails('send', '发送失败', () => press('发送'));
+  assert.equal(await evaluate('notificationTest.button("发送").className.includes("bg-[var(--error)]")'), true, 'Existing send flash remains');
+  await fails('send', '发送 Ctrl-Z 失败', () => press('发送 Ctrl-Z'));
+  await clear();
+  const sendCount = await evaluate('notificationTest.calls.filter(call=>call.cmd==="send").length');
+  await action(`await notificationTest.emit('error',{message:'writer failed after enqueue',port:'COM_TEST'})`);
+  await expectError('串口错误', 'writer failed after enqueue');
+  await delay(150);
+  assert.equal(await evaluate('notificationTest.calls.filter(call=>call.cmd==="send").length'), sendCount, 'No automatic send retry');
+  await clear();
+  await delay(40);
+  await press('发送');
+  await delay(80);
+  assert.equal(await evaluate('document.querySelectorAll("[data-notification][data-kind=success]").length'), 0, 'Enqueued send does not claim physical device success');
+
+  await action('notificationTest.stores.scriptPanelOpen.value=true');
+  await until('Boolean(document.querySelector("tr[data-row]"))');
+  await fails('send', '单行发送失败', () => action(`document.querySelector('tr[data-row] td:last-child button').click()`));
+  await fails('sequence_run', '序列执行失败', () => action(`document.querySelector('button[title="运行"]').click()`));
+  assert.equal(await evaluate('notificationTest.stores.scriptRunning.value'), false, 'Failed sequence start resets UI');
+  await action('notificationTest.stores.scriptRunning.value=true');
+  await fails('sequence_stop', '停止序列失败', () => action(`document.querySelector('button[title="停止"]').click()`));
+  await action('notificationTest.stores.scriptRunning.value=false');
+  await fails('plugin:dialog|save', '保存配置失败', () => press('另存为'));
+  await action(`notificationTest.reply('plugin:dialog|save','/isolated/sequence.json')`);
+  await fails('save_sequence_config', '保存配置失败', () => press('另存为'));
+  await fails('plugin:dialog|open', '加载配置失败', () => press('加载'));
+  await action(`notificationTest.reply('plugin:dialog|open','/isolated/sequence.json')`);
+  await fails('load_sequence_config', '加载配置失败', () => press('加载'));
+
+  await action(`document.querySelector('button[title="展开文件发送 / 日志保存"]').click()`);
+  await fails('plugin:dialog|open', '选择发送文件失败', () => press('点击选择发送文件路径'));
+  await action(`notificationTest.stores.fileSendPath.value='/isolated/test.bin'`);
+  await fails('send_file', '文件发送失败', () => press('发送文件'));
+  assert.equal(await evaluate('notificationTest.stores.fileSendProgress.value'), 0);
+  await fails('plugin:dialog|save', '选择日志路径失败', () => press('点击选择日志保存路径'));
+  await action(`notificationTest.stores.loggingPath.value='/isolated/session.log'`);
+  await fails('start_logging', '启动日志失败', () => press('开始记录'));
+  await action('notificationTest.stores.loggingActive.value=true');
+  await fails('stop_logging', '停止日志失败', () => press('停止'));
+  await clear();
+  await action(`await notificationTest.emit('logging-changed',{active:false,path:'/isolated/session.log',error:'disk full'})`);
+  await expectError('日志写入失败', 'disk full');
+
+  await clear();
+  await action(`notificationTest.reply('plugin:dialog|open',null);notificationTest.reply('plugin:dialog|save',null)`);
+  await press('另存为');
+  await press('加载');
+  await press('/isolated/test.bin');
+  await press('/isolated/session.log');
+  assert.equal(await evaluate('document.querySelectorAll("[data-notification]").length'), 0, 'Dialog cancellation is silent');
+  await action(`document.querySelector('[data-m-pause]').click();notificationTest.stores.appendLogLine({ascii:'discarded',raw:[],ts:'10:00',ts_ms:1,dir:'rx',line_index:100,is_error:false})`);
+  assert.equal(await evaluate('notificationTest.stores.paused.value'), true);
+  assert.equal(await evaluate('notificationTest.stores.logLines.some(line=>line.ascii==="discarded")'), false, 'Paused additions are still discarded');
+  await press('继续');
+
+  await action(`const frame=document.createElement('iframe');frame.src='/tests/browser/notifications.html?window=win-test';document.body.append(frame)`);
+  await until('Boolean(document.querySelector("iframe").contentWindow.notificationTest)', 30000);
+  await action(`notificationTest.notifications.notifyError('main only','isolated');document.querySelector('iframe').contentWindow.notificationTest.notifications.notifyError('secondary only','isolated')`);
+  assert.equal(await evaluate('document.querySelectorAll("[data-notifications]").length'), 1);
+  assert.equal(await evaluate('document.querySelector("iframe").contentDocument.querySelectorAll("[data-notifications]").length'), 1);
+  assert.equal(await evaluate('document.querySelector("[data-notifications]").textContent.includes("secondary only")'), false, 'Errors stay in the originating window');
+  await action(`document.querySelector('iframe').src='/tests/browser/notifications.html?window=win-takeover&scenario=startup-errors'`);
+  await until('document.querySelector("iframe").contentWindow.notificationTest?.scenario==="startup-errors"', 30000);
+  await until('document.querySelector("iframe").contentDocument.querySelector("[data-notifications]").textContent.includes("logging status unavailable")');
+  await until('document.querySelector("iframe").contentDocument.querySelector("[data-notifications]").textContent.includes("automatic takeover rejected")');
+  console.log('Notification browser regressions passed: inline host, persistence, dedup, cap, themes, pointer placement, expanded details, copy/failure, dismissal, isolation, startup/connection/send/file/logging/sequence/config errors, cancellation, pause, no retry or device-success claims.');
+});

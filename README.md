@@ -74,7 +74,15 @@ NeoSerial 是**单实例**的：再次启动只会把已有窗口拉到前台，
 - 错误关键词高亮：默认 `ERROR`、`FAIL`、`+CME ERROR`、`+CMS ERROR`，可增删。只匹配接收行，不区分大小写，改了不用重连。
 - 留存上限按行数（1000–10000，默认 5000）和原始字节数（1–16 MiB，默认 4 MiB）同时控制，超出时从最旧的行开始丢；单条超大记录会替换成占位提示。存盘文件不受影响。
 - `Ctrl+F` 搜索日志（`F3` / `Shift+F3` 跳到下一个/上一个）。复制时按行和字段重建文本，软换行不会混进复制内容。
+- **暂停显示与跟随独立**：原有“暂停 / 继续”仍只控制 WebUI 是否追加日志，暂停期间的记录不会在继续后补显，不影响串口收发和文件存盘。上翻或搜索会停止跟随，但不停止追加；“回到最新”显示新增条数并恢复跟随，不会解除暂停。缓存淘汰时提示，阅读中的存续记录尽量保持原位置。
+- **筛选 / 工具**（默认收起）：按发送/接收、错误、包含和排除关键词组合筛选（不区分大小写、字面匹配），可跳转上一个/下一个错误；筛选只影响视图，不删除缓存或修改存盘。
+- 开启“选择记录”可选择最多两条记录，查看真实时间戳的时间差；旧记录缺少时间戳时显示不可用。人工标记附在选中首条或最新记录上，仅当前窗口缓存有效，清空或记录淘汰后移除，不会向设备发送内容。
+- **片段复制 / 导出 TXT**：有选择时导出选中范围及前后各 10 条原始上下文（可调 0–1000，包含被筛选隐藏的记录）；未选择时导出当前筛选结果。片段附带时间、方向、当前窗口串口设置和标记；历史可能跨连接，设置不代表每条历史记录产生时的设备参数。导出使用保存对话框选定的文件，独立于全局连续存盘。
 - 字体（英文等宽字体与中文字体分别设置）、字号、行高可调，实时预览。
+
+片段复制和文件导出均限制为 32 MiB UTF-8 文本，超出时提示缩小范围，不改变现有文件。
+
+连接、发送、快捷序列、配置加载/保存和文件日志等操作失败时，窗口会显示可关闭、可复制详情的非模态提示；不会自动重发命令。“提交发送”不代表设备已经执行或返回成功。
 
 ### 日志存盘
 
@@ -301,12 +309,14 @@ npm run test:unit              # 前端纯函数与源码契约测试（node --t
 npm run check                  # svelte-check 类型检查
 npm run test:ui                # 界面回归：快捷指令表、发送区开关、窗口布局
 npm run test:persistence       # 持久化回归：面板自动保存、设置并发保存
+npm run test:logs              # 日志回归：跟随/暂停、诊断导出、复制、留存和性能
+npm run test:notifications     # 失败提示：去重、复制详情、各操作错误与窗口隔离
 ```
 
-- `test:ui` 和 `test:persistence` 不需要 Rust 和串口设备：它们会启动临时 Vite 服务和独立的无头 Chrome/Edge，使用模拟 IPC，不读写真实配置。找不到浏览器时，用 `BROWSER_BINARY` 指定可执行文件路径。
+- 上述前端浏览器回归不需要 Rust 和串口设备：它们会启动临时 Vite 服务和独立的无头 Chrome/Edge，使用模拟 IPC，不读写真实配置。找不到浏览器时，用 `BROWSER_BINARY` 指定可执行文件路径。
 - `npm run test:ui -- --screenshots <目录>` 会额外输出浅色、深色和最小窗口尺寸的截图（数据为模拟）。
 - `tests/browser/` 下还有按功能拆分的回归脚本：
-  - 用同一套无头环境、可以直接 `node tests/browser/<名称>.mjs` 运行的：`com-selection`、`mcp-setup`、`motion-regressions`、`settings-groups`、`settings-help`、`settings-reuse`、`settings-scrollbar`、`settings-shortcuts`、`titlebar-layout`、`update-reminder`。
+  - 用同一套无头环境、可以直接 `node tests/browser/<名称>.mjs` 运行的：`com-selection`、`log-diagnostics`、`log-regressions`、`notifications`、`mcp-setup`、`motion-regressions`、`settings-groups`、`settings-help`、`settings-reuse`、`settings-scrollbar`、`settings-shortcuts`、`titlebar-layout`、`update-reminder`。
   - 其余脚本（`codec-*`、`log-*`、`mcp-settings`、`port-tip`、`settings-close`、`theme-window`）需要先手动起 Vite 和远程调试浏览器，或者需要一个**一次性**的原生实例（单独的 `NEOSERIAL_DATA_DIR` 并开启 WebView2 远程调试）。运行方式见各脚本头部注释，不要对着自己日常用的配置跑。
 
 ### 发布

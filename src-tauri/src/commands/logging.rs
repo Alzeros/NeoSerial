@@ -5,6 +5,8 @@ use crate::state::AppState;
 use crate::logging::file_logger::FileLogger;
 use crate::util::time_fmt::now_local_compact;
 
+const MAX_LOG_SNIPPET_BYTES: usize = 32 * 1024 * 1024;
+
 /// 文件日志的全局状态。logger 是进程级单份(所有连接进同一文件),窗口却各有一份 UI 状态,
 /// 所以每次 start/stop/写盘失败都广播 `logging-changed`,各窗口据此刷新;窗口挂载时用
 /// get_logging_status 拉一次(后台模式重开窗口、agent 经 MCP 开的记录都能对上)。
@@ -179,3 +181,24 @@ pub(crate) fn stop_logging_impl(app_handle: &tauri::AppHandle) -> Result<(), Str
 pub fn get_logging_status(state: State<'_, AppState>) -> LoggingStatus {
     logging_status(&state)
 }
+
+#[tauri::command]
+pub async fn export_log_snippet(path: String, text: String) -> Result<(), String> {
+    if text.len() > MAX_LOG_SNIPPET_BYTES {
+        return Err(format!(
+            "日志片段超过 32 MiB UTF-8 文本大小限制（{} 字节）",
+            text.len()
+        ));
+    }
+
+    tauri::async_runtime::spawn_blocking(move || {
+        std::fs::write(&path, text.as_bytes())
+            .map_err(|error| format!("导出日志片段失败（{}）: {}", path, error))
+    })
+    .await
+    .map_err(|error| format!("导出日志片段任务执行异常: {}", error))?
+}
+
+#[cfg(test)]
+#[path = "logging_tests.rs"]
+mod tests;

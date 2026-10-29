@@ -5,6 +5,7 @@
   import ConnectionBar from '$components/ConnectionBar.svelte';
   import LogView from '$components/LogView.svelte';
   import BottomPanel from '$components/BottomPanel.svelte';
+  import Notifications from '$components/Notifications.svelte';
   import StatusBar from '$components/StatusBar.svelte';
   import ScriptSequencer from '$components/ScriptSequencer.svelte';
   import SequencePersistence from '$components/SequencePersistence.svelte';
@@ -69,6 +70,7 @@
     onSettingsPreview,
   } from '$lib/tauri';
   import { connect as connectPort } from '$lib/tauri';
+  import { notifyError } from '$lib/notifications.svelte';
 
   async function handleRxLines(lines: LogLine[]) {
     // 自动滚动由 LogView 内部 $effect + requestAnimationFrame 处理
@@ -254,7 +256,10 @@
             parity: connectionParams.parity,
             stop_bits: connectionParams.stopBits,
             flow_control: connectionParams.flowControl,
-          }).catch((e) => console.error('自动接管失败:', e));
+          }).catch((e) => {
+            console.error('自动接管失败:', e);
+            notifyError('接管连接失败', e);
+          });
         }
       })
       .catch((e) => console.error('查询待接管失败:', e));
@@ -327,6 +332,7 @@
     });
     const unlistenError = onError((e) => {
       console.error('[Serial Error]', e.message);
+      notifyError('串口错误', e);
     });
     const unlistenMode = onConnectionMode((mode) => {
       connectionMode.mode = mode.mode;
@@ -613,6 +619,7 @@
     <!-- 1. 会话配置区（顶部，固定不收缩） -->
     <div class="layout-fixed">
       <ConnectionBar />
+      <Notifications />
     </div>
     <!-- 2. 数据显示区（中部，内部独立滚动） -->
     <div class="flex flex-col min-h-0" style="flex: 1 1 0%;">

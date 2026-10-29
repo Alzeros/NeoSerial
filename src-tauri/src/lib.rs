@@ -14,7 +14,7 @@ use tauri::{Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor, get_modem_status};
 use commands::send::{send, send_file};
 use commands::config::{get_settings, save_settings, patch_settings, save_commands, export_theme_file, import_theme_file, data_dirs, open_data_dir};
-use commands::logging::{start_logging, stop_logging, get_logging_status};
+use commands::logging::{start_logging, stop_logging, get_logging_status, export_log_snippet};
 use commands::sequence::{sequence_run, sequence_stop, save_sequence_config, load_sequence_config, save_sequence_auto, load_sequence_auto};
 use commands::command_index::{command_index_refresh, command_index_refresh_doc, command_index_load, command_index_test_connection, kb_credential_status, kb_set_api_key, send_history_push, send_history_load, send_history_clear};
 use commands::mcp_log::{get_mcp_call_log, clear_mcp_call_log};
@@ -413,6 +413,7 @@ pub fn run() {
             start_logging,
             stop_logging,
             get_logging_status,
+            export_log_snippet,
             sequence_run,
             sequence_stop,
             save_sequence_config,

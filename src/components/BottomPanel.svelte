@@ -22,6 +22,7 @@
   import { openFileDialog, saveFileDialog, sendFile, sendHistoryPush, startLogging, stopLogging, getLoggingStatus, onLoggingChanged, type LoggingStatus } from '$lib/tauri';
   import { onMount, tick } from 'svelte';
   import SendSuggest from '$components/SendSuggest.svelte';
+  import { notifyError } from '$lib/notifications.svelte';
 
   onMount(() => {
     const unlisten = onFileSendProgress((p) => {
@@ -32,7 +33,10 @@
     // 文件日志是进程级单份,这里的按钮/路径只是它的视图:挂载时拉一次(后台模式重开窗口、
     // agent 经 MCP 开的记录都能对上),之后跟着广播走(别的窗口开/停、写盘失败)。
     const unlistenLogging = onLoggingChanged(applyLoggingStatus);
-    getLoggingStatus().then(applyLoggingStatus).catch((e) => console.error('查询日志状态失败:', e));
+    getLoggingStatus().then(applyLoggingStatus).catch((e) => {
+      console.error('查询日志状态失败:', e);
+      notifyError('查询日志状态失败', e);
+    });
 
     return () => {
       unlisten.then((f) => f());
@@ -84,10 +88,14 @@
       if (sendText.value === text) suggest?.dismiss();
       // 只记输入框手动发送的文本指令;HEX 内容不记(联想在 HEX 模式下也不弹)
       if (!isHex) {
-        sendHistoryPush(text).catch((e) => console.error('记录发送历史失败:', e));
+        sendHistoryPush(text).catch((e) => {
+          console.error('记录发送历史失败:', e);
+          notifyError('记录发送历史失败', e);
+        });
       }
     } catch (e) {
       console.error('发送失败:', e);
+      notifyError('发送失败', e);
       sendErrorFlash = true;
       setTimeout(() => (sendErrorFlash = false), 300);
     } finally {
@@ -100,6 +108,7 @@
       await send(windowPort.value!, '1A', 'None', true);
     } catch (e) {
       console.error('发送 Ctrl-Z 失败:', e);
+      notifyError('发送 Ctrl-Z 失败', e);
     }
   }
 
@@ -109,11 +118,16 @@
   let fileSendError = $state<string | null>(null);
 
   async function handleSelectFile() {
-    const path = await openFileDialog('选择要发送的文件');
-    if (!path) return;
-    fileSendPath.value = path;
-    fileSendProgress.value = 0;
-    fileSendError = null;
+    try {
+      const path = await openFileDialog('选择要发送的文件');
+      if (!path) return;
+      fileSendPath.value = path;
+      fileSendProgress.value = 0;
+      fileSendError = null;
+    } catch (e) {
+      console.error('选择发送文件失败:', e);
+      notifyError('选择发送文件失败', e);
+    }
   }
 
   async function handleSendFile() {
@@ -126,6 +140,7 @@
       fileSendProgress.value = 100;
     } catch (e) {
       console.error('文件发送失败:', e);
+      notifyError('文件发送失败', e);
       fileSendError = String(e);
       fileSendProgress.value = 0;
     } finally {
@@ -149,7 +164,10 @@
       logFileStarted = true;
     }
     if (s.active) loggingError = null;
-    if (s.error) loggingError = s.error;
+    if (s.error) {
+      loggingError = s.error;
+      notifyError('日志写入失败', s.error);
+    }
   }
 
   // 点路径框：选/换日志文件路径（仅设路径，不自动开始记录）
@@ -170,6 +188,7 @@
       loggingError = null;
     } catch (e) {
       console.error('选择日志路径失败:', e);
+      notifyError('选择日志路径失败', e);
     }
   }
 
@@ -193,6 +212,7 @@
       loggingError = null;
     } catch (e) {
       console.error('启动日志失败:', e);
+      notifyError('启动日志失败', e);
       loggingError = String(e);
     }
   }
@@ -204,6 +224,7 @@
       loggingActive.value = false;
     } catch (e) {
       console.error('停止日志失败:', e);
+      notifyError('停止日志失败', e);
     }
   }
 

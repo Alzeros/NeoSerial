@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Isolated notification regressions</title>
+<body><div id="app"></div>
+<script type="module">
+import '/src/app.css';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
+import { mount, tick } from 'svelte';
+import * as stores from '/src/lib/stores.svelte.ts';
+import { presetScriptModules } from '/src/lib/types.ts';
+
+const label = new URL(location.href).searchParams.get('window') || 'main';
+mockWindows(label);
+const clone = value => JSON.parse(JSON.stringify(value));
+const saved = {
+  ui: {
+    log_font_size: 14, log_line_height: 1.6, log_dir_label: 'short', log_font_latin: 'default',
+    log_font_cjk: 'default', text_encoding: 'Ascii', show_timestamp: true, log_send: true,
+    ring_buffer_capacity: 5000, log_buffer_max_bytes: 4194304, line_ending: 'Crlf',
+    display_mode: 'Ascii', auto_scroll: true,
+  },
+  presets: { theme: 'preset-1', baud_rates: [9600, 115200] },
+  mcp: { port: 34594, auto_start: false }, command_index: {}, error_keywords: [],
+  serial_defaults: { baud_rate: 115200, data_bits: 'Eight', parity: 'None', stop_bits: 'One', flow_control: 'None' },
+};
+let sequence = presetScriptModules();
+sequence[0].pages[0].commands[0].command = 'AT';
+const calls = [], failures = new Map(), responses = new Map();
+const scenario = new URL(location.href).searchParams.get('scenario');
+if (scenario === 'startup-errors') {
+  responses.set('take_pending_takeover', { port: 'COM_TEST', baud: 115200 });
+  failures.set('connect', 'automatic takeover rejected');
+  failures.set('get_logging_status', 'logging status unavailable');
+}
+mockIPC(async (cmd, args) => {
+  calls.push({ cmd, args: args ? clone(args) : null });
+  if (failures.has(cmd)) {
+    const error = failures.get(cmd);
+    failures.delete(cmd);
+    throw error;
+  }
+  if (responses.has(cmd)) return clone(responses.get(cmd));
+  switch (cmd) {
+    case 'get_settings': return clone(saved);
+    case 'patch_settings': return clone(saved);
+    case 'load_sequence_auto': return clone(sequence);
+    case 'save_sequence_auto': sequence = args.data; return;
+    case 'get_window_conn_state': return { connected: false };
+    case 'take_pending_takeover': return null;
+    case 'command_index_load': return { documents: [], commands: [], fetched_at: null };
+    case 'list_ports': return [{ port: 'COM_TEST', device: 'Isolated simulated port' }];
+    case 'send_history_load':
+    case 'send_history_push':
+    case 'get_mcp_only_connections': return [];
+    case 'get_logging_status': return { active: false, path: null, error: null };
+    case 'get_mcp_status': return { running: false, port: null };
+    case 'plugin:window|is_maximized': return false;
+    case 'plugin:app|version': return 'test';
+    default: return null;
+  }
+}, { shouldMockEvents: true });
+
+const { preloadBeforeMount } = await import('/src/lib/startup.ts');
+await preloadBeforeMount();
+const App = (await import('/src/App.svelte')).default;
+mount(App, { target: document.querySelector('#app') });
+const notifications = await import('/src/lib/notifications.svelte.ts');
+await tick();
+window.notificationTest = {
+  stores, notifications, calls, emit, tick, scenario,
+  failNext(cmd, error = `isolated ${cmd} failure`) { failures.set(cmd, error); },
+  reply(cmd, value) { responses.set(cmd, value); },
+  clear() {
+    for (const item of notifications.notifications.items) notifications.dismissNotification(item.id);
+    return tick();
+  },
+  button(text) {
+    return [...document.querySelectorAll('button')].find(button => button.textContent.trim() === text)
+      ?? [...document.querySelectorAll('button')].find(button => button.textContent.trim().replace(/\s+/g, ' ').includes(text));
+  },
+  connect() {
+    stores.connectionParams.port = 'COM_TEST';
+    stores.windowPort.value = 'COM_TEST';
+    stores.currentPort.value = 'COM_TEST';
+    stores.connected.value = true;
+    return tick();
+  },
+};
+</script>
+</body></html>

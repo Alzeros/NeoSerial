@@ -2,14 +2,8 @@
   import { availablePorts, connectionParams, connected, presetBaudRates, windowPort, settingsRequest } from '$lib/stores';
   import { connect, disconnect, listPorts } from '$lib/tauri';
   import { normalizePorts, shouldPollPorts } from '$lib/connectionPorts';
+  import { notifyError } from '$lib/notifications.svelte';
   import CustomSelect from '$components/ui/CustomSelect.svelte';
-
-  // 局部错误提示(端口已连接/被占用),4s 自动消失。不依赖全局 store 避免跨窗口响应性问题。
-  let connErr = $state<string | null>(null);
-  function showErr(msg: string) {
-    connErr = msg;
-    setTimeout(() => { connErr = null; }, 4000);
-  }
 
   // 波特率下拉项 = 预设波特率（来自设置，持久化）
   const baudRates = $derived(presetBaudRates.value.map((b) => String(b)));
@@ -68,7 +62,6 @@
     // windowPort 只用于"已连接后"定位 send/disconnect,连接前用 connectionParams.port。
     const targetPort = connectionParams.port;
     if (!targetPort) return;
-    connErr = null;
     try {
       await connect({
         port: targetPort,
@@ -80,8 +73,7 @@
       });
     } catch (e) {
       console.error('[connect] 失败:', e);
-      const msg = typeof e === 'string' ? e : e instanceof Error ? e.message : String(e);
-      showErr(msg);
+      notifyError('连接失败', e);
     }
   }
 
@@ -90,6 +82,7 @@
       if (windowPort.value) await disconnect(windowPort.value);
     } catch (e) {
       console.error('断开失败:', e);
+      notifyError('断开失败', e);
     }
   }
 
@@ -145,15 +138,6 @@
       <CustomSelect bind:value={connectionParams.flowControl} options={flowControlOptions} width="84px" disabled={connected.value} />
     </label>
   </div>
-
-  <!-- 连接错误提示(端口已连接/被占用等):absolute 定位在连接按钮正下方,淡红底深红字 -->
-  {#if connErr}
-    <div class="absolute right-5 top-full mt-1 z-[200] px-3 py-1.5 rounded-md text-[12px] shadow-lg flex items-center gap-1.5 whitespace-nowrap"
-         style="background: #fee2e2; color: #b91c1c;">
-      <span>⚠</span>
-      <span>{connErr}</span>
-    </div>
-  {/if}
 
   <!-- 右侧：连接/断开按钮（ml-auto 推至最右，与下拉框底部对齐） -->
   <div class="flex-shrink-0 ml-auto">

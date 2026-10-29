@@ -117,7 +117,7 @@ export async function withHeadlessBrowser(test, { timeoutMs = 90000 } = {}) {
       const image = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
       await writeFile(path, Buffer.from(image.data, 'base64'));
     };
-    await test({ base, call, evaluate, until, click, fresh, delay, screenshot });
+    await test({ base, debugUrl: `http://127.0.0.1:${port}`, call, evaluate, until, click, fresh, delay, screenshot });
     assert.deepEqual(errors, [], 'No uncaught frontend exceptions');
   } finally {
     clearTimeout(deadline);

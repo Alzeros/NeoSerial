@@ -207,6 +207,10 @@ export async function stopLogging(): Promise<void> {
   await invoke('stop_logging');
 }
 
+export async function exportLogSnippet(path: string, text: string): Promise<void> {
+  await invoke('export_log_snippet', { path, text });
+}
+
 /** 文件日志的全局状态(logger 是进程级单份)。path:记录中是正在写的文件,停止后是上次路径。 */
 export interface LoggingStatus {
   active: boolean;
