@@ -1,5 +1,12 @@
 <script lang="ts">
+  import CustomSelect from '$components/ui/CustomSelect.svelte';
   import type { LogFilter } from '$lib/logDiagnostics';
+
+  const directionOptions = [
+    { label: '全部', value: 'all' },
+    { label: '仅接收', value: 'rx' },
+    { label: '仅发送', value: 'tx' },
+  ];
 
   let {
     filter = $bindable(), selectionMode = $bindable(false), context = $bindable(10), marker = $bindable(''),
@@ -25,10 +32,8 @@
 
 <div data-log-tools class="tools border-b border-[var(--border)] px-3 py-2" style="background: var(--background-elevated);">
   <div class="tool-row">
-    <label>方向
-      <select data-log-direction bind:value={filter.direction} aria-label="日志方向">
-        <option value="all">全部</option><option value="rx">仅接收</option><option value="tx">仅发送</option>
-      </select>
+    <label data-log-direction>方向
+      <CustomSelect bind:value={filter.direction} options={directionOptions} width="100px" />
     </label>
     <label><input data-log-errors type="checkbox" bind:checked={filter.errorsOnly} />仅错误</label>
     <input data-log-include aria-label="包含关键词" placeholder="包含关键词（字面匹配）" bind:value={filter.include} />
@@ -66,7 +71,7 @@
   .tools { display: flex; flex-direction: column; gap: 6px; font-size: 12px; color: var(--muted-foreground); max-height: 42%; overflow-y: auto; flex-shrink: 0; }
   .tool-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; }
   label { display: inline-flex; align-items: center; gap: 5px; }
-  button, select, input:not([type="checkbox"]) { min-height: 28px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); padding: 3px 7px; font: inherit; }
+  button, input:not([type="checkbox"]) { min-height: 28px; border: 1px solid var(--border); border-radius: 5px; background: var(--background); color: var(--foreground); padding: 3px 7px; font: inherit; }
   button { cursor: pointer; white-space: nowrap; }
   button:hover:not(:disabled) { background: var(--overlay-hover); }
   button:disabled { opacity: 0.45; cursor: not-allowed; }

@@ -1973,6 +1973,16 @@ async fn dropping_the_modern_stream_cancels_the_in_flight_call() {
     stream.flush().await.expect("flush");
     let mut buf = [0u8; 256];
     let _ = tokio::time::timeout(std::time::Duration::from_millis(400), stream.read(&mut buf)).await;
+    let activity_deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    let activity_id = loop {
+        let snapshot = shared.call_log.lock().unwrap().activity.snapshot();
+        if let Some(call) = snapshot.active.iter().find(|call| call.port.as_deref() == Some("COM-drop")) {
+            assert_eq!(call.tool, "send_and_read");
+            break call.id;
+        }
+        assert!(std::time::Instant::now() < activity_deadline, "请求执行时应发布活动状态");
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    };
     let dropped_at = std::time::Instant::now();
     drop(stream);
 
@@ -2001,6 +2011,10 @@ async fn dropping_the_modern_stream_cancels_the_in_flight_call() {
         assert!(std::time::Instant::now() < deadline, "断开后 5s 内应出现取消记录(工具没有停)");
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+    let activity = shared.call_log.lock().unwrap().activity.snapshot();
+    assert!(!activity.active.iter().any(|call| call.id == activity_id));
+    assert_eq!(activity.recent[0].port.as_deref(), Some("COM-drop"));
+    assert_eq!(activity.recent[0].ok, Some(false));
 }
 
 // ============ outputSchema:成功形态校验 ============

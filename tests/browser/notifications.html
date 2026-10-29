@@ -29,6 +29,8 @@ let sequence = presetScriptModules();
 sequence[0].pages[0].commands[0].command = 'AT';
 const calls = [], failures = new Map(), responses = new Map();
 const scenario = new URL(location.href).searchParams.get('scenario');
+let resolveActivity;
+let activityWait = scenario === 'activity-race' ? new Promise(resolve => { resolveActivity = resolve; }) : null;
 if (scenario === 'startup-errors') {
   responses.set('take_pending_takeover', { port: 'COM_TEST', baud: 115200 });
   failures.set('connect', 'automatic takeover rejected');
@@ -36,6 +38,11 @@ if (scenario === 'startup-errors') {
 }
 mockIPC(async (cmd, args) => {
   calls.push({ cmd, args: args ? clone(args) : null });
+  if (cmd === 'get_mcp_activity' && activityWait) {
+    const pending = activityWait;
+    activityWait = null;
+    return await pending;
+  }
   if (failures.has(cmd)) {
     const error = failures.get(cmd);
     failures.delete(cmd);
@@ -56,6 +63,8 @@ mockIPC(async (cmd, args) => {
     case 'get_mcp_only_connections': return [];
     case 'get_logging_status': return { active: false, path: null, error: null };
     case 'get_mcp_status': return { running: false, port: null };
+    case 'get_mcp_activity': return { running: false, revision: 0, active: [], recent: [] };
+    case 'get_mcp_call_log': return [];
     case 'plugin:window|is_maximized': return false;
     case 'plugin:app|version': return 'test';
     default: return null;
@@ -69,7 +78,7 @@ mount(App, { target: document.querySelector('#app') });
 const notifications = await import('/src/lib/notifications.svelte.ts');
 await tick();
 window.notificationTest = {
-  stores, notifications, calls, emit, tick, scenario,
+  stores, notifications, calls, emit, tick, scenario, resolveActivity,
   failNext(cmd, error = `isolated ${cmd} failure`) { failures.set(cmd, error); },
   reply(cmd, value) { responses.set(cmd, value); },
   clear() {

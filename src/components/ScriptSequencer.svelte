@@ -7,10 +7,11 @@
   import McpCallLog from '$components/McpCallLog.svelte';
   import QuickCommands from '$components/QuickCommands.svelte';
   import DataProcessingPanel from '$components/DataProcessingPanel.svelte';
-  import { cachedSettings, settingsRequest } from '$lib/stores';
+  import { cachedSettings, settingsRequest, mcpLogRequest } from '$lib/stores';
 
   // 面板顶部视图切换:快捷指令 / 数据处理 / 指令查询 / MCP 日志
   let scriptView = $state<'scripts' | 'data' | 'reference' | 'mcp'>('scripts');
+  let requestedMcpTab = $state(false);
 
   // tab 显隐 = 功能启用 AND 该模块 tab 开关。功能关时 tab 不显示但开关值保留(不改值,
   // 只控制是否生效);功能重开按原值生效。避免"关功能把 tab 值清掉、重开要重设"。
@@ -19,9 +20,16 @@
     (cachedSettings.value?.ui?.show_suggest_tab ?? true),
   );
   const showMcpTab = $derived(
-    (cachedSettings.value?.mcp?.auto_start ?? true) &&
-    (cachedSettings.value?.ui?.show_mcp_tab ?? true),
+    requestedMcpTab || ((cachedSettings.value?.mcp?.auto_start ?? true) &&
+    (cachedSettings.value?.ui?.show_mcp_tab ?? true)),
   );
+  $effect(() => {
+    if (mcpLogRequest.pending) {
+      mcpLogRequest.pending = false;
+      requestedMcpTab = true;
+      scriptView = 'mcp';
+    }
+  });
   const showDataTab = $derived(cachedSettings.value?.ui?.show_data_tab ?? true);
   // 功能/tab 关掉、当前正停在该 tab 时,弹回"快捷指令"
   $effect(() => {

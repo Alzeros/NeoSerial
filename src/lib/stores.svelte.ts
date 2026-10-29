@@ -231,6 +231,7 @@ export const settingsRequest = $state<{
 
 // ============ 脚本序列面板 ============
 export const scriptPanelOpen = $state<{ value: boolean }>({ value: true });
+export const mcpLogRequest = $state({ pending: false });
 export const scriptPanelWidth = $state<{ value: number }>({ value: 500 });
 
 /** 右栏模块列表（Page 之上的分组层）。预置功能，代码写死，用户不可增删。 */

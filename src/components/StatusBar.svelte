@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { connected, currentPort, rxBytes, txBytes, logDirLabelStyle, windowPort } from '$lib/stores';
   import { getModemStatus, onModemStatus, resetStats } from '$lib/tauri';
+  import McpActivityStatus from './McpActivityStatus.svelte';
 
   function formatBytes(n: number): string {
     if (n < 1024) return n.toString();
@@ -68,7 +69,7 @@
   });
 </script>
 
-<div class="flex items-center gap-6 border-t border-[var(--border)] px-5 py-1.5" data-theme-target="background-elevated" style="background: var(--background-elevated);">
+<div class="flex min-w-0 items-center gap-3 border-t border-[var(--border)] px-5 py-1.5" data-theme-target="background-elevated" style="background: var(--background-elevated);">
   <!-- 连接状态：已连接 + 正在收发时圆点呼吸 -->
   <span class="flex items-center gap-2 text-[13px] leading-none">
     <span
@@ -100,4 +101,5 @@
     title="清零收发统计"
     onclick={handleResetStats}
   >清空</button>
+  <McpActivityStatus />
 </div>

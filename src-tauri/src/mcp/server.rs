@@ -1118,6 +1118,7 @@ impl ServerHandler for NeoserialHandler {
 /// drop 时都把这条调用写进环形并 emit 给前端。早返回路径未 set_result → 兜底记 ok=false。
 struct CallRecorder {
     shared: Arc<McpShared>,
+    activity_id: Option<u64>,
     tool: String,
     args: String,
     start: std::time::Instant,
@@ -1128,7 +1129,22 @@ struct CallRecorder {
 impl CallRecorder {
     fn new(shared: Arc<McpShared>, tool: String, args: &Value) -> Self {
         use crate::mcp::call_log::{truncate, ARGS_MAX};
+        let activity = shared.call_log.lock().ok().map(|mut log| {
+            let id = log.activity.start(
+                &tool,
+                super::activity::call_port(&tool, args),
+                chrono::Utc::now().timestamp_millis(),
+            );
+            (id, log.activity.snapshot())
+        });
+        if let (Some(app), Some((_, snapshot))) = (&shared.app_handle, &activity) {
+            let _ = app.emit("mcp-activity", super::activity::McpActivityState {
+                running: true,
+                activity: snapshot.clone(),
+            });
+        }
         Self {
+            activity_id: activity.map(|(id, _)| id),
             shared,
             tool,
             args: truncate(&args.to_string(), ARGS_MAX),
@@ -1157,11 +1173,23 @@ impl Drop for CallRecorder {
             error,
             duration_ms: self.start.elapsed().as_millis() as u64,
         };
-        if let Ok(mut log) = self.shared.call_log.lock() {
+        let activity = if let Ok(mut log) = self.shared.call_log.lock() {
             log.push(rec.clone());
-        }
+            if let Some(id) = self.activity_id {
+                log.activity.finish(id, ok, chrono::Utc::now().timestamp_millis());
+            }
+            Some(log.activity.snapshot())
+        } else {
+            None
+        };
         if let Some(app) = &self.shared.app_handle {
             let _ = app.emit("mcp-call", rec);
+            if let Some(snapshot) = activity {
+                let _ = app.emit("mcp-activity", super::activity::McpActivityState {
+                    running: true,
+                    activity: snapshot,
+                });
+            }
         }
     }
 }
@@ -1385,3 +1413,7 @@ pub async fn run_server(shared: Arc<McpShared>, listener: std::net::TcpListener)
         .map_err(|e| format!("axum serve 失败: {}", e))?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "activity_recorder_tests.rs"]
+mod activity_recorder_tests;

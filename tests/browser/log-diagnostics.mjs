@@ -36,12 +36,25 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
   console.log('PASS: following is independent of display pause and preserves the reading position.');
 
   await evaluate("document.querySelector('[data-log-tools-toggle]').click();persistenceTest.tick()");
+  assert.ok(await evaluate("Boolean(document.querySelector('[data-log-direction] .custom-select-trigger'))"),'direction uses the shared custom dropdown rather than a native select');
+  assert.equal(await evaluate("document.querySelector('[data-log-direction] select')"),null);
+  const selectDirection = async label => {
+    await evaluate("document.querySelector('[data-log-direction] .custom-select-trigger').click();persistenceTest.tick()");
+    assert.deepEqual(await evaluate("[...document.querySelectorAll('[data-log-direction] [role=option]')].map(element=>element.textContent.trim())"),['全部','仅接收','仅发送']);
+    await evaluate(`(()=>{const option=[...document.querySelectorAll('[data-log-direction] [role=option]')].find(element=>element.textContent.trim()===${JSON.stringify(label)});option.click();return persistenceTest.tick();})()`);
+    assert.equal(await evaluate("document.querySelectorAll('[data-log-direction] [role=option]').length"),0,'choosing a direction closes the custom menu');
+    assert.equal(await evaluate("document.querySelector('[data-log-direction] .custom-select-trigger').textContent.trim()"),label);
+  };
+  await selectDirection('仅发送');
+  assert.ok(await evaluate("document.querySelectorAll('[data-log-row]').length>0&&[...document.querySelectorAll('[data-log-row]')].every(element=>element.querySelector('[data-dir=tx]'))"));
+  await selectDirection('全部');
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),201);
   const setInput = async (selector,value) => evaluate(`(()=>{const element=document.querySelector(${JSON.stringify(selector)});element.value=${JSON.stringify(value)};element.dispatchEvent(new Event('input',{bubbles:true}));element.dispatchEvent(new Event('change',{bubbles:true}));return persistenceTest.tick();})()`);
   await setInput('[data-log-include]','ERROR');
   assert.ok(await evaluate("[...document.querySelectorAll('[data-log-row]')].every(element=>element.textContent.includes('ERROR'))"));
   await setInput('[data-log-exclude]','14');
   assert.ok(await evaluate("[...document.querySelectorAll('[data-log-row]')].every(element=>!element.textContent.includes('ERROR 14'))"));
-  await setInput('[data-log-direction]','rx');
+  await selectDirection('仅接收');
   assert.ok(await evaluate("[...document.querySelectorAll('[data-log-row]')].every(element=>element.querySelector('[data-dir=rx]'))"));
   await evaluate("document.querySelector('[data-log-next-error]').click();persistenceTest.tick()");
   await until("!persistenceTest.stores.autoScroll.value");
@@ -51,6 +64,7 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
   assert.match(await evaluate("document.querySelector('[data-log-empty]').textContent"),/筛选/);
   await evaluate("document.querySelector('[data-log-filter-reset]').click();persistenceTest.tick()");
   assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),201);
+  assert.equal(await evaluate("document.querySelector('[data-log-direction] .custom-select-trigger').textContent.trim()"),'全部');
   console.log('PASS: filters compose without deleting retained records.');
 
   await evaluate("document.querySelector('[data-log-select-toggle]').click();persistenceTest.tick()");
@@ -123,7 +137,7 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
 
   await fresh('main');
   await evaluate("document.querySelector('[data-log-tools-toggle]').click();persistenceTest.tick()");
-  await setInput('[data-log-direction]','rx');
+  await selectDirection('仅接收');
   await evaluate(`(()=>{
     window.hexSlices=0;
     window.hexComparisons=0;
@@ -140,7 +154,7 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
   })()`);
   assert.equal(await evaluate('hexSlices'),0,'direction-only filters do not convert excluded HEX payloads');
   await setInput('[data-log-include]','41');
-  await setInput('[data-log-direction]','tx');
+  await selectDirection('仅发送');
   assert.equal(await evaluate('hexSlices'),4,'each eligible record is formatted only once for filtering and rendering');
   assert.equal(await evaluate('hexComparisons'),2);
   await evaluate('persistenceTest.stores.appendLogLine(makeInstrumentedHexRow(3));persistenceTest.tick()');

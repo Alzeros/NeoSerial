@@ -12,6 +12,7 @@
     "test:unit": "node --test tests/*.test.ts",
     "test:logs": "node tests/browser/log-diagnostics.mjs && node tests/browser/log-regressions.mjs",
     "test:notifications": "node tests/browser/notifications.mjs",
+    "test:activity": "node tests/browser/mcp-activity.mjs",
     "test:persistence": "node tests/browser/persistence-regressions.mjs",
     "test:ui": "node tests/browser/ui-regressions.mjs",
     "tauri": "tauri"

@@ -32,12 +32,14 @@ const CAP: usize = 200;
 #[derive(Default)]
 pub struct McpCallLog {
     records: VecDeque<McpCallRecord>,
+    pub activity: super::activity::McpActivity,
 }
 
 impl McpCallLog {
     pub fn new() -> Self {
         Self {
             records: VecDeque::with_capacity(CAP),
+            activity: Default::default(),
         }
     }
 
@@ -57,6 +59,7 @@ impl McpCallLog {
     /// 清了不影响 agent 的任何状态;之后的调用照常记录。
     pub fn clear(&mut self) {
         self.records.clear();
+        self.activity.clear_recent();
     }
 }
 

@@ -575,6 +575,14 @@ export function onMcpCall(cb: (rec: McpCallRecord) => void) {
   return getCurrentWebview().listen<McpCallRecord>('mcp-call', (e) => cb(e.payload));
 }
 
+export async function getMcpActivity(): Promise<import('./mcpActivity').McpActivityState> {
+  return await invoke('get_mcp_activity');
+}
+
+export function onMcpActivity(cb: (snapshot: import('./mcpActivity').McpActivityState) => void) {
+  return getCurrentWebview().listen<import('./mcpActivity').McpActivityState>('mcp-activity', (event) => cb(event.payload));
+}
+
 /** 清空后端的调用记录(进程级,所有窗口一起清)。成功后后端广播 mcp-call-log-cleared。 */
 export async function clearMcpCallLog(): Promise<void> {
   await invoke('clear_mcp_call_log');

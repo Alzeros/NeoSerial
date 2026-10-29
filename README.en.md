@@ -209,6 +209,10 @@ To verify, send this to your client:
 
 The **MCP log (MCP 日志)** tab on the right shows every tool call from the agent in real time (tool, arguments, success, duration).
 
+The bottom **AI/MCP activity summary** shows a stopped service, running tools with elapsed time/concurrency, or the latest call result. It is scoped to the window's connected, bound, or selected serial port; with no selected port, only explicitly application-level activity is shown. Other ports never affect this summary. Click it to open the existing MCP log, temporarily revealing a hidden sidebar/tab without changing saved settings.
+
+This is observation only: it does not change shared permissions or imply exclusive control, an online AI client, or model thinking. A submitted send is not device execution success, and a completed sequence-start call does not mean its background sequence finished. Completion, failure and cancellation remove the active call; clearing the MCP log preserves running calls. Activity is in memory only, with latest results bounded to 64 port/application scopes. Events update immediately; snapshots reconcile every five seconds and on window focus. Query failures show an unavailable state instead of stale activity.
+
 ### Tools (19)
 
 Tool execution results return `{ ok: bool, ... }`: `ok=false` includes an `error` reason (in Chinese) and sets `isError=true`; successful results set `isError=false`. Text JSON and `structuredContent` contain the same payload. Malformed argument structures (such as missing required fields or incorrect field types) and unknown tool names return JSON-RPC error `-32602`, without a tool `result`.
@@ -313,6 +317,7 @@ npm run test:ui                # UI regressions: quick command table, send area 
 npm run test:persistence       # persistence regressions: panel autosave, concurrent settings saves
 npm run test:logs              # log follow/pause, diagnostics/export, copy, retention and performance
 npm run test:notifications     # failure feedback, deduplication, copy-details and window isolation
+npm run test:activity          # MCP activity lifecycle, port isolation, snapshot races and log navigation
 ```
 
 - The frontend browser regressions above need neither Rust nor a serial device: they start a temporary Vite server and an isolated headless Chrome/Edge with mocked IPC, and never touch your real config. If the browser is not found, point `BROWSER_BINARY` at its executable.

@@ -3,6 +3,7 @@
 use tauri::{AppHandle, Emitter, State};
 
 use crate::mcp::call_log::McpCallRecord;
+use crate::mcp::activity::McpActivityState;
 use crate::state::AppState;
 
 /// 返回环形缓冲全量(最旧在前,上限 200)。前端开"MCP 日志"tab 时拉一次,
@@ -21,11 +22,20 @@ pub fn get_mcp_call_log(state: State<'_, AppState>) -> Vec<McpCallRecord> {
 /// 不然别的窗口(或本窗口切回 tab 重新拉快照时)会把已清的记录再显示出来。
 #[tauri::command]
 pub fn clear_mcp_call_log(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
-    state
-        .call_log
-        .lock()
-        .map(|mut log| log.clear())
-        .map_err(|e| e.to_string())?;
+    let running = state.mcp_port.lock().map_err(|error| error.to_string())?.is_some();
+    let activity = {
+        let mut log = state.call_log.lock().map_err(|error| error.to_string())?;
+        log.clear();
+        log.activity.snapshot()
+    };
     let _ = app.emit("mcp-call-log-cleared", ());
+    let _ = app.emit("mcp-activity", McpActivityState { running, activity });
     Ok(())
+}
+
+#[tauri::command]
+pub fn get_mcp_activity(state: State<'_, AppState>) -> Result<McpActivityState, String> {
+    let running = state.mcp_port.lock().map_err(|error| error.to_string())?.is_some();
+    let activity = state.call_log.lock().map_err(|error| error.to_string())?.activity.snapshot();
+    Ok(McpActivityState { running, activity })
 }
