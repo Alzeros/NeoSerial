@@ -14,14 +14,14 @@
     (cachedSettings.value?.ui?.show_mcp_tab ?? false),
   );
   const logAction = $derived(showMcpTab ? '查看 MCP 日志' : '打开 MCP 服务设置');
-  const logHint = $derived(showMcpTab ? '点击查看 MCP 日志。' : 'MCP 日志区已关闭；点击前往“设置 → 扩展 → MCP 服务”。');
+  const logHint = $derived(showMcpTab ? '点击查看 MCP 日志' : '点击打开 MCP 服务设置');
   const view = $derived(unavailable
-    ? { text: '状态暂不可用', detail: '未能读取 MCP 活动状态；恢复后会自动更新。', tone: 'unknown' }
+    ? { text: '状态暂不可用', detail: 'MCP 状态暂不可用', tone: 'unknown' }
     : running === false
-      ? { text: '未启用', detail: 'MCP 服务未运行。不表示串口断开。', tone: 'disabled' }
+      ? { text: '未启用', detail: 'MCP 服务未运行', tone: 'disabled' }
       : snapshot
         ? activitySummary(snapshot, port, now)
-        : { text: '正在读取状态…', detail: '正在读取 MCP 服务和工具调用状态。', tone: 'loading' });
+        : { text: '正在读取状态…', detail: '正在读取 MCP 状态', tone: 'loading' });
 
   function validSnapshot(value: McpActivitySnapshot | null | undefined): value is McpActivitySnapshot {
     return !!value && Number.isSafeInteger(value.revision) && Array.isArray(value.active) && Array.isArray(value.recent);

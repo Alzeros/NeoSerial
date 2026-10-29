@@ -54,8 +54,7 @@ function ago(timestamp: number, now: number): string {
 
 export function activitySummary(snapshot: McpActivitySnapshot, port: string | null, now: number): { text: string; detail: string; tone: 'active' | 'idle' | 'error' } {
   const active = snapshot.active.filter(call => call.port === port).sort((first, second) => first.started_at_ms - second.started_at_ms);
-  const scope = port ? `当前端口：${port}` : '应用级（不属于特定串口）';
-  const explanation = '仅反映 MCP 工具调用，不代表设备执行成功或 AI 独占控制。后台序列可能继续运行，请查看序列执行状态。点击打开全部端口的 MCP 日志。';
+  const scope = port ? `当前端口：${port}` : '应用级';
   const prefix = port ? '' : '应用级 · ';
   if (active.length) {
     const first = active[0];
@@ -63,7 +62,7 @@ export function activitySummary(snapshot: McpActivitySnapshot, port: string | nu
     const name = labels[first.tool]?.[0] ?? '工具调用';
     return {
       text: `${prefix}${active.length > 1 ? `${active.length} 项调用 · ` : ''}${name} · ${elapsed}s`,
-      detail: `${scope}\n${active.map(call => `${labels[call.tool]?.[0] ?? '工具调用'} (${call.tool})`).join('\n')}\n${explanation}`,
+      detail: `${scope}\n${active.map(call => labels[call.tool]?.[0] ?? '工具调用').join('、')}`,
       tone: 'active',
     };
   }
@@ -72,9 +71,9 @@ export function activitySummary(snapshot: McpActivitySnapshot, port: string | nu
     const name = recent.ok ? labels[recent.tool]?.[1] ?? '工具调用已完成' : `${labels[recent.tool]?.[0] ?? '工具调用'}失败`;
     return {
       text: `${prefix}最近：${name} · ${ago(recent.finished_at_ms ?? recent.started_at_ms, now)}`,
-      detail: `${scope}\n${name} (${recent.tool})\n${explanation}`,
+      detail: `${scope}\n${name}`,
       tone: recent.ok ? 'idle' : 'error',
     };
   }
-  return { text: `${prefix}暂无执行中的调用`, detail: `${scope}\n${explanation}`, tone: 'idle' };
+  return { text: `${prefix}暂无执行中的调用`, detail: scope, tone: 'idle' };
 }

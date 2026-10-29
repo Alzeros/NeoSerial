@@ -70,6 +70,7 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   await action(`notificationTest.stores.currentPort.value='COM_TEST';notificationTest.stores.connectionParams.port='COM_TEST';notificationTest.stores.windowPort.value='COM_TEST';notificationTest.stores.connected.value=true`);
   await publish(1, [active(1, 'COM_OTHER')]);
   await expect(/暂无执行中的调用/);
+  assert.equal(await evaluate('document.querySelector("[data-mcp-activity]").title'), '当前端口：COM_TEST\n点击打开 MCP 服务设置');
   assert.doesNotMatch(await text(), /COM_OTHER|等待串口响应/);
   await publish(2, [active(2, 'COM_TEST')]);
   await expect(/等待串口响应/);
@@ -91,7 +92,7 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   await expect(/发送已提交/);
   await publish(6, [], [complete(5, 'COM_TEST', 'sequence_run')]);
   await expect(/启动序列调用已完成/);
-  assert.match(await evaluate('document.querySelector("[data-mcp-activity]").title'), /后台序列可能继续运行/);
+  assert.equal(await evaluate('document.querySelector("[data-mcp-activity]").title'), '当前端口：COM_TEST\n启动序列调用已完成\n点击打开 MCP 服务设置');
   await publish(7, [], [complete(6, 'COM_TEST', 'send', false)]);
   await expect(/失败/);
   assert.equal(await evaluate('document.querySelector("[data-mcp-activity]").dataset.tone'), 'error');
@@ -130,6 +131,7 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   await until('document.body.textContent.includes("isolated write rejected")');
   assert.equal(await evaluate('notificationTest.stores.scriptPanelOpen.value'), true);
   assert.equal(await evaluate('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab'), true);
+  assert.match(await evaluate('document.querySelector("[data-mcp-activity]").title'), /\n点击查看 MCP 日志$/);
   await action('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab=false');
   assert.equal(await evaluate('document.querySelector("[data-module-tab=mcp]")'), null, 'disabling the log tab removes it even after activity navigation');
   assert.equal(await evaluate('document.querySelector("[data-module-tab=scripts]")?.getAttribute("aria-current")'), 'page');
@@ -143,7 +145,7 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   assert.equal(await evaluate('notificationTest.stores.scriptPanelOpen.value'), false, 'a disabled log shortcut must not force the sidebar open');
   assert.equal(await evaluate('notificationTest.stores.mcpLogRequest.pending'), false);
   assert.equal(await evaluate('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab'), false);
-  assert.match(await evaluate('document.querySelector("[data-mcp-activity]").title'), /设置.*扩展.*MCP 服务/);
+  assert.match(await evaluate('document.querySelector("[data-mcp-activity]").title'), /\n点击打开 MCP 服务设置$/);
   assert.match(await evaluate('document.querySelector("[data-mcp-activity]").getAttribute("aria-label")'), /设置/);
   await publish(14, [active(14, 'COM_OTHER')]);
   assert.equal(await evaluate('document.querySelector("[data-module-tab=mcp]")'), null, 'activity updates never reopen a disabled tab');

@@ -41,6 +41,15 @@ test('active elapsed time uses whole seconds without rounding up', () => {
   }
 });
 
+test('tooltip details contain only scope and concise call status', () => {
+  assert.equal(activitySummary(snapshot(), 'COM1', 5000).detail, '当前端口：COM1');
+  assert.equal(activitySummary(snapshot(), null, 5000).detail, '应用级');
+  assert.equal(activitySummary(snapshot([call(1, 'COM1')]), 'COM1', 5000).detail, '当前端口：COM1\n发送并等待串口响应');
+  assert.equal(activitySummary(snapshot([call(1, 'COM1'), call(2, 'COM1', 'send_file')]), 'COM1', 5000).detail, '当前端口：COM1\n发送并等待串口响应、发送文件');
+  assert.equal(activitySummary(snapshot([], [call(1, 'COM1', 'send', true)]), 'COM1', 5000).detail, '当前端口：COM1\n发送已提交');
+  assert.equal(activitySummary(snapshot([], [call(1, 'COM1', 'sequence_run', true)]), 'COM1', 5000).detail, '当前端口：COM1\n启动序列调用已完成');
+});
+
 test('no selected port shows only explicitly application-scoped operations', () => {
   const view = activitySummary(snapshot([call(1, 'COM1'), call(2, null, 'get_settings')]), null, 5000);
   assert.match(view.text, /应用级/);
@@ -54,7 +63,8 @@ test('completed sends and sequences do not claim device success or sequence comp
     assert.match(view.text, expected);
     assert.match(view.text, /10 秒前/);
     assert.doesNotMatch(view.text, /设备.*成功|序列执行完成/);
-    assert.match(view.detail, /不代表设备/);
+    assert.match(view.detail, expected);
+    assert.doesNotMatch(view.detail, /设备.*成功|序列执行完成/);
   }
 });
 
