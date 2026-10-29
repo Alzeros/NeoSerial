@@ -14,6 +14,7 @@
     "test:notifications": "node tests/browser/notifications.mjs",
     "test:activity": "node tests/browser/mcp-activity.mjs",
     "test:persistence": "node tests/browser/persistence-regressions.mjs",
+    "test:panels": "node tests/browser/panel-visibility.mjs",
     "test:ui": "node tests/browser/ui-regressions.mjs",
     "tauri": "tauri"
   },

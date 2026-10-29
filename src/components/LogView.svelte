@@ -1,7 +1,7 @@
 <script lang="ts">
   import { ChevronUp, ChevronDown, X, WholeWord } from 'lucide-svelte';
   import { onDestroy, tick } from 'svelte';
-  import { displayMode, textEncoding, logLines, logVersion, logActivity, autoScroll, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused, connected, currentPort, connectionParams } from '$lib/stores';
+  import { cachedSettings, displayMode, textEncoding, logLines, logVersion, logActivity, autoScroll, logSendContent, logDirLabelStyle, showTimestamp, showLineIndex, scrollContainerRef, clearLogLines, paused, connected, currentPort, connectionParams } from '$lib/stores';
   import type { LogLine } from '$lib/types';
   import { selectedLogText } from '$lib/logSelection';
   import { matchesLog, snippetLines, elapsedMilliseconds, formatDiagnosticSnippet, type LogFilter } from '$lib/logDiagnostics';
@@ -15,8 +15,9 @@
     return logLines.slice();
   });
   let toolsOpen = $state(false);
+  const showLogTools = $derived(cachedSettings.value?.ui?.show_log_tools ?? false);
   let filter = $state<LogFilter>({ direction: 'all', errorsOnly: false, include: '', exclude: '' });
-  const filtering = $derived(filter.direction !== 'all' || filter.errorsOnly || !!filter.include.trim() || !!filter.exclude.trim());
+  const filtering = $derived(showLogTools && (filter.direction !== 'all' || filter.errorsOnly || !!filter.include.trim() || !!filter.exclude.trim()));
   const renderedLines = $derived(filtering ? retainedLines.filter(line => cachedRecord(line).matches()) : retainedLines);
   let selectionMode = $state(false);
   let selectedLines = $state<LogLine[]>([]);
@@ -139,6 +140,15 @@
   function resetFilter() {
     filter = { direction: 'all', errorsOnly: false, include: '', exclude: '' };
   }
+
+  $effect(() => {
+    if (showLogTools) return;
+    toolsOpen = false;
+    resetFilter();
+    selectionMode = false;
+    selectedLines = [];
+    errorCursor = null;
+  });
 
   function selectLine(line: LogLine) {
     if (selectedLines.includes(line)) selectedLines = selectedLines.filter(record => record !== line);
@@ -575,13 +585,15 @@
 
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
 <div class="relative h-full overflow-hidden flex flex-col" data-theme-target="background-data" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
-  <div class="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-3 py-1 text-[12px] text-[var(--muted-foreground)]" style="background: var(--background-elevated);">
-    <button data-log-tools-toggle aria-expanded={toolsOpen} class="cursor-pointer hover:text-[var(--foreground)]" onclick={() => toolsOpen = !toolsOpen}>{toolsOpen ? '收起工具' : '筛选 / 工具'}</button>
-    <span class="tabular-nums">{filtering ? `显示 ${renderedLines.length} / ${retainedLines.length} 条` : `${retainedLines.length} 条`}</span>
-    {#if paused.value}<span>已暂停显示</span>{/if}
-    <button data-log-follow-toggle aria-pressed={autoScroll.value} class="ml-auto cursor-pointer hover:text-[var(--foreground)]" title={autoScroll.value ? '停止自动跟随（继续显示日志）' : '恢复跟随到最新（不解除暂停显示）'} onclick={() => autoScroll.value ? autoScroll.value = false : returnToLatest()}>{autoScroll.value ? '跟随中' : '已停止跟随'}</button>
-  </div>
-  {#if toolsOpen}
+  {#if showLogTools}
+    <div class="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-3 py-1 text-[12px] text-[var(--muted-foreground)]" style="background: var(--background-elevated);">
+      <button data-log-tools-toggle aria-expanded={toolsOpen} class="cursor-pointer hover:text-[var(--foreground)]" onclick={() => toolsOpen = !toolsOpen}>{toolsOpen ? '收起工具' : '筛选 / 工具'}</button>
+      <span class="tabular-nums">{filtering ? `显示 ${renderedLines.length} / ${retainedLines.length} 条` : `${retainedLines.length} 条`}</span>
+      {#if paused.value}<span>已暂停显示</span>{/if}
+      <button data-log-follow-toggle aria-pressed={autoScroll.value} class="ml-auto cursor-pointer hover:text-[var(--foreground)]" title={autoScroll.value ? '停止自动跟随（继续显示日志）' : '恢复跟随到最新（不解除暂停显示）'} onclick={() => autoScroll.value ? autoScroll.value = false : returnToLatest()}>{autoScroll.value ? '跟随中' : '已停止跟随'}</button>
+    </div>
+  {/if}
+  {#if showLogTools && toolsOpen}
     <LogToolbar bind:filter bind:selectionMode bind:context={contextCount} bind:marker={markerText}
       selectedCount={selectedLines.length} {elapsed} hasRows={retainedLines.length > 0}
       hasErrors={errorLines.length > 0} busy={snippetBusy} onreset={resetFilter} onerror={goToError}

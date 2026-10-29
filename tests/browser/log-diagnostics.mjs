@@ -3,6 +3,7 @@ import { withHeadlessBrowser } from './headless.mjs';
 
 await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) => {
   await fresh('main');
+  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:true}})");
   assert.ok(await evaluate("Boolean(document.querySelector('[data-log-tools-toggle]'))"), 'diagnostic tools have a compact entry point');
   await evaluate(`(()=>{
     const stores=persistenceTest.stores;
@@ -39,6 +40,7 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
   assert.ok(await evaluate("Boolean(document.querySelector('[data-log-direction] .custom-select-trigger'))"),'direction uses the shared custom dropdown rather than a native select');
   assert.equal(await evaluate("document.querySelector('[data-log-direction] select')"),null);
   const selectDirection = async label => {
+    await evaluate("new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))");
     await evaluate("document.querySelector('[data-log-direction] .custom-select-trigger').click();persistenceTest.tick()");
     assert.deepEqual(await evaluate("[...document.querySelectorAll('[data-log-direction] [role=option]')].map(element=>element.textContent.trim())"),['全部','仅接收','仅发送']);
     await evaluate(`(()=>{const option=[...document.querySelectorAll('[data-log-direction] [role=option]')].find(element=>element.textContent.trim()===${JSON.stringify(label)});option.click();return persistenceTest.tick();})()`);
@@ -136,6 +138,7 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
   console.log('PASS: retention preserves surviving viewport anchors, reports eviction, and does not couple following to pause.');
 
   await fresh('main');
+  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:true}})");
   await evaluate("document.querySelector('[data-log-tools-toggle]').click();persistenceTest.tick()");
   await selectDirection('仅接收');
   await evaluate(`(()=>{

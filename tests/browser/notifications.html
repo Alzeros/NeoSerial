@@ -19,7 +19,7 @@ const saved = {
     log_font_size: 14, log_line_height: 1.6, log_dir_label: 'short', log_font_latin: 'default',
     log_font_cjk: 'default', text_encoding: 'Ascii', show_timestamp: true, log_send: true,
     ring_buffer_capacity: 5000, log_buffer_max_bytes: 4194304, line_ending: 'Crlf',
-    display_mode: 'Ascii', auto_scroll: true,
+    display_mode: 'Ascii', auto_scroll: true, show_log_tools: true,
   },
   presets: { theme: 'preset-1', baud_rates: [9600, 115200] },
   mcp: { port: 34594, auto_start: false }, command_index: {}, error_keywords: [],
@@ -29,6 +29,7 @@ let sequence = presetScriptModules();
 sequence[0].pages[0].commands[0].command = 'AT';
 const calls = [], failures = new Map(), responses = new Map();
 const scenario = new URL(location.href).searchParams.get('scenario');
+if (scenario === 'activity' || scenario === 'activity-race') saved.mcp.auto_start = true;
 let resolveActivity;
 let activityWait = scenario === 'activity-race' ? new Promise(resolve => { resolveActivity = resolve; }) : null;
 if (scenario === 'startup-errors') {

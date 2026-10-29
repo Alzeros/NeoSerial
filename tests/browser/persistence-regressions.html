@@ -26,6 +26,8 @@ const saved = {
   mcp: { port: 34594, auto_start: true }, command_index: {}, error_keywords: [],
   serial_defaults: { baud_rate: 115200, data_bits: 'Eight', parity: 'None', stop_bits: 'One', flow_control: 'None' },
 };
+const initialUi = new URL(location.href).searchParams.get('ui');
+if (initialUi) Object.assign(saved.ui, JSON.parse(initialUi));
 let sequence = presetScriptModules();
 sequence[0].pages[0].commands[0].command = 'ORIGINAL';
 const calls = [], gates = new Map(), failures = new Set(), responses = new Map();
@@ -85,7 +87,7 @@ const App = (await import('/src/App.svelte')).default;
 mount(App, { target: document.querySelector('#app') });
 await tick();
 window.persistenceTest = {
-  stores, calls, tick, run: new URL(location.href).searchParams.get('run'),
+  stores, calls, tick, emit, run: new URL(location.href).searchParams.get('run'),
   saved: () => clone(saved), sequence: () => clone(sequence),
   button: text => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === text)
     ?? [...document.querySelectorAll('button')].find(b => b.textContent.trim().startsWith(text)),

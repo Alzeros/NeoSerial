@@ -26,10 +26,19 @@ test('concurrent calls count only the current port and use the oldest active cal
   const view = activitySummary(snapshot([call(1, 'COM1'), { ...call(2, 'COM1', 'send_file'), started_at_ms: 2000 }, call(3, 'COM2')]), 'COM1', 5500);
   assert.equal(view.tone, 'active');
   assert.match(view.text, /2 项/);
-  assert.match(view.text, /4\.5s/);
+  assert.match(view.text, / · 4s$/);
   assert.match(view.detail, /等待串口响应/);
   assert.match(view.detail, /发送文件/);
   assert.doesNotMatch(view.detail, /COM2/);
+});
+
+test('active elapsed time uses whole seconds without rounding up', () => {
+  const state = snapshot([call(1, 'COM1')]);
+  for (const [elapsed, seconds] of [[-1, 0], [0, 0], [499, 0], [500, 0], [999, 0], [1000, 1], [1500, 1], [1999, 1], [19200, 19], [19999, 19], [20000, 20]]) {
+    const view = activitySummary(state, 'COM1', 1000 + elapsed);
+    assert.match(view.text, new RegExp(` · ${seconds}s$`));
+    assert.doesNotMatch(view.text, /\d+\.\d+s/);
+  }
 });
 
 test('no selected port shows only explicitly application-scoped operations', () => {
@@ -52,7 +61,7 @@ test('completed sends and sequences do not claim device success or sequence comp
 test('failure, unknown tools, clock skew and idle states have bounded honest labels', () => {
   assert.equal(activitySummary(snapshot([], [call(1, 'COM1', 'send', false)]), 'COM1', 1000).tone, 'error');
   assert.match(activitySummary(snapshot([], [call(1, 'COM1', 'send', false)]), 'COM1', 1000).text, /失败.*0 秒前/);
-  assert.match(activitySummary(snapshot([call(1, 'COM1', 'unexpected')]), 'COM1', 0).text, /工具调用.*0\.0s/);
+  assert.match(activitySummary(snapshot([call(1, 'COM1', 'unexpected')]), 'COM1', 0).text, /工具调用 · 0s$/);
   assert.equal(activitySummary(snapshot(), null, 0).tone, 'idle');
 });
 

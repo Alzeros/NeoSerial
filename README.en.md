@@ -71,6 +71,8 @@ NeoSerial is **single-instance**: launching it again just brings the existing wi
 
 ### Log view
 
+- **Main-window panels (主界面功能区)** under **Settings → General (通用)** independently show or hide the log diagnostic tools and the file-send / log-save area, including their collapsed headers, to reclaim vertical space. Log diagnostic tools are hidden by default, while the file-send / log-save area remains visible; saved preferences are preserved, and Apply / Save persists changes. Hiding diagnostic tools clears filters and record selection without changing receiving, search, pause, or following. Hiding the bottom area does not stop an in-flight file send or disk logging and does not disable the corresponding MCP capabilities.
+
 - ASCII / HEX toggle, timestamps (`HH:MM:SS.mmm`), line numbers, direction labels (`Tx/Rx` or `发送/接收`), pause, clear.
 - Text decoding: ASCII / UTF-8 / GBK (Settings → General → Log content), display only.
 - Error keyword highlighting: `ERROR`, `FAIL`, `+CME ERROR`, `+CMS ERROR` by default, editable. Matches received lines only, case-insensitive, takes effect without reconnecting.
@@ -209,7 +211,7 @@ To verify, send this to your client:
 
 The **MCP log (MCP 日志)** tab on the right shows every tool call from the agent in real time (tool, arguments, success, duration).
 
-The bottom **AI/MCP activity summary** shows a stopped service, running tools with elapsed time/concurrency, or the latest call result. It is scoped to the window's connected, bound, or selected serial port; with no selected port, only explicitly application-level activity is shown. Other ports never affect this summary. Click it to open the existing MCP log, temporarily revealing a hidden sidebar/tab without changing saved settings.
+The bottom **AI/MCP activity summary** is shown only when MCP Service is enabled in extension settings; disabling that setting hides the entire summary and stops its status refreshes. While enabled, it shows a stopped service, running tools with elapsed time/concurrency, or the latest call result. It is scoped to the window's connected, bound, or selected serial port; with no selected port, only explicitly application-level activity is shown. Other ports never affect this summary. When the MCP log tab is enabled, clicking the summary opens the existing log and expands the sidebar. Hiding only the log tab keeps the summary visible; clicking it opens Settings → Extensions → MCP Service without forcing the tab visible or changing saved settings.
 
 This is observation only: it does not change shared permissions or imply exclusive control, an online AI client, or model thinking. A submitted send is not device execution success, and a completed sequence-start call does not mean its background sequence finished. Completion, failure and cancellation remove the active call; clearing the MCP log preserves running calls. Activity is in memory only, with latest results bounded to 64 port/application scopes. Events update immediately; snapshots reconcile every five seconds and on window focus. Query failures show an unavailable state instead of stale activity.
 

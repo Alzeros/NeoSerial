@@ -59,7 +59,7 @@ export function activitySummary(snapshot: McpActivitySnapshot, port: string | nu
   const prefix = port ? '' : '应用级 · ';
   if (active.length) {
     const first = active[0];
-    const elapsed = (Math.max(0, now - first.started_at_ms) / 1000).toFixed(1);
+    const elapsed = Math.max(0, Math.floor((now - first.started_at_ms) / 1000));
     const name = labels[first.tool]?.[0] ?? '工具调用';
     return {
       text: `${prefix}${active.length > 1 ? `${active.length} 项调用 · ` : ''}${name} · ${elapsed}s`,

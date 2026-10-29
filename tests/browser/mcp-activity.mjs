@@ -2,6 +2,22 @@ import assert from 'node:assert/strict';
 import { withHeadlessBrowser } from './headless.mjs';
 
 await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screenshot }) => {
+  await call('Page.addScriptToEvaluateOnNewDocument', { source: `
+    window.activityTimerDelays=[];
+    window.activityTimerIds=new Set();
+    const nativeSetInterval=window.setInterval;
+    const nativeClearInterval=window.clearInterval;
+    window.setInterval=function(callback,interval,...args){
+      const activityTimer=new Error().stack?.includes('/src/components/McpActivityStatus.svelte');
+      const timer=nativeSetInterval.call(window,callback,interval,...args);
+      if(activityTimer){window.activityTimerDelays.push(interval);window.activityTimerIds.add(timer);}
+      return timer;
+    };
+    window.clearInterval=function(timer){
+      window.activityTimerIds.delete(timer);
+      return nativeClearInterval.call(window,timer);
+    };
+  ` });
   const navigate = async scenario => {
     await call('Page.navigate', { url: `${base}/tests/browser/notifications.html?scenario=${scenario}` });
     await until('Boolean(window.notificationTest)', 30000);
@@ -10,6 +26,13 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   const text = () => evaluate('document.querySelector("[data-mcp-activity]").textContent');
   const expect = async pattern => {
     await until(`new RegExp(${JSON.stringify(pattern.source)}).test(document.querySelector('[data-mcp-activity]')?.textContent ?? '')`);
+  };
+  const expectHiddenActivity = async () => {
+    assert.equal(await evaluate('document.querySelector("[data-mcp-activity]")'), null, 'disabled MCP service hides the entire activity summary');
+    assert.equal(await evaluate('activityTimerIds.size'), 0, 'disabled MCP service has no activity clock or reconciliation timer');
+    const readsBefore = await evaluate('notificationTest.calls.filter(entry=>entry.cmd==="get_mcp_activity").length');
+    await action('window.dispatchEvent(new Event("focus"))');
+    assert.equal(await evaluate('notificationTest.calls.filter(entry=>entry.cmd==="get_mcp_activity").length'), readsBefore, 'disabled MCP service does not refresh activity on focus');
   };
   const active = (id, port, tool = 'send_and_read') => ({ id, port, tool, started_at_ms: Date.now() - 3000, finished_at_ms: null, ok: null });
   const complete = (id, port, tool = 'send', ok = true) => ({ ...active(id, port, tool), finished_at_ms: Date.now() - 10000, ok });
@@ -25,8 +48,21 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
     await action('');
   };
 
+  await navigate('activity-disabled');
+  await expectHiddenActivity();
+  assert.equal(await evaluate('notificationTest.calls.filter(entry=>entry.cmd==="get_mcp_activity").length'), 0, 'a disabled startup never queries MCP activity');
+  await publish(1, [active(1, 'COM_TEST')]);
+  await expectHiddenActivity();
+  await action('notificationTest.stores.cachedSettings.value.mcp.auto_start=true');
+  await expect(/未启用/);
+  assert.equal(await evaluate('activityTimerIds.size'), 2, 'enabling MCP mounts the activity summary and its refresh timers');
+  await action('notificationTest.stores.cachedSettings.value.mcp.auto_start=false');
+  await expectHiddenActivity();
+  console.log('PASS: disabled MCP hides activity on startup and settings changes, releases timers/listeners, and ignores runtime activity events.');
+
   await navigate('activity');
   await expect(/未启用/);
+  assert.deepEqual(await evaluate('activityTimerDelays'),[1000,5000],'activity clock refreshes once per second; snapshot reconciliation stays unchanged');
   await publish(1, [], [], false);
   await expect(/未启用/);
   await navigate('activity');
@@ -38,8 +74,11 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   await publish(2, [active(2, 'COM_TEST')]);
   await expect(/等待串口响应/);
   const before = await text();
-  await delay(1150);
+  assert.match(before,/ · \d+s$/);
+  assert.doesNotMatch(before,/\d+\.\d+s/);
+  await until(`document.querySelector('[data-mcp-activity]')?.textContent !== ${JSON.stringify(before)}`, 3000);
   assert.notEqual(await text(), before, 'Elapsed time progresses while the tool is active');
+  assert.match(await text(),/ · \d+s$/);
   await publish(3, [active(2, 'COM_TEST'), active(3, 'COM_TEST', 'send_file'), active(4, 'COM_OTHER')]);
   await expect(/2 项调用/);
   assert.doesNotMatch(await evaluate('document.querySelector("[data-mcp-activity]").title'), /COM_OTHER/);
@@ -84,15 +123,54 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, delay, screensho
   await expect(/等待串口响应/);
   console.log('PASS: clear/finish transitions, application scope and window port changes do not leak activity across ports.');
 
-  await action(`notificationTest.reply('get_mcp_call_log',[{ts:new Date().toISOString(),tool:'send',args:'{"port":"COM_OTHER"}',ok:false,error:'isolated write rejected',duration_ms:1}]);notificationTest.stores.cachedSettings.value.ui.show_mcp_tab=false;notificationTest.stores.scriptPanelOpen.value=false`);
+  await action(`notificationTest.reply('get_mcp_call_log',[{ts:new Date().toISOString(),tool:'send',args:'{"port":"COM_OTHER"}',ok:false,error:'isolated write rejected',duration_ms:1}]);notificationTest.stores.cachedSettings.value.mcp.auto_start=true;notificationTest.stores.cachedSettings.value.ui.show_mcp_tab=true;notificationTest.stores.scriptPanelOpen.value=false`);
   const savesBefore = await evaluate('notificationTest.calls.filter(entry=>/save|patch/.test(entry.cmd)).length');
   await pointerClick('[data-mcp-activity]');
   await until('document.querySelector("[data-module-tab=mcp]")?.getAttribute("aria-current")==="page"');
   await until('document.body.textContent.includes("isolated write rejected")');
   assert.equal(await evaluate('notificationTest.stores.scriptPanelOpen.value'), true);
+  assert.equal(await evaluate('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab'), true);
+  await action('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab=false');
+  assert.equal(await evaluate('document.querySelector("[data-module-tab=mcp]")'), null, 'disabling the log tab removes it even after activity navigation');
+  assert.equal(await evaluate('document.querySelector("[data-module-tab=scripts]")?.getAttribute("aria-current")'), 'page');
+  assert.equal(await evaluate('document.body.textContent.includes("isolated write rejected")'), false, 'disabling the log tab also removes the open log content');
+
+  const settingsBefore = await evaluate('notificationTest.calls.filter(entry=>entry.cmd==="open_settings_window").length');
+  await action('notificationTest.stores.scriptPanelOpen.value=false');
+  await pointerClick('[data-mcp-activity]');
+  await until(`notificationTest.calls.filter(entry=>entry.cmd==="open_settings_window").length>${settingsBefore}`);
+  assert.deepEqual(await evaluate('notificationTest.calls.filter(entry=>entry.cmd==="open_settings_window").at(-1).args'), { section: 'extensions', extModule: 'mcp', anchor: null });
+  assert.equal(await evaluate('notificationTest.stores.scriptPanelOpen.value'), false, 'a disabled log shortcut must not force the sidebar open');
+  assert.equal(await evaluate('notificationTest.stores.mcpLogRequest.pending'), false);
   assert.equal(await evaluate('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab'), false);
+  assert.match(await evaluate('document.querySelector("[data-mcp-activity]").title'), /设置.*扩展.*MCP 服务/);
+  assert.match(await evaluate('document.querySelector("[data-mcp-activity]").getAttribute("aria-label")'), /设置/);
+  await publish(14, [active(14, 'COM_OTHER')]);
+  assert.equal(await evaluate('document.querySelector("[data-module-tab=mcp]")'), null, 'activity updates never reopen a disabled tab');
+
+  await action('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab=true');
+  await pointerClick('[data-mcp-activity]');
+  await until('document.querySelector("[data-module-tab=mcp]")?.getAttribute("aria-current")==="page"');
+  await action('notificationTest.stores.cachedSettings.value.mcp.auto_start=false');
+  assert.equal(await evaluate('document.querySelector("[data-module-tab=mcp]")'), null, 'disabling MCP service also hides a log opened from activity');
+  await expectHiddenActivity();
+  assert.equal(await evaluate('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab'), true, 'disabling MCP preserves the saved tab preference');
+  await action('notificationTest.stores.mcpLogRequest.pending=true');
+  assert.equal(await evaluate('notificationTest.stores.mcpLogRequest.pending'), false, 'stale navigation requests are consumed without overriding settings');
+  assert.equal(await evaluate('document.querySelector("[data-module-tab=scripts]")?.getAttribute("aria-current")'), 'page');
+  await action('notificationTest.stores.scriptPanelOpen.value=false');
+  await publish(15, [active(15, 'COM_OTHER')]);
+  await expectHiddenActivity();
+  assert.equal(await evaluate('notificationTest.stores.scriptPanelOpen.value'), false, 'activity events never reopen a sidebar while MCP is disabled');
+  assert.equal(await evaluate('notificationTest.stores.cachedSettings.value.mcp.auto_start'), false, 'navigation never enables MCP service');
+
+  await action('notificationTest.stores.cachedSettings.value.mcp.auto_start=true;delete notificationTest.stores.cachedSettings.value.ui.show_mcp_tab;notificationTest.stores.scriptPanelOpen.value=true');
+  assert.equal(await evaluate('document.querySelector("[data-module-tab=mcp]")'), null, 'a missing tab setting uses the backend default of hidden');
+  await action('notificationTest.stores.cachedSettings.value.ui.show_mcp_tab=true');
+  await pointerClick('[data-mcp-activity]');
+  await until('document.querySelector("[data-module-tab=mcp]")?.getAttribute("aria-current")==="page"');
   assert.equal(await evaluate('notificationTest.calls.filter(entry=>/save|patch/.test(entry.cmd)).length'), savesBefore, 'Navigation never changes persisted settings');
-  console.log('PASS: clicking the status opens the real existing MCP log even when its tab and sidebar were hidden.');
+  console.log('PASS: activity navigation respects tab/service settings, removes disabled log content, guides hidden logs to settings, and preserves saved preferences.');
 
   await call('Emulation.setDeviceMetricsOverride', { width: 800, height: 640, deviceScaleFactor: 1, mobile: false });
   await action(`notificationTest.stores.rxBytes.value=99999999;notificationTest.stores.txBytes.value=88888888`);

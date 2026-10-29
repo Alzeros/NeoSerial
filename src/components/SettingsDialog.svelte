@@ -123,6 +123,8 @@
   let editMcpPort = $state(34594);
   // "后台运行"编辑副本（从 cachedSettings 拷贝;兜底值与后端 default_background_mode 一致=关）
   let editBackgroundMode = $state(false);
+  let editShowLogTools = $state(false);
+  let editShowFileLogPanel = $state(true);
   // 各模块的侧栏 tab 显隐(每模块独立设置项)。默认开(保现状)
   let editShowSuggestTab = $state(true);
   let editShowMcpTab = $state(true);
@@ -212,6 +214,7 @@
     textEncoding: 'ascii' | 'utf8' | 'gbk';
     sendHalfwidthPunct: boolean;
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean; showDataTab: boolean;
+    showLogTools: boolean; showFileLogPanel: boolean;
     hiddenDataTools: string[]; hiddenDataFillPatterns: string[]; hiddenChecksumAlgorithms: string[];
     codecDefaultEncoding: CodecEncoding; hiddenCodecOperations: string[];
     smsDefaultSmsc: string; smsDefaultEncoding: SmsDefaults['encoding']; smsDefaultValidityPeriod: number | null;
@@ -232,6 +235,7 @@
       sendHalfwidthPunct: editSendHalfwidthPunct,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       showDataTab: editShowDataTab,
+      showLogTools: editShowLogTools, showFileLogPanel: editShowFileLogPanel,
       hiddenDataTools: [...editHiddenDataTools],
       codecDefaultEncoding: editCodecDefaultEncoding,
       hiddenCodecOperations: [...editHiddenCodecOperations],
@@ -289,6 +293,8 @@
     editMcpAutoStart = cachedSettings.value?.mcp?.auto_start ?? true;
     editMcpPort = cachedSettings.value?.mcp?.port ?? 34594;
     editBackgroundMode = cachedSettings.value?.ui?.background_mode ?? false;
+    editShowLogTools = cachedSettings.value?.ui?.show_log_tools ?? false;
+    editShowFileLogPanel = cachedSettings.value?.ui?.show_file_log_panel ?? true;
     editShowSuggestTab = cachedSettings.value?.ui?.show_suggest_tab ?? true;
     editShowMcpTab = cachedSettings.value?.ui?.show_mcp_tab ?? false;
     editShowDataTab = cachedSettings.value?.ui?.show_data_tab ?? true;
@@ -344,6 +350,7 @@
     openSend = false;
     openLogView = false;
     openLogData = false;
+    openMainPanels = false;
     openDirs = false;
     openKb = false;
     openManuals = false;
@@ -573,6 +580,8 @@
     if (changed('textEncoding')) ui.text_encoding = cur.textEncoding === 'utf8' ? 'Utf8' : cur.textEncoding === 'gbk' ? 'Gbk' : 'Ascii';
     if (changed('sendHalfwidthPunct')) ui.send_halfwidth_punct = cur.sendHalfwidthPunct;
     if (changed('backgroundMode')) ui.background_mode = cur.backgroundMode;
+    if (changed('showLogTools')) ui.show_log_tools = cur.showLogTools;
+    if (changed('showFileLogPanel')) ui.show_file_log_panel = cur.showFileLogPanel;
     if (changed('showSuggestTab')) ui.show_suggest_tab = cur.showSuggestTab;
     if (changed('showMcpTab')) ui.show_mcp_tab = cur.showMcpTab;
     if (changed('showDataTab')) ui.show_data_tab = cur.showDataTab;
@@ -829,6 +838,7 @@
   let openSend = $state(false);
   let openLogView = $state(false);
   let openLogData = $state(false);
+  let openMainPanels = $state(false);
   let openApp = $state(false);
   let openDirs = $state(false);
   let openKb = $state(false);
@@ -846,6 +856,11 @@
   /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
   const baudSummary = $derived(editBaudRates.join(' · ') || '无');
   const sendSummary = $derived(editSendHalfwidthPunct ? '中文标点转半角' : '原样发送');
+  const mainPanelsSummary = $derived(
+    editShowLogTools
+      ? (editShowFileLogPanel ? '全部显示' : '仅筛选工具')
+      : (editShowFileLogPanel ? '仅文件与日志' : '全部隐藏'),
+  );
   /** 收起时看得见当前值:关窗到底会不会断连接 */
   const appSummary = $derived(editBackgroundMode ? '托盘常驻' : '关窗即退出');
   /** 收起时看得见当前值:数据落在系统标准位置还是被挪走了 */
@@ -1309,6 +1324,24 @@
                     onkeydown={(e) => { if (e.key === 'Enter') addKeyword(); }}
                   />
                   <button class="btn btn-secondary shrink-0 whitespace-nowrap" style="padding: 6px 14px;" onclick={addKeyword}>添加</button>
+                </div>
+              </Collapsible>
+              <Collapsible title="主界面功能区" summary={mainPanelsSummary} bind:open={openMainPanels}>
+                <div class="flex items-center gap-1">
+                  <label class="switch switch-row">
+                    <input data-settings-show-log-tools type="checkbox" bind:checked={editShowLogTools} />
+                    <span class="switch-track"></span>
+                    <span class="switch-label">显示日志筛选工具</span>
+                  </label>
+                  <SettingsHelp label="日志筛选工具" text="关闭后隐藏整个筛选工具区和标题栏，释放日志显示空间，同时清除筛选条件并退出记录选择。不影响日志接收、搜索、暂停或跟随。" />
+                </div>
+                <div class="flex items-center gap-1 mt-2">
+                  <label class="switch switch-row">
+                    <input data-settings-show-file-log-panel type="checkbox" bind:checked={editShowFileLogPanel} />
+                    <span class="switch-track"></span>
+                    <span class="switch-label">显示文件发送 / 日志保存区</span>
+                  </label>
+                  <SettingsHelp label="文件发送 / 日志保存区" text="关闭后隐藏整个文件发送、日志保存区域及折叠标题栏。仅控制界面显示，不会停止已开始的文件发送或日志存盘，也不影响 MCP 对应功能；需要操作时可重新开启。" />
                 </div>
               </Collapsible>
               <Collapsible title="后台与退出" summary={appSummary} bind:open={openApp}>

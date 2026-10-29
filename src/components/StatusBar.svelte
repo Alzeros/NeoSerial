@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { connected, currentPort, rxBytes, txBytes, logDirLabelStyle, windowPort } from '$lib/stores';
+  import { connected, currentPort, rxBytes, txBytes, logDirLabelStyle, windowPort, cachedSettings } from '$lib/stores';
   import { getModemStatus, onModemStatus, resetStats } from '$lib/tauri';
   import McpActivityStatus from './McpActivityStatus.svelte';
 
@@ -101,5 +101,7 @@
     title="清零收发统计"
     onclick={handleResetStats}
   >清空</button>
-  <McpActivityStatus />
+  {#if cachedSettings.value?.mcp?.auto_start ?? true}
+    <McpActivityStatus />
+  {/if}
 </div>

@@ -257,6 +257,10 @@
 
   // 文件发送 / 日志保存 折叠区：默认收起，点击标题展开
   let extraOpen = $state(false);
+  const showFileLogPanel = $derived(cachedSettings.value?.ui?.show_file_log_panel ?? true);
+  $effect(() => {
+    if (!showFileLogPanel) extraOpen = false;
+  });
 </script>
 
 <div class="border-t border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
@@ -345,6 +349,7 @@
   </div>
 
   <!-- 第三、四排：文件发送 + 日志保存（可折叠，默认收起，向上展开） -->
+  {#if showFileLogPanel}
   <div class="flex flex-col-reverse">
     {#if extraOpen}
       <!-- 第四排：日志保存 -->
@@ -421,4 +426,5 @@
       文件发送 / 日志保存
     </button>
   </div>
+  {/if}
 </div>

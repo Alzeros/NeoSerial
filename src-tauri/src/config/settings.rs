@@ -160,6 +160,10 @@ pub struct UiSettings {
     /// (agent 的交还 agent),关最后一个窗口即退出。改后即时生效。
     #[serde(default = "default_background_mode")]
     pub background_mode: bool,
+    #[serde(default)]
+    pub show_log_tools: bool,
+    #[serde(default = "default_show_main_panel")]
+    pub show_file_log_panel: bool,
     /// 侧栏"指令查询"tab 是否显示(指令联想模块的展现项)。各模块独立,关掉只藏该 tab。
     #[serde(default = "default_show_suggest_tab")]
     pub show_suggest_tab: bool,
@@ -202,6 +206,10 @@ fn default_send_halfwidth_punct() -> bool {
 }
 
 fn default_show_suggest_tab() -> bool {
+    true
+}
+
+fn default_show_main_panel() -> bool {
     true
 }
 
@@ -539,6 +547,8 @@ impl Settings {
                 text_encoding: default_text_encoding(),
                 send_halfwidth_punct: default_send_halfwidth_punct(),
                 background_mode: default_background_mode(),
+                show_log_tools: false,
+                show_file_log_panel: default_show_main_panel(),
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
@@ -729,6 +739,8 @@ impl LegacySettings {
                 text_encoding: default_text_encoding(),
                 send_halfwidth_punct: default_send_halfwidth_punct(),
                 background_mode: default_background_mode(),
+                show_log_tools: false,
+                show_file_log_panel: default_show_main_panel(),
                 show_suggest_tab: default_show_suggest_tab(),
                 show_mcp_tab: default_show_mcp_tab(),
                 show_data_tab: default_show_data_tab(),
@@ -946,6 +958,37 @@ mod tests {
         let s = Settings::default_settings();
         assert!(s.ui.show_timestamp);
         assert!(s.ui.log_send);
+    }
+
+    #[test]
+    fn test_main_panel_visibility_defaults_and_old_settings() {
+        let mut serialized = serde_json::to_value(Settings::default_settings()).unwrap();
+        assert_eq!(serialized["ui"]["show_log_tools"], false);
+        assert_eq!(serialized["ui"]["show_file_log_panel"], true);
+        let ui = serialized["ui"].as_object_mut().unwrap();
+        ui.remove("show_log_tools");
+        ui.remove("show_file_log_panel");
+        let restored: Settings = serde_json::from_value(serialized).unwrap();
+        let roundtrip = serde_json::to_value(restored).unwrap();
+        assert_eq!(roundtrip["ui"]["show_log_tools"], false);
+        assert_eq!(roundtrip["ui"]["show_file_log_panel"], true);
+    }
+
+    #[test]
+    fn test_main_panel_visibility_patches_and_roundtrip() {
+        let base = Settings::default_settings();
+        for (show_tools, show_files) in [(false, true), (true, false), (false, false), (true, true)] {
+            let next = base.apply_patch(&serde_json::json!({ "ui": {
+                "show_log_tools": show_tools,
+                "show_file_log_panel": show_files,
+            } })).unwrap();
+            let restored: Settings = serde_json::from_str(&serde_json::to_string(&next).unwrap()).unwrap();
+            let serialized = serde_json::to_value(restored).unwrap();
+            assert_eq!(serialized["ui"]["show_log_tools"], show_tools);
+            assert_eq!(serialized["ui"]["show_file_log_panel"], show_files);
+            assert_eq!(serialized["ui"]["show_timestamp"], base.ui.show_timestamp);
+            assert_eq!(serialized["mcp"]["auto_start"], base.mcp.auto_start);
+        }
     }
 
     /// 后台运行默认值收在 default_background_mode() 一处;首次收后台提示尚未显示。
@@ -1277,6 +1320,8 @@ mod tests {
         // 开关字段缺失应取默认
         assert!(loaded.ui.show_timestamp);
         assert!(loaded.ui.log_send);
+        assert!(!loaded.ui.show_log_tools);
+        assert!(loaded.ui.show_file_log_panel);
 
         let _ = std::fs::remove_dir_all(&dir);
     }

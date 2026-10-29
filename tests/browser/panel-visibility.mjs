@@ -1,0 +1,158 @@
+import assert from 'node:assert/strict';
+import { withHeadlessBrowser } from './headless.mjs';
+
+await withHeadlessBrowser(async ({ base, call, evaluate, until, click, fresh, delay, screenshot }) => {
+  const toolsToggle = '[data-log-tools-toggle]';
+  const fileToggle = 'button[title="展开文件发送 / 日志保存"]';
+  const settingsTools = '[data-settings-show-log-tools]';
+  const settingsFiles = '[data-settings-show-file-log-panel]';
+  const setChecked = async selector => {
+    await evaluate(`document.querySelector(${JSON.stringify(selector)}).click();persistenceTest.tick()`);
+  };
+  const expectPanels = async (tools, files) => {
+    assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(toolsToggle)}))`),tools);
+    assert.equal(await evaluate(`Boolean(document.querySelector(${JSON.stringify(fileToggle)}))`),files);
+  };
+
+  await call('Emulation.setDeviceMetricsOverride',{width:680,height:500,deviceScaleFactor:2,mobile:false});
+  await fresh('settings');
+  await click('通用');
+  assert.ok(await evaluate("Boolean(persistenceTest.button('主界面功能区'))"),'General contains the approved panel visibility group');
+  const generalOrder = await evaluate("[...document.querySelectorAll('[data-settings-collapse]')].map(element=>element.querySelector('button').textContent.trim())");
+  const groupIndex = generalOrder.findIndex(text=>text.startsWith('主界面功能区'));
+  assert.ok(generalOrder[groupIndex-1].startsWith('日志内容'));
+  assert.ok(generalOrder[groupIndex+1].startsWith('后台与退出'));
+  assert.equal(await evaluate("persistenceTest.button('主界面功能区').getAttribute('aria-expanded')"),'false');
+  assert.match(generalOrder[groupIndex],/仅文件与日志/);
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(settingsTools)})`),null);
+  await click('主界面功能区');
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(settingsTools)}).checked`),false);
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(settingsFiles)}).checked`),true);
+  assert.equal(await evaluate("persistenceTest.button('应用').disabled"),true,'default fallbacks do not dirty old settings');
+
+  await setChecked(settingsTools);
+  assert.match(await evaluate("persistenceTest.button('主界面功能区').textContent"),/全部显示/);
+  await setChecked(settingsFiles);
+  assert.match(await evaluate("persistenceTest.button('主界面功能区').textContent"),/仅筛选工具/);
+  await setChecked(settingsTools);
+  assert.match(await evaluate("persistenceTest.button('主界面功能区').textContent"),/全部隐藏/);
+  assert.equal(await evaluate("persistenceTest.calls.filter(record=>record.cmd==='patch_settings').length"),0,'draft toggles do not write settings');
+  assert.equal(await evaluate('persistenceTest.stores.cachedSettings.value.ui.show_log_tools'),undefined);
+  await click('取消');
+  assert.equal(await evaluate("persistenceTest.calls.filter(record=>record.cmd==='patch_settings').length"),0);
+  await evaluate("persistenceTest.reopenSettings({section:'general',ext_module:null,anchor:null})");
+  await until("Boolean(persistenceTest.button('主界面功能区'))");
+  assert.equal(await evaluate("persistenceTest.button('主界面功能区').getAttribute('aria-expanded')"),'false');
+  await click('主界面功能区');
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(settingsTools)}).checked`),false);
+  assert.equal(await evaluate(`document.querySelector(${JSON.stringify(settingsFiles)}).checked`),true);
+  if (process.env.PANEL_SETTINGS_SCREENSHOT) await screenshot(process.env.PANEL_SETTINGS_SCREENSHOT);
+  console.log('PASS: General placement, default-collapsed group, four summaries, and cancel without mutation.');
+
+  await evaluate("persistenceTest.remoteSettings({ui:{show_mcp_tab:true}})");
+  await setChecked(settingsTools);
+  await setChecked(settingsFiles);
+  await click('应用');
+  await until("persistenceTest.saved().ui.show_log_tools===true&&persistenceTest.saved().ui.show_file_log_panel===false&&persistenceTest.button('应用').disabled");
+  const firstPatch = await evaluate("persistenceTest.calls.find(record=>record.cmd==='patch_settings').args.patch");
+  assert.deepEqual(firstPatch,{ui:{show_log_tools:true,show_file_log_panel:false}});
+  assert.equal(await evaluate('persistenceTest.saved().ui.show_mcp_tab'),true,'saving flags preserves other windows changes');
+  assert.equal(await evaluate('persistenceTest.stores.cachedSettings.value.ui.show_log_tools'),true);
+  await setChecked(settingsTools);
+  const hideCount = await evaluate("persistenceTest.calls.filter(record=>record.cmd==='plugin:window|hide').length");
+  await evaluate("persistenceTest.failNext('patch_settings')");
+  await click('应用');
+  await until("document.body.textContent.includes('isolated save failure')");
+  assert.equal(await evaluate('persistenceTest.saved().ui.show_log_tools'),true,'a failed write leaves saved settings unchanged');
+  assert.equal(await evaluate("persistenceTest.button('应用').disabled"),false);
+  await click('保存');
+  await until(`persistenceTest.saved().ui.show_log_tools===false&&persistenceTest.calls.filter(record=>record.cmd==='plugin:window|hide').length>${hideCount}`);
+  assert.equal(await evaluate('persistenceTest.saved().ui.show_file_log_panel'),false);
+  console.log('PASS: Apply/Save use differential patches, preserve concurrent settings, and retain drafts after write failure.');
+
+  await call('Emulation.setDeviceMetricsOverride',{width:1400,height:900,deviceScaleFactor:1,mobile:false});
+  await fresh('main');
+  await expectPanels(false,true);
+  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:true}})");
+  await expectPanels(true,true);
+  await evaluate(`(()=>{
+    const stores=persistenceTest.stores;
+    stores.connected.value=true;stores.windowPort.value='COM8';stores.currentPort.value='COM8';
+    stores.clearLogLines();
+    stores.appendLogLines(Array.from({length:80},(_,index)=>({ts:'12:00:00',ts_ms:10000+index,dir:index%2?'rx':'tx',ascii:'record '+index,raw:[65],line_index:index,is_error:false})));
+    return persistenceTest.tick();
+  })()`);
+  await evaluate(`document.querySelector(${JSON.stringify(toolsToggle)}).click();persistenceTest.tick()`);
+  await evaluate("document.querySelector('[data-log-include]').value='no-match';document.querySelector('[data-log-include]').dispatchEvent(new Event('input',{bubbles:true}));document.querySelector('[data-log-select-toggle]').click();persistenceTest.tick()");
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),0);
+  const before = await evaluate("document.querySelector('[role=log]').getBoundingClientRect().height");
+  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:false}})");
+  await expectPanels(false,true);
+  assert.equal(await evaluate("Boolean(document.querySelector('[data-log-tools]'))"),false);
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),80,'hidden filters cannot keep excluding logs');
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-select-row]').length"),0,'hiding tools exits record selection');
+  assert.ok(await evaluate("document.querySelector('[role=log]').getBoundingClientRect().height")>before+50,'hidden tools release the header and expanded content height');
+  await evaluate("persistenceTest.stores.appendLogLine({ts:'12:00:01',ts_ms:11000,dir:'rx',ascii:'new record',raw:[65],line_index:81,is_error:false});persistenceTest.stores.autoScroll.value=false;persistenceTest.tick()");
+  assert.equal(await evaluate("document.querySelectorAll('[data-log-row]').length"),81);
+  await evaluate("document.querySelector('[data-log-follow]').click();persistenceTest.tick()");
+  assert.equal(await evaluate('persistenceTest.stores.autoScroll.value'),true,'return-to-latest remains available with no tools header');
+  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'f',code:'KeyF',modifiers:2});
+  await call('Input.dispatchKeyEvent',{type:'keyUp',key:'f',code:'KeyF',modifiers:2});
+  assert.ok(await evaluate("Boolean(document.querySelector('input[placeholder*=搜索]'))"),'Ctrl+F still opens log search');
+  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape'});
+  await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape'});
+  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:true}})");
+  await expectPanels(true,true);
+  assert.equal(await evaluate("Boolean(document.querySelector('[data-log-tools]'))"),false,'reenabling tools starts collapsed');
+  await evaluate(`document.querySelector(${JSON.stringify(toolsToggle)}).click();persistenceTest.tick()`);
+  assert.equal(await evaluate("document.querySelector('[data-log-include]').value"),'');
+  assert.equal(await evaluate("document.querySelector('[data-log-select-toggle]').checked"),false);
+  console.log('PASS: hiding tools releases space and clears hidden filters/selection without breaking receiving, search, or following.');
+
+  await evaluate(`document.querySelector(${JSON.stringify(fileToggle)}).click();persistenceTest.tick()`);
+  await evaluate("persistenceTest.stores.loggingActive.value=true;persistenceTest.stores.loggingPath.value='/isolated/log.txt';persistenceTest.tick()");
+  const expandedHeight = await evaluate("document.querySelector('[role=log]').getBoundingClientRect().height");
+  const forbiddenCalls = "persistenceTest.calls.filter(record=>['stop_logging','send_file','disconnect'].includes(record.cmd)).length";
+  const beforeCalls = await evaluate(forbiddenCalls);
+  await evaluate("persistenceTest.remoteSettings({ui:{show_file_log_panel:false}})");
+  await expectPanels(true,false);
+  assert.equal(await evaluate("document.body.textContent.includes('点击选择发送文件路径')"),false);
+  assert.equal(await evaluate("document.body.textContent.includes('/isolated/log.txt')"),false);
+  assert.equal(await evaluate('persistenceTest.stores.loggingActive.value'),true,'hiding the UI does not stop disk logging');
+  assert.equal(await evaluate(forbiddenCalls),beforeCalls,'visibility changes never issue serial or stop-logging commands');
+  assert.ok(await evaluate("document.querySelector('[role=log]').getBoundingClientRect().height")>expandedHeight+80,'the entire bottom section releases its height');
+  await evaluate("persistenceTest.emit('logging-changed',{active:false,path:'/isolated/log.txt'}).then(()=>persistenceTest.tick())");
+  assert.equal(await evaluate('persistenceTest.stores.loggingActive.value'),false,'logging state keeps synchronizing while the panel is hidden');
+  await evaluate("persistenceTest.emit('logging-changed',{active:true,path:'/isolated/log.txt'}).then(()=>persistenceTest.tick())");
+  await evaluate("persistenceTest.remoteSettings({ui:{show_file_log_panel:true}})");
+  await expectPanels(true,true);
+  await evaluate(`document.querySelector(${JSON.stringify(fileToggle)}).click();persistenceTest.tick()`);
+  assert.ok(await evaluate("Boolean(persistenceTest.button('停止'))"),'logging state survives hiding and restoring its UI');
+  console.log('PASS: the bottom panel hides entirely, starts collapsed on restore, and does not interrupt existing logging.');
+
+  await evaluate("persistenceTest.stores.fileSendPath.value='/isolated/firmware.bin';persistenceTest.holdNext('send_file');persistenceTest.tick()");
+  await click('发送文件');
+  await until("persistenceTest.calls.some(record=>record.cmd==='send_file')");
+  await evaluate("persistenceTest.remoteSettings({ui:{show_file_log_panel:false}})");
+  await evaluate("persistenceTest.remoteSettings({ui:{show_file_log_panel:true}})");
+  await evaluate(`document.querySelector(${JSON.stringify(fileToggle)}).click();persistenceTest.tick()`);
+  assert.match(await evaluate("document.body.textContent"),/发送中/,'an in-flight file send stays mounted through a visibility cycle');
+  assert.equal(await evaluate("persistenceTest.calls.filter(record=>record.cmd==='send_file').length"),1,'showing the panel never retries a send');
+  await evaluate("persistenceTest.remoteSettings({ui:{show_file_log_panel:false}})");
+  await evaluate('persistenceTest.release()');
+  await until('persistenceTest.stores.fileSendProgress.value===100');
+  assert.equal(await evaluate('persistenceTest.stores.loggingActive.value'),true);
+  console.log('PASS: hiding the bottom panel neither interrupts nor retries an in-flight file send.');
+
+  for (const [tools,files] of [[false,true],[true,false],[false,false],[true,true]]) {
+    const ui = encodeURIComponent(JSON.stringify({show_log_tools:tools,show_file_log_panel:files}));
+    const run = `panels-${tools}-${files}`;
+    await call('Page.navigate',{url:`${base}/tests/browser/persistence-regressions.html?window=main&run=${run}&ui=${ui}`});
+    await until(`window.persistenceTest?.run===${JSON.stringify(run)}`,30000);
+    await delay(80);
+    await expectPanels(tools,files);
+    assert.equal(await evaluate('persistenceTest.stores.cachedSettings.value.ui.show_log_tools'),tools);
+    if (!tools&&!files&&process.env.PANEL_HIDDEN_SCREENSHOT) await screenshot(process.env.PANEL_HIDDEN_SCREENSHOT);
+  }
+  console.log('PASS: both display flags load independently on startup, including fully hidden and old-config fallback states.');
+}, {timeoutMs:180000});
