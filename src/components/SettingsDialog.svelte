@@ -19,6 +19,8 @@
   import Collapsible from '$components/ui/Collapsible.svelte';
   import SettingsHelp from '$components/ui/SettingsHelp.svelte';
   import type { ManualDocument, Settings, SettingsPatch } from '$lib/types';
+  import { completeSettingsOpen } from '$lib/tauri';
+  import { withSettingsTimeout } from '$lib/settingsTimeout';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
 
@@ -30,6 +32,8 @@
   let hidingTask: Promise<void> | null = null;
   let openingTask: Promise<void> = Promise.resolve();
   let openingError = $state('');
+  let loading = $state(false);
+  let retryPendingRequest = false;
   let lastRequest: SettingsOpenRequest = { section: 'about', ext_module: null, anchor: null };
 
   function emitPreview() {
@@ -53,15 +57,20 @@
     }
     if (hidingTask) return hidingTask;
     requestEpoch++;
+    loading = false;
     hidingTask = (async () => {
-      await appWindow.hide();
+      await withSettingsTimeout(appWindow.hide(), '隐藏设置窗口', 2000);
       open = false;
       openingError = '';
       editKbApiKey = '';
       editKbBaseUrl = '';
       showApiKey = false;
       if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
-    })().finally(() => { hidingTask = null; });
+    })().catch((error) => {
+      console.error('隐藏设置窗口失败:', error);
+      if (open) saveError = `关闭设置窗口失败:${error}`;
+      else openingError = `关闭设置窗口失败:${error}`;
+    }).finally(() => { hidingTask = null; });
     return hidingTask;
   }
 
@@ -395,9 +404,11 @@
     const epoch = ++requestEpoch;
     lastRequest = request;
     openingError = '';
+    loading = !open;
+    let failure: string | null = null;
     try {
       if (!open) {
-        const settings = await getSettings();
+        const settings = await withSettingsTimeout(getSettings(), '读取设置');
         if (!mounted || epoch !== requestEpoch) return;
         applySharedSettings(settings);
         showRequest(request);
@@ -406,32 +417,55 @@
         extModule = request.ext_module;
         if (request.anchor === 'baud') openBaud = true;
       }
+      loading = false;
       await tick();
       if (!mounted || epoch !== requestEpoch) return;
-      await showSettingsWindow();
+      await withSettingsTimeout(showSettingsWindow(), '显示设置窗口', 2000);
     } catch (error) {
+      failure = `打开设置失败:${error}`;
       if (!mounted || epoch !== requestEpoch) return;
       if (open) saveError = `打开设置失败:${error}`;
       else openingError = `读取设置失败:${error}`;
       await tick();
-      await showSettingsWindow().catch((failure) => console.error('显示设置窗口失败:', failure));
+      await withSettingsTimeout(showSettingsWindow(), '显示设置窗口', 2000)
+        .catch((showError) => console.error('显示设置窗口失败:', showError));
+    } finally {
+      if (epoch === requestEpoch) loading = false;
+      const cancelled = !mounted || epoch !== requestEpoch;
+      await completeSettingsOpen(request.request_id, cancelled ? null : failure, cancelled)
+        .catch((completionError) => console.error('确认设置窗口打开结果失败:', completionError));
     }
   }
 
-  function openPendingRequest(initial = false) {
-    openingTask = openingTask.then(() => consumePendingRequest(initial));
+  function openPendingRequest(initial = false, request?: SettingsOpenRequest) {
+    openingTask = openingTask.catch((error) => console.error('上次打开设置失败:', error))
+      .then(() => consumePendingRequest(initial, request))
+      .catch((error) => console.error('处理设置打开请求失败:', error));
     return openingTask;
   }
 
-  async function consumePendingRequest(initial: boolean) {
+  function retryOpen() {
+    return retryPendingRequest ? openPendingRequest(true) : prepareRequest(lastRequest);
+  }
+
+  async function consumePendingRequest(initial: boolean, notifiedRequest?: SettingsOpenRequest) {
+    retryPendingRequest = false;
     try {
-      await hidingTask;
-      const request = await takePendingSettings();
+      await withSettingsTimeout(hidingTask ?? Promise.resolve(), '等待设置窗口关闭');
+      const request = notifiedRequest ?? await withSettingsTimeout(takePendingSettings(), '读取设置打开请求');
       if (!mounted) return;
       if (request || (initial && !open && !openingError)) await prepareRequest(request ?? lastRequest);
     } catch (error) {
       console.error('读取设置打开请求失败:', error);
-      if (mounted) await prepareRequest(lastRequest);
+      if (!mounted) return;
+      retryPendingRequest = initial && !notifiedRequest;
+      lastRequest = notifiedRequest ?? lastRequest;
+      openingError = `打开设置失败:${error}`;
+      await tick();
+      await withSettingsTimeout(showSettingsWindow(), '显示设置窗口', 2000)
+        .catch((showError) => console.error('显示设置窗口失败:', showError));
+      await completeSettingsOpen(lastRequest.request_id, openingError)
+        .catch((completionError) => console.error('确认设置窗口打开结果失败:', completionError));
     }
   }
 
@@ -442,7 +476,7 @@
       event.preventDefault();
       handleCancel();
     });
-    const unlistenRequest = onSettingsOpenRequest(() => { void openPendingRequest(); });
+    const unlistenRequest = onSettingsOpenRequest((request) => { void openPendingRequest(false, request); });
     unlistenRequest.then(() => openPendingRequest(true)).catch((error) => console.error('初始化设置窗口失败:', error));
     const unlistenSettings = onSettingsChanged(() => {
       if (!open) return;
@@ -1019,9 +1053,17 @@
     <div class="flex-1 flex flex-col items-center justify-center gap-4 p-6">
       <p role="alert" class="text-[13px] break-all">{openingError}</p>
       <div class="flex gap-2">
-        <button class="btn btn-primary" onclick={() => prepareRequest(lastRequest)}>重试</button>
+        <button class="btn btn-primary" onclick={retryOpen}>重试</button>
         <button class="btn btn-ghost" onclick={handleCancel}>关闭</button>
       </div>
+    </div>
+  </div>
+{:else if loading}
+  <div class="h-screen flex flex-col" style="background: var(--background); color: var(--foreground);">
+    <div data-tauri-drag-region class="h-8 px-3 flex items-center border-b border-[var(--border)]">设置</div>
+    <div class="flex-1 flex flex-col items-center justify-center gap-4 p-6">
+      <div role="status" class="flex items-center gap-2 text-[13px]"><Loader2 size={16} class="animate-spin" />正在读取设置…</div>
+      <button class="btn btn-ghost" onclick={handleCancel}>关闭</button>
     </div>
   </div>
 {:else if open}

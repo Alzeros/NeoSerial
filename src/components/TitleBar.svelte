@@ -6,6 +6,7 @@
   import { Pin, PinOff, PanelRight, PanelRightClose, Settings as SettingsIcon, Plus } from 'lucide-svelte';
   import { scriptPanelOpen, toggleScriptPanel, currentPort, mcpOnlyConnections, settingsRequest, cachedSettings } from '$lib/stores';
   import { openPortWindow, openSettingsWindow, getMcpOnlyConnections, onMcpConnectionsChanged } from '$lib/tauri';
+  import { notifyError } from '$lib/notifications.svelte';
 
   const appWindow = getCurrentWindow();
   let appVersion = $state('');
@@ -41,6 +42,7 @@
       await openSettingsWindow();
     } catch (e) {
       console.error('打开设置窗口失败:', e);
+      notifyError('打开设置窗口失败', e);
     }
   }
 
@@ -111,6 +113,7 @@
       const anchor = settingsRequest.anchor;
       openSettingsWindow({ section, ext_module: extMod, anchor }).catch((e) => {
         console.error('打开设置窗口失败:', e);
+        notifyError('打开设置窗口失败', e);
       });
       settingsRequest.section = null;
       settingsRequest.extModule = null;

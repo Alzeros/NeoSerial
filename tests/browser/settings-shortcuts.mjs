@@ -10,6 +10,7 @@ await withHeadlessBrowser(async ({ base, call, fresh, click, evaluate, until }) 
   ];
   const requests = [];
   await fresh('main');
+  await evaluate('persistenceTest.remoteSettings({ui:{show_mcp_tab:true}})');
   for (const [tab, module] of targets) {
     await click(tab);
     const count = await evaluate('persistenceTest.calls.filter(call => call.cmd === "open_settings_window").length');

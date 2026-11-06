@@ -77,7 +77,51 @@ test('settings entry does not eagerly import the serial application', async () =
 
 test('settings shortcuts map the module to the native camelCase argument', async () => {
   const source = await readFile(new URL('../src/lib/tauri.ts', import.meta.url), 'utf8');
-  const command = source.slice(source.indexOf("await invoke('open_settings_window'"), source.indexOf('export async function takePendingSettings'));
+  const command = source.slice(source.indexOf("invoke('open_settings_window'"), source.indexOf('export async function takePendingSettings'));
   assert.match(command, /extModule:\s*request\.ext_module/);
   assert.doesNotMatch(command, /ext_module:\s*request\.ext_module/);
+});
+
+test('reused settings windows are restored natively before notifying the hidden page', async () => {
+  const rust = await source('src-tauri/src/lib.rs');
+  const start = rust.indexOf('if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL)');
+  const end = rust.indexOf('window.emit("settings-open-request"', start);
+  const reuse = rust.slice(start, end);
+  assert.match(reuse, /window\.unminimize\(\)/);
+  assert.match(reuse, /window\.show\(\)/);
+  assert.match(reuse, /window\.set_focus\(\)/);
+});
+
+test('native opening waits for a correlated settings-only acknowledgement with a deadline', async () => {
+  const rust = await source('src-tauri/src/lib.rs');
+  const state = await source('src-tauri/src/state.rs');
+  assert.match(state, /pub request_id: Option<u64>/);
+  assert.match(rust, /tokio::time::timeout/);
+  assert.match(rust, /async fn complete_settings_open|fn complete_settings_open/);
+  const completion = rust.slice(rust.indexOf('fn complete_settings_open'), rust.indexOf('fn show_settings_window'));
+  assert.match(completion, /webview_window\.label\(\) != SETTINGS_WINDOW_LABEL/);
+  assert.match(completion, /request_id/);
+});
+
+test('both settings entry points report failures through visible notifications', async () => {
+  const titleBar = await source('src/components/TitleBar.svelte');
+  assert.equal((titleBar.match(/notifyError\('打开设置窗口失败', e\)/g) ?? []).length, 2);
+});
+
+test('blocking native preparation is isolated while preserving the singleton guard', async () => {
+  const rust = await source('src-tauri/src/lib.rs');
+  const readiness = await source('src-tauri/src/settings_open.rs');
+  assert.match(rust, /settings_open::run_preparation/);
+  assert.match(readiness, /spawn_blocking/);
+  assert.match(readiness, /OwnedMutexGuard/);
+});
+
+test('settings cancellation is distinct from readiness and unread requests can be retried', async () => {
+  const settings = await source('src/components/SettingsDialog.svelte');
+  const rust = await source('src-tauri/src/lib.rs');
+  assert.match(settings, /function retryOpen\(/);
+  assert.match(settings, /const cancelled = !mounted \|\| epoch !== requestEpoch/);
+  const pending = rust.slice(rust.indexOf('fn take_pending_settings'), rust.indexOf('fn open_url'));
+  assert.match(pending, /request\.clone\(\)/);
+  assert.doesNotMatch(pending, /request\.take\(\)/);
 });

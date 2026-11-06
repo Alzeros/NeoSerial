@@ -31,6 +31,7 @@ if (initialUi) Object.assign(saved.ui, JSON.parse(initialUi));
 let sequence = presetScriptModules();
 sequence[0].pages[0].commands[0].command = 'ORIGINAL';
 const calls = [], gates = new Map(), failures = new Set(), responses = new Map();
+if (new URL(location.href).searchParams.has('failPending')) failures.add('take_pending_settings');
 const merge = (target, patch) => {
   for (const [key, value] of Object.entries(patch)) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
@@ -63,7 +64,8 @@ mockIPC(async (cmd, args) => {
       return;
     case 'take_pending_settings': {
       const module = new URL(location.href).searchParams.get('extModule');
-      return { section: module ? 'extensions' : 'appearance', ext_module: module, anchor: null };
+      const requestId = new URL(location.href).searchParams.get('requestId');
+      return { section: module ? 'extensions' : 'appearance', ext_module: module, anchor: null, request_id: requestId ? Number(requestId) : null };
     }
     case 'get_window_conn_state': return { connected: false };
     case 'take_pending_takeover': return null;

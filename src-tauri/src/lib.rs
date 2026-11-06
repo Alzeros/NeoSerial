@@ -9,6 +9,7 @@ mod state;
 mod tray;
 mod util;
 mod window_sizing;
+mod settings_open;
 
 use tauri::{Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor, get_modem_status};
@@ -25,7 +26,10 @@ use state::{AppState, SettingsOpenRequest};
 const SETTINGS_WINDOW_LABEL: &str = "settings";
 const SETTINGS_MIN_WIDTH: f64 = 680.0;
 const SETTINGS_MIN_HEIGHT: f64 = 500.0;
-static SETTINGS_OPEN_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+static SETTINGS_OPEN_LOCK: std::sync::LazyLock<std::sync::Arc<tokio::sync::Mutex<()>>> =
+    std::sync::LazyLock::new(|| std::sync::Arc::new(tokio::sync::Mutex::new(())));
+static SETTINGS_OPEN_REPLIES: settings_open::SettingsOpenReplies = settings_open::SettingsOpenReplies::new();
+static SETTINGS_REQUEST_ID: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[tauri::command]
 fn greet(name: &str) -> String {
@@ -42,12 +46,40 @@ async fn open_settings_window(
     ext_module: Option<String>,
     anchor: Option<String>,
 ) -> Result<(), String> {
-    let _guard = SETTINGS_OPEN_LOCK.lock().await;
+    let request_id = SETTINGS_REQUEST_ID.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let request = SettingsOpenRequest {
+        request_id: Some(request_id),
         section: section.unwrap_or_else(|| "about".to_string()),
         ext_module,
         anchor,
     };
+    log::info!("[settings] request={} origin={} stage=queued", request_id, webview_window.label());
+    let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
+        let guard = SETTINGS_OPEN_LOCK.clone().lock_owned().await;
+        let reply = SETTINGS_OPEN_REPLIES.begin(request_id)?;
+        let prepare_app = app_handle.clone();
+        let prepare_source = webview_window.clone();
+        let _guard = settings_open::run_preparation(guard, move || {
+            prepare_settings_window(&prepare_app, &prepare_source, request)
+        }).await?;
+        reply.await.map_err(|error| format!("设置窗口就绪确认中断: {}", error))?
+    })
+    .await
+    .unwrap_or_else(|_| Err(format!("设置窗口未响应，打开超时，请重试（请求 {}）", request_id)));
+    let _ = SETTINGS_OPEN_REPLIES.clear(request_id);
+    match &result {
+        Ok(settings_open::SettingsOpenOutcome::Ready) => log::info!("[settings] request={} stage=ready", request_id),
+        Ok(settings_open::SettingsOpenOutcome::Cancelled) => log::info!("[settings] request={} stage=cancelled", request_id),
+        Err(error) => log::warn!("[settings] request={} stage=failed error={}", request_id, error),
+    }
+    result.map(|_| ())
+}
+
+fn prepare_settings_window(
+    app_handle: &tauri::AppHandle,
+    webview_window: &tauri::WebviewWindow,
+    request: SettingsOpenRequest,
+) -> Result<(), String> {
     let state = app_handle
         .try_state::<AppState>()
         .ok_or("无法访问应用状态")?;
@@ -66,6 +98,10 @@ async fn open_settings_window(
                 window.set_position(position).map_err(|e| e.to_string())?;
             }
         }
+        log::info!("[settings] request={:?} stage=restore", request.request_id);
+        window.unminimize().map_err(|error| format!("恢复设置窗口失败: {}", error))?;
+        window.show().map_err(|error| format!("显示设置窗口失败: {}", error))?;
+        window.set_focus().map_err(|error| format!("聚焦设置窗口失败: {}", error))?;
         window.emit("settings-open-request", request).map_err(|e| e.to_string())?;
         return Ok(());
     }
@@ -84,8 +120,9 @@ async fn open_settings_window(
         _ => None,
     };
 
+    log::info!("[settings] request={:?} stage=create", request.request_id);
     let window = WebviewWindowBuilder::new(
-        &app_handle,
+        app_handle,
         SETTINGS_WINDOW_LABEL,
         WebviewUrl::App("index.html".into()),
     )
@@ -105,6 +142,37 @@ async fn open_settings_window(
 }
 
 #[tauri::command]
+fn complete_settings_open(
+    app_handle: tauri::AppHandle,
+    webview_window: tauri::WebviewWindow,
+    request_id: u64,
+    error: Option<String>,
+    cancelled: Option<bool>,
+) -> Result<(), String> {
+    if webview_window.label() != SETTINGS_WINDOW_LABEL {
+        return Err("只能由设置窗口确认打开结果".to_string());
+    }
+    let outcome = if cancelled.unwrap_or(false) {
+        Ok(settings_open::SettingsOpenOutcome::Cancelled)
+    } else {
+        error.map_or(Ok(settings_open::SettingsOpenOutcome::Ready), Err)
+    };
+    let matched = SETTINGS_OPEN_REPLIES.complete(request_id, outcome)?;
+    if matched {
+        if let Some(state) = app_handle.try_state::<AppState>() {
+            let mut pending = state.pending_settings.lock().map_err(|error| error.to_string())?;
+            if pending.as_ref().and_then(|request| request.request_id) == Some(request_id) {
+                *pending = None;
+            }
+        }
+    }
+    if !matched {
+        log::info!("[settings] request={} stage=stale-acknowledgement", request_id);
+    }
+    Ok(())
+}
+
+#[tauri::command]
 fn show_settings_window(webview_window: tauri::WebviewWindow) -> Result<(), String> {
     if webview_window.label() != SETTINGS_WINDOW_LABEL {
         return Err("只能由设置窗口请求显示".to_string());
@@ -115,7 +183,7 @@ fn show_settings_window(webview_window: tauri::WebviewWindow) -> Result<(), Stri
     Ok(())
 }
 
-/// 设置窗口挂载后取走一次性跳转请求。
+/// 设置窗口读取跳转请求，确认完成后才清除，允许 IPC 失败后重试。
 #[tauri::command]
 fn take_pending_settings(
     state: tauri::State<'_, AppState>,
@@ -124,7 +192,7 @@ fn take_pending_settings(
         .pending_settings
         .lock()
         .map_err(|e| e.to_string())
-        .map(|mut request| request.take())
+        .map(|request| request.clone())
 }
 
 /// 用系统默认浏览器打开 URL(关于页 GitHub 链接)。
@@ -398,6 +466,7 @@ pub fn run() {
             get_modem_status,
             take_pending_takeover,
             open_settings_window,
+            complete_settings_open,
             show_settings_window,
             take_pending_settings,
             exit_app,

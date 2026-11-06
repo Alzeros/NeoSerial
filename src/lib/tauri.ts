@@ -24,6 +24,7 @@ import type {
   WindowConnState,
 } from './types';
 import { defaultScriptModule, presetScriptModules } from './types';
+import { withSettingsTimeout } from './settingsTimeout';
 
 // ============ 连接管理 ============
 
@@ -65,6 +66,7 @@ export async function openThemeEditor(): Promise<void> {
 }
 
 export interface SettingsOpenRequest {
+  request_id?: number | null;
   section: string;
   ext_module: 'suggest' | 'mcp' | 'quick' | 'data' | null;
   anchor: 'baud' | null;
@@ -73,11 +75,16 @@ export interface SettingsOpenRequest {
 export async function openSettingsWindow(
   request: Partial<SettingsOpenRequest> = {},
 ): Promise<void> {
-  await invoke('open_settings_window', {
+  await withSettingsTimeout(invoke('open_settings_window', {
     section: request.section ?? null,
     extModule: request.ext_module ?? null,
     anchor: request.anchor ?? null,
-  });
+  }), '打开设置窗口', 17000);
+}
+
+export async function completeSettingsOpen(requestId: number | null | undefined, error: string | null, cancelled = false): Promise<void> {
+  if (requestId == null) return;
+  await withSettingsTimeout(invoke('complete_settings_open', { requestId, error, cancelled }), '确认设置窗口就绪', 2000);
 }
 
 export async function takePendingSettings(): Promise<SettingsOpenRequest | null> {

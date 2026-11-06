@@ -11,6 +11,7 @@ use crate::mcp::registry::RegistryHandle;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct SettingsOpenRequest {
+    pub request_id: Option<u64>,
     pub section: String,
     pub ext_module: Option<String>,
     pub anchor: Option<String>,
