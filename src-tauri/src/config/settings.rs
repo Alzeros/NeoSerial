@@ -111,6 +111,8 @@ pub struct UiSettings {
     pub display_mode: DisplayMode,
     pub line_ending: LineEnding,
     pub auto_scroll: bool,
+    #[serde(default)]
+    pub pause_follow_on_scroll: bool,
     #[serde(deserialize_with = "deserialize_log_lines")]
     pub ring_buffer_capacity: usize,
     /// 界面缓存原始数据量上限，不包含浏览器对象与 DOM 的额外占用。
@@ -530,6 +532,7 @@ impl Settings {
                 display_mode: DisplayMode::Ascii,
                 line_ending: LineEnding::Crlf,
                 auto_scroll: true,
+                pause_follow_on_scroll: false,
                 ring_buffer_capacity: 5000,
                 log_buffer_max_bytes: default_log_buffer_max_bytes(),
                 show_timestamp: true,
@@ -722,6 +725,7 @@ impl LegacySettings {
                 display_mode: self.ui.display_mode,
                 line_ending: self.ui.line_ending,
                 auto_scroll: self.ui.auto_scroll,
+                pause_follow_on_scroll: false,
                 ring_buffer_capacity: self.ui.ring_buffer_capacity.clamp(MIN_LOG_LINES, MAX_LOG_LINES),
                 log_buffer_max_bytes: def.ui.log_buffer_max_bytes,
                 show_timestamp: def.ui.show_timestamp,
@@ -934,6 +938,7 @@ mod tests {
         original.serial_defaults.parity = Parity::Even;
         original.ui.display_mode = DisplayMode::Hex;
         original.ui.auto_scroll = false;
+        original.ui.pause_follow_on_scroll = true;
         original.ui.line_ending = LineEnding::Lf;
         original.error_keywords = vec!["MYERR".into()];
 
@@ -946,6 +951,7 @@ mod tests {
         assert_eq!(loaded.serial_defaults.parity, Parity::Even);
         assert_eq!(loaded.ui.display_mode, DisplayMode::Hex);
         assert!(!loaded.ui.auto_scroll);
+        assert!(loaded.ui.pause_follow_on_scroll);
         assert_eq!(loaded.ui.line_ending, LineEnding::Lf);
         assert_eq!(loaded.error_keywords, vec!["MYERR".to_string()]);
 
@@ -958,6 +964,29 @@ mod tests {
         let s = Settings::default_settings();
         assert!(s.ui.show_timestamp);
         assert!(s.ui.log_send);
+    }
+
+    #[test]
+    fn test_pause_follow_on_scroll_defaults_and_old_settings() {
+        let mut serialized = serde_json::to_value(Settings::default_settings()).unwrap();
+        assert_eq!(serialized["ui"]["pause_follow_on_scroll"], false);
+        serialized["ui"].as_object_mut().unwrap().remove("pause_follow_on_scroll");
+        let restored: Settings = serde_json::from_value(serialized).unwrap();
+        assert!(!restored.ui.pause_follow_on_scroll);
+    }
+
+    #[test]
+    fn test_pause_follow_on_scroll_patches_and_roundtrip() {
+        let mut settings = Settings::default_settings();
+        for enabled in [true, false] {
+            settings = settings.apply_patch(&serde_json::json!({
+                "ui": { "pause_follow_on_scroll": enabled }
+            })).unwrap();
+            settings = serde_json::from_str(&serde_json::to_string(&settings).unwrap()).unwrap();
+            assert_eq!(settings.ui.pause_follow_on_scroll, enabled);
+            assert!(settings.ui.auto_scroll);
+            assert!(settings.ui.log_send);
+        }
     }
 
     #[test]
@@ -1314,6 +1343,7 @@ mod tests {
 
         let loaded = Settings::load_from(&path);
         // 旧 quick_commands 应迁移为 command_groups
+        assert!(!loaded.ui.pause_follow_on_scroll);
         assert_eq!(loaded.command_groups.len(), 1);
         assert_eq!(loaded.command_groups[0].items.len(), 1);
         assert_eq!(loaded.command_groups[0].items[0].label, "AT");

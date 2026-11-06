@@ -11,7 +11,7 @@
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:unit": "node --test tests/*.test.ts",
     "test:settings": "node tests/browser/settings-recovery.mjs && node tests/browser/settings-reuse.mjs && node tests/browser/settings-shortcuts.mjs && node tests/browser/persistence-regressions.mjs",
-    "test:logs": "node tests/browser/log-diagnostics.mjs && node tests/browser/log-regressions.mjs",
+    "test:logs": "node tests/browser/log-follow-settings.mjs && node tests/browser/log-diagnostics.mjs && node tests/browser/log-regressions.mjs",
     "test:notifications": "node tests/browser/notifications.mjs",
     "test:activity": "node tests/browser/mcp-activity.mjs",
     "test:persistence": "node tests/browser/persistence-regressions.mjs",

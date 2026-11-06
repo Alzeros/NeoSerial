@@ -16,6 +16,7 @@
   });
   let toolsOpen = $state(false);
   const showLogTools = $derived(cachedSettings.value?.ui?.show_log_tools ?? false);
+  const pauseFollowOnScroll = $derived(cachedSettings.value?.ui?.pause_follow_on_scroll ?? false);
   let filter = $state<LogFilter>({ direction: 'all', errorsOnly: false, include: '', exclude: '' });
   const filtering = $derived(showLogTools && (filter.direction !== 'all' || filter.errorsOnly || !!filter.include.trim() || !!filter.exclude.trim()));
   const renderedLines = $derived(filtering ? retainedLines.filter(line => cachedRecord(line).matches()) : retainedLines);
@@ -120,13 +121,14 @@
   });
 
   function userScroll(event: WheelEvent | KeyboardEvent | PointerEvent) {
+    if (!pauseFollowOnScroll) return;
     userGestureUntil = performance.now() + 600;
     if ((event instanceof WheelEvent && event.deltaY < 0) ||
       (event instanceof KeyboardEvent && ['ArrowUp', 'PageUp', 'Home'].includes(event.key))) autoScroll.value = false;
   }
 
   function handleScroll() {
-    if (!scrollContainer || (suppressScroll && performance.now() > userGestureUntil)) return;
+    if (!pauseFollowOnScroll || !scrollContainer || (suppressScroll && performance.now() > userGestureUntil)) return;
     const atBottom = scrollContainer.scrollHeight - scrollContainer.clientHeight - scrollContainer.scrollTop < 8;
     if (!atBottom) autoScroll.value = false;
   }

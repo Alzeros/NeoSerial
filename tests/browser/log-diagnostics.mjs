@@ -3,7 +3,7 @@ import { withHeadlessBrowser } from './headless.mjs';
 
 await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) => {
   await fresh('main');
-  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:true}})");
+  await evaluate("persistenceTest.remoteSettings({ui:{show_log_tools:true,pause_follow_on_scroll:true}})");
   assert.ok(await evaluate("Boolean(document.querySelector('[data-log-tools-toggle]'))"), 'diagnostic tools have a compact entry point');
   await evaluate(`(()=>{
     const stores=persistenceTest.stores;
@@ -116,6 +116,7 @@ await withHeadlessBrowser(async ({ evaluate, until, fresh, delay, screenshot }) 
   await fresh('main');
   await evaluate(`(()=>{
     const stores=persistenceTest.stores;
+    stores.cachedSettings.value.ui.pause_follow_on_scroll=true;
     stores.cachedSettings.value.ui.ring_buffer_capacity=1000;
     stores.clearLogLines();
     window.makeDiagnosticRow=(index)=>({ts:'x',ts_ms:10000+index,dir:'rx',ascii:'record '+index,raw:[65],line_index:index,is_error:false});

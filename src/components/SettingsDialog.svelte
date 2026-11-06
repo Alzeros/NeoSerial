@@ -123,6 +123,7 @@
   // 日志区保留行数(ui.ring_buffer_capacity)。这个键以前没有消费方,现在接上了
   let editRingBuffer = $state(DEFAULT_MAX_LOG_LINES);
   let editLogBufferBytes = $state(DEFAULT_MAX_LOG_BYTES);
+  let editPauseFollowOnScroll = $state(false);
   // "退出 NeoSerial" 的二次确认:这一下会断开所有连接并停 MCP,不该一击即中
   let exitArmed = $state(false);
   let exitArmTimer: ReturnType<typeof setTimeout> | null = null;
@@ -222,6 +223,7 @@
     fontSize: number; lineHeight: number; dirLabel: 'short' | 'full'; fontLatin: string; fontCJK: string;
     textEncoding: 'ascii' | 'utf8' | 'gbk';
     sendHalfwidthPunct: boolean;
+    pauseFollowOnScroll: boolean;
     backgroundMode: boolean; showSuggestTab: boolean; showMcpTab: boolean; showDataTab: boolean;
     showLogTools: boolean; showFileLogPanel: boolean;
     hiddenDataTools: string[]; hiddenDataFillPatterns: string[]; hiddenChecksumAlgorithms: string[];
@@ -242,6 +244,7 @@
       fontSize: editFontSize, lineHeight: editLineHeight, dirLabel: editDirLabel, fontLatin: editFontLatin, fontCJK: editFontCJK,
       textEncoding: editTextEncoding,
       sendHalfwidthPunct: editSendHalfwidthPunct,
+      pauseFollowOnScroll: editPauseFollowOnScroll,
       backgroundMode: editBackgroundMode, showSuggestTab: editShowSuggestTab, showMcpTab: editShowMcpTab,
       showDataTab: editShowDataTab,
       showLogTools: editShowLogTools, showFileLogPanel: editShowFileLogPanel,
@@ -329,6 +332,7 @@
     const logLimits = resolveLogLimits(cachedSettings.value?.ui);
     editRingBuffer = logLimits.lines;
     editLogBufferBytes = logLimits.bytes;
+    editPauseFollowOnScroll = cachedSettings.value?.ui?.pause_follow_on_scroll ?? false;
     exitArmed = false;
     if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
     const ci = cachedSettings.value?.command_index;
@@ -633,6 +637,7 @@
     if (changed('qcFontFamily')) ui.qc_font_family = cur.qcFontFamily;
     if (changed('ringBuffer')) ui.ring_buffer_capacity = cur.ringBuffer;
     if (changed('logBufferBytes')) ui.log_buffer_max_bytes = cur.logBufferBytes;
+    if (changed('pauseFollowOnScroll')) ui.pause_follow_on_scroll = cur.pauseFollowOnScroll;
     if (Object.keys(ui).length) patch.ui = ui;
     if (changed('errorKeywords')) patch.error_keywords = cur.errorKeywords;
     const presets: NonNullable<SettingsPatch['presets']> = {};
@@ -1296,6 +1301,15 @@
                       >{enc.l}</button>
                     {/each}
                   </div>
+                </div>
+
+                <div class="flex items-center gap-1 mb-5">
+                  <label class="switch switch-row">
+                    <input data-settings-pause-follow-on-scroll type="checkbox" bind:checked={editPauseFollowOnScroll} />
+                    <span class="switch-track"></span>
+                    <span class="switch-label">上滚时暂停跟随</span>
+                  </label>
+                  <SettingsHelp label="上滚时暂停跟随" text="开启后，上滚会停止跟随，需手动恢复。关闭时，新日志仍自动滚到底部。不影响暂停显示。" />
                 </div>
 
                 <div class="mb-2 text-[13px] font-medium text-[var(--foreground)]">日志缓存上限</div>

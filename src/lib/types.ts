@@ -152,6 +152,7 @@ export interface Settings {
     display_mode: 'Ascii' | 'Hex';
     line_ending: LineEnding;
     auto_scroll: boolean;
+    pause_follow_on_scroll: boolean;
     ring_buffer_capacity: number;
     /** 界面日志缓存的原始数据字节上限，与进程内存占用不同。 */
     log_buffer_max_bytes: number;
