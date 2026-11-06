@@ -1,9 +1,115 @@
 <script lang="ts">
-  import { availablePorts, connectionParams, connected, presetBaudRates, windowPort, settingsRequest } from '$lib/stores';
-  import { connect, disconnect, listPorts } from '$lib/tauri';
+  import { onMount, untrack } from 'svelte';
+  import { autoConnection, availablePorts, connectionParams, connected, presetBaudRates, windowPort, settingsRequest } from '$lib/stores';
+  import { autoConnectOnce, connect, disconnect, getAutoConnect, listPorts, onAutoConnectChanged, setAutoConnect } from '$lib/tauri';
+  import type { AutoConnectBinding, ConnectionParams } from '$lib/types';
   import { normalizePorts, shouldPollPorts } from '$lib/connectionPorts';
   import { notifyError } from '$lib/notifications.svelte';
   import CustomSelect from '$components/ui/CustomSelect.svelte';
+  import ConnectionButton from '$components/ui/ConnectionButton.svelte';
+
+  let manualBusy = $state(false);
+  let autoChanging = $state(false);
+  let disposed = false;
+  let refreshing = false;
+  let ignoreEnabled = false;
+  let controlVersion = 0;
+  let bindingRevision = 0;
+  let controlQueue: Promise<unknown> = Promise.resolve();
+  const controlsLocked = $derived(connected.value || autoConnection.binding !== null || manualBusy || autoChanging);
+  const canAutoConnect = $derived(!!connectionParams.port && Number.isFinite(connectionParams.baudRate) && connectionParams.baudRate > 0);
+  const connectionTitle = $derived(autoConnection.binding
+    ? `自动连接 ${autoConnection.binding.params.port}，点击断开并关闭自动连接`
+    : connected.value ? '断开串口' : '连接串口');
+
+  function queueControl<Result>(operation: () => Promise<Result>): Promise<Result> {
+    const result = controlQueue.then(operation, operation);
+    controlQueue = result.then(() => undefined, () => undefined);
+    return result;
+  }
+
+  function captureParams(): ConnectionParams {
+    return {
+      port: connectionParams.port,
+      baud_rate: connectionParams.baudRate,
+      data_bits: connectionParams.dataBits,
+      parity: connectionParams.parity,
+      stop_bits: connectionParams.stopBits,
+      flow_control: connectionParams.flowControl,
+    };
+  }
+
+  function applyBinding(binding: AutoConnectBinding | null) {
+    if (disposed || (ignoreEnabled && binding)) return;
+    if (autoConnection.binding?.id !== binding?.id) autoConnection.connecting = false;
+    autoConnection.binding = binding;
+    autoConnection.error = '';
+    if (binding) {
+      const params = binding.params;
+      connectionParams.port = params.port;
+      connectionParams.baudRate = params.baud_rate;
+      connectionParams.dataBits = params.data_bits;
+      connectionParams.parity = params.parity;
+      connectionParams.stopBits = params.stop_bits;
+      connectionParams.flowControl = params.flow_control;
+    }
+  }
+
+  async function attemptAutoConnect() {
+    const binding = autoConnection.binding;
+    if (!binding || disposed || connected.value || manualBusy || autoChanging || autoConnection.connecting
+      || !availablePorts.value.some(port => port.port === binding.params.port)) return;
+    autoConnection.connecting = true;
+    try {
+      await autoConnectOnce(binding.id);
+      if (autoConnection.binding?.id === binding.id) autoConnection.error = '';
+    } catch (error) {
+      if (!disposed && autoConnection.binding?.id === binding.id) autoConnection.error = String(error);
+    } finally {
+      if (!disposed && autoConnection.binding?.id === binding.id) autoConnection.connecting = false;
+    }
+  }
+
+  async function toggleAutoConnect() {
+    if (manualBusy || autoChanging || (!autoConnection.binding && !canAutoConnect)) return;
+    const previous = autoConnection.binding;
+    const version = ++controlVersion;
+    const revision = bindingRevision;
+    ignoreEnabled = previous !== null;
+    const params = previous ? null : captureParams();
+    if (previous) applyBinding(null);
+    autoChanging = true;
+    try {
+      const binding = await queueControl(() => setAutoConnect(params));
+      if (!disposed && controlVersion === version && bindingRevision === revision) applyBinding(binding);
+    } catch (error) {
+      if (!disposed && controlVersion === version) {
+        if (bindingRevision === revision) {
+          ignoreEnabled = false;
+          applyBinding(previous);
+        }
+        notifyError('自动连接设置失败', error);
+      }
+    } finally {
+      if (!disposed && controlVersion === version) autoChanging = false;
+    }
+  }
+
+  onMount(() => {
+    const listener = onAutoConnectChanged(binding => { bindingRevision++; applyBinding(binding); });
+    listener.then(async () => {
+      const before = bindingRevision;
+      const binding = await getAutoConnect();
+      if (!disposed && bindingRevision === before) applyBinding(binding);
+    }).catch(error => console.error('读取自动连接状态失败:', error));
+    return () => {
+      disposed = true;
+      listener.then(unlisten => unlisten()).catch(() => {});
+      autoConnection.binding = null;
+      autoConnection.connecting = false;
+      autoConnection.error = '';
+    };
+  });
 
   // 波特率下拉项 = 预设波特率（来自设置，持久化）
   const baudRates = $derived(presetBaudRates.value.map((b) => String(b)));
@@ -40,21 +146,28 @@
   }
 
   async function refreshPorts() {
+    if (refreshing || disposed) return;
+    refreshing = true;
     try {
       const ports = normalizePorts(await listPorts());
+      if (disposed) return;
       availablePorts.value = ports;
       // 默认显示一个端口:优先保持当前选的(上次连的 last_port),不在可用列表则取第一个
-      if (ports.length > 0) {
+      if (ports.length > 0 && !autoConnection.binding && !autoChanging && !connected.value && !manualBusy) {
         if (!connectionParams.port || !ports.some((p) => p.port === connectionParams.port)) {
           connectionParams.port = ports[0]!.port;
         }
       }
+      void attemptAutoConnect();
     } catch (e) {
       console.error('获取端口列表失败:', e);
+    } finally {
+      refreshing = false;
     }
   }
 
   async function handleConnect() {
+    if (manualBusy || autoChanging) return;
     const baud = connectionParams.baudRate;
     // 波特率为空/非法时拒绝连接，避免 0 波特率下发到后端
     if (!Number.isFinite(baud) || baud <= 0) return;
@@ -62,32 +175,50 @@
     // windowPort 只用于"已连接后"定位 send/disconnect,连接前用 connectionParams.port。
     const targetPort = connectionParams.port;
     if (!targetPort) return;
+    ignoreEnabled = true;
+    manualBusy = true;
     try {
-      await connect({
+      await queueControl(() => connect({
         port: targetPort,
         baud_rate: baud,
         data_bits: connectionParams.dataBits,
         parity: connectionParams.parity,
         stop_bits: connectionParams.stopBits,
         flow_control: connectionParams.flowControl,
-      });
+      }));
     } catch (e) {
       console.error('[connect] 失败:', e);
       notifyError('连接失败', e);
+    } finally {
+      manualBusy = false;
     }
   }
 
   async function handleDisconnect() {
+    if (manualBusy || autoChanging) return;
+    const targetPort = windowPort.value ?? autoConnection.binding?.params.port ?? connectionParams.port;
+    ++controlVersion;
+    ignoreEnabled = true;
+    applyBinding(null);
+    manualBusy = true;
     try {
-      if (windowPort.value) await disconnect(windowPort.value);
+      if (targetPort) await queueControl(() => disconnect(targetPort));
     } catch (e) {
       console.error('断开失败:', e);
       notifyError('断开失败', e);
+    } finally {
+      manualBusy = false;
     }
   }
 
   $effect(() => {
-    refreshPorts();
+    untrack(() => { void refreshPorts(); });
+  });
+
+  $effect(() => {
+    if (autoConnection.binding && !connected.value && !autoChanging && !manualBusy) {
+      untrack(() => { void refreshPorts(); });
+    }
   });
 
   // 未连接时每 2 秒检测热插拔；已连接但启动时列表尚为空也继续补拉，避免 MCP
@@ -105,46 +236,50 @@
     <!-- 端口号(所有窗口都可选,连不同 port) -->
     <label class="control-group">
       <span>端口号</span>
-      <CustomSelect bind:value={connectionParams.port} options={portOptions} width="100px" disabled={connected.value} emptyLabel="暂无可用端口" />
+      <CustomSelect bind:value={connectionParams.port} options={portOptions} width="100px" disabled={controlsLocked} emptyLabel="暂无可用端口" />
     </label>
 
     <!-- 波特率 -->
     <label class="control-group">
       <span>波特率</span>
-      <CustomSelect bind:value={getBaudStr, setBaudStr} options={baudOptions} width="96px" disabled={connected.value} onAddOption={openBaudSettings} />
+      <CustomSelect bind:value={getBaudStr, setBaudStr} options={baudOptions} width="96px" disabled={controlsLocked} onAddOption={openBaudSettings} />
     </label>
 
     <!-- 数据位 -->
     <label class="control-group">
       <span>数据位</span>
-      <CustomSelect bind:value={connectionParams.dataBits} options={dataBitOptions} width="64px" disabled={connected.value} />
+      <CustomSelect bind:value={connectionParams.dataBits} options={dataBitOptions} width="64px" disabled={controlsLocked} />
     </label>
 
     <!-- 校验位 -->
     <label class="control-group">
       <span>校验位</span>
-      <CustomSelect bind:value={connectionParams.parity} options={parityOptions} width="80px" disabled={connected.value} />
+      <CustomSelect bind:value={connectionParams.parity} options={parityOptions} width="80px" disabled={controlsLocked} />
     </label>
 
     <!-- 停止位 -->
     <label class="control-group">
       <span>停止位</span>
-      <CustomSelect bind:value={getStopBitsStr, setStopBitsStr} options={stopBitOptions} width="60px" disabled={connected.value} />
+      <CustomSelect bind:value={getStopBitsStr, setStopBitsStr} options={stopBitOptions} width="60px" disabled={controlsLocked} />
     </label>
 
     <!-- 流控制 -->
     <label class="control-group">
       <span>流控制</span>
-      <CustomSelect bind:value={connectionParams.flowControl} options={flowControlOptions} width="84px" disabled={connected.value} />
+      <CustomSelect bind:value={connectionParams.flowControl} options={flowControlOptions} width="84px" disabled={controlsLocked} />
     </label>
   </div>
 
   <!-- 右侧：连接/断开按钮（ml-auto 推至最右，与下拉框底部对齐） -->
   <div class="flex-shrink-0 ml-auto">
-    {#if connected.value}
-      <button class="btn btn-danger" style="width: 76px;" onclick={handleDisconnect}>断开</button>
-    {:else}
-      <button class="btn btn-primary" style="width: 76px;" onclick={handleConnect}>连接</button>
-    {/if}
+    <ConnectionButton
+      connected={connected.value}
+      autoEnabled={autoConnection.binding !== null}
+      busy={manualBusy || autoChanging}
+      {canAutoConnect}
+      title={connectionTitle}
+      onPrimary={() => connected.value || autoConnection.binding ? void handleDisconnect() : void handleConnect()}
+      onAutoToggle={() => { void toggleAutoConnect(); }}
+    />
   </div>
 </div>

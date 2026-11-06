@@ -90,6 +90,11 @@ export interface ConnectionParams {
   flow_control: FlowControl;
 }
 
+export interface AutoConnectBinding {
+  id: number;
+  params: ConnectionParams;
+}
+
 export interface CommandItem {
   name: string;
   command: string;

@@ -3,6 +3,7 @@ import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { mergePresetModules, type FrameConfig } from './dataProcessing';
 import type {
+  AutoConnectBinding,
   CommandIndexCache,
   CommandIndexRefreshDocResult,
   CommandIndexRefreshResult,
@@ -41,6 +42,22 @@ export async function connect(params: ConnectionParams): Promise<void> {
 
 export async function disconnect(port: string): Promise<void> {
   await invoke('disconnect', { port });
+}
+
+export async function getAutoConnect(): Promise<AutoConnectBinding | null> {
+  return await invoke<AutoConnectBinding | null>('get_auto_connect');
+}
+
+export async function setAutoConnect(params: ConnectionParams | null): Promise<AutoConnectBinding | null> {
+  return await invoke<AutoConnectBinding | null>('set_auto_connect', { params });
+}
+
+export async function autoConnectOnce(bindingId: number): Promise<boolean> {
+  return await invoke<boolean>('auto_connect_once', { bindingId });
+}
+
+export function onAutoConnectChanged(callback: (binding: AutoConnectBinding | null) => void) {
+  return getCurrentWebview().listen<AutoConnectBinding | null>('auto-connect-changed', event => callback(event.payload));
 }
 
 /** 列可用串口:端口号 + 设备名(可空)。设备名供端口下拉 hover 提示。 */

@@ -1,4 +1,5 @@
 pub mod connection;
+pub mod auto_connect;
 pub mod send;
 pub mod config;
 pub mod logging;

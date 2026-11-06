@@ -446,6 +446,11 @@ pub fn run() {
                         tray::maybe_send_tray_hint(&app_handle, &state);
                     }
                 }
+                tauri::WindowEvent::Destroyed => {
+                    if let Some(state) = window.app_handle().try_state::<AppState>() {
+                        let _ = commands::auto_connect::cancel_window(&state, window.app_handle(), window.label());
+                    }
+                }
                 _ => {}
             }
         })
@@ -456,6 +461,9 @@ pub fn run() {
             mcp::diagnostics::check_mcp_connection,
             connect,
             disconnect,
+            commands::auto_connect::get_auto_connect,
+            commands::auto_connect::set_auto_connect,
+            commands::auto_connect::auto_connect_once,
             list_ports,
             reset_stats,
             open_port_window,

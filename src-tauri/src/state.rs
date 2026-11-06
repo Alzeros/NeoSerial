@@ -27,6 +27,7 @@ pub struct AppState {
     /// 与 McpShared.connecting 必须是**同一个 Arc** clone,否则 GUI 与 agent 各占一份,
     /// 两边同时 connect 同一 port 时防不住 TOCTOU。见 ConnectingGuard。
     pub connecting: crate::connection::ConnectingSet,
+    pub auto_connect_bindings: Mutex<HashMap<String, Arc<crate::commands::auto_connect::AutoConnectBinding>>>,
     pub file_logger: Mutex<Option<FileLogger>>,
     /// 文件日志的行文本通道。start_logging 时写入,stop_logging 时置 None。
     /// reader/writer 线程通过 app_handle.state() 拿到它,把每行格式化后送存盘线程。
@@ -58,6 +59,7 @@ impl AppState {
         AppState {
             connections: Arc::new(Mutex::new(HashMap::new())),
             connecting: Arc::new(Mutex::new(std::collections::HashSet::new())),
+            auto_connect_bindings: Mutex::new(HashMap::new()),
             file_logger: Mutex::new(None),
             line_sender: Mutex::new(None),
             last_log_path: Mutex::new(None),

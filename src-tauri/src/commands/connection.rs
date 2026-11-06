@@ -63,6 +63,8 @@ pub async fn connect(
     // 对前端 invoke 的返回值/时序语义不变(本来就是 Promise)。
     let handle = app_handle.clone();
     let caller_label = webview_window.label().to_string();
+    let state = app_handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+    super::auto_connect::cancel_window(&state, &app_handle, &caller_label)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
         connect_impl(&state, &handle, caller_label, port, baudRate, dataBits, parity, stopBits, flowControl)
@@ -217,16 +219,30 @@ fn is_zombie(h: &ConnectionHandle) -> bool {
 #[tauri::command]
 pub async fn disconnect(
     app_handle: tauri::AppHandle,
+    webview_window: tauri::WebviewWindow,
     port: Option<String>,
 ) -> Result<(), String> {
     // disconnect_port 会同步等 reader/writer 线程退出(最多 1s),
     // 放主线程会冻结 UI;丢阻塞线程池执行。
     let handle = app_handle.clone();
+    let caller_label = webview_window.label().to_string();
+    let state = app_handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
+    let binding = super::auto_connect::cancel_window(&state, &app_handle, &caller_label)?;
     tauri::async_runtime::spawn_blocking(move || {
         let state = handle.try_state::<AppState>().ok_or("无法访问应用状态")?;
         let resolved = {
             let conns = state.connections.lock().map_err(|e| e.to_string())?;
-            resolve_port(&conns, port)?
+            if let Some(binding) = &binding {
+                let target = port.as_deref().unwrap_or(&binding.params.port);
+                if !conns.get(target).is_some_and(|connection| connection.window_label.read().map(|owner| owner.as_str() == caller_label).unwrap_or(false)) {
+                    return Ok(());
+                }
+            }
+            let resolved = resolve_port(&conns, port)?;
+            if !conns.get(&resolved).is_some_and(|connection| connection.window_label.read().map(|owner| owner.as_str() == caller_label.as_str()).unwrap_or(false)) {
+                return Err("该端口不属于当前窗口".to_string());
+            }
+            resolved
         };
         disconnect_port(&state, &handle, &resolved)
     })
@@ -244,6 +260,7 @@ pub fn release_window_connections(
     window_label: &str,
     policy: crate::tray::ConnPolicy,
 ) {
+    let _ = super::auto_connect::cancel_window(state, app_handle, window_label);
     // 锁内一次扫完:本窗口持有的连接按策略分成"转后台"与"断开"两组,转后台的顺手改 label。
     let (detached, to_disconnect): (Vec<String>, Vec<String>) = {
         let Ok(conns) = state.connections.lock() else { return };

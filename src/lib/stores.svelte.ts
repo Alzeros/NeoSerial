@@ -1,4 +1,4 @@
-import { defaultScriptCommand, defaultScriptPage, presetScriptModules, type LogLine, type PortEntry, type QuickCommandsModule, type ScriptPage, type Settings } from './types';
+import { defaultScriptCommand, defaultScriptPage, presetScriptModules, type AutoConnectBinding, type LogLine, type PortEntry, type QuickCommandsModule, type ScriptPage, type Settings } from './types';
 import { isQuickCommandsModule } from './dataProcessing';
 import { computeCustomVars, defaultCustomTheme, isCustomDark, normalizeCustomTheme } from './customTheme';
 import { LogRetentionBuffer, resolveLogLimits } from './logRetention';
@@ -8,6 +8,7 @@ export { DEFAULT_MAX_LOG_LINES, MIN_LOG_LINES, MAX_LOG_LINES_LIMIT,
 // ============ 连接状态 ============
 export const connected = $state<{ value: boolean }>({ value: false });
 export const currentPort = $state<{ value: string | null }>({ value: null });
+export const autoConnection = $state<{ binding: AutoConnectBinding | null; connecting: boolean; error: string }>({ binding: null, connecting: false, error: '' });
 /** 当前串口下拉的选项(端口号 + 设备名)。设备名可空,前端 hover 提示。 */
 export const availablePorts = $state<{ value: PortEntry[] }>({ value: [] });
 /** agent 连了但还没 GUI 窗口接管的端口(window_label 仍是 mcp- 前缀)。

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { connected, currentPort, rxBytes, txBytes, logDirLabelStyle, windowPort, cachedSettings } from '$lib/stores';
+  import { autoConnection, connected, currentPort, rxBytes, txBytes, logDirLabelStyle, windowPort, cachedSettings } from '$lib/stores';
   import { getModemStatus, onModemStatus, resetStats } from '$lib/tauri';
   import McpActivityStatus from './McpActivityStatus.svelte';
 
@@ -75,7 +75,9 @@
     <span
       class="h-2 w-2 rounded-full {connected.value ? 'bg-[var(--rx)]' : 'bg-[var(--muted-foreground)]'} {ioActive ? 'status-dot-pulse' : ''}"
     ></span>
-    <span class="text-[var(--muted-foreground)]">{connected.value ? `已连接 ${currentPort.value || ''}` : '未连接'}</span>
+    <span class="text-[var(--muted-foreground)]" title={autoConnection.binding ? autoConnection.error || '自动连接已开启；手动断开会关闭' : undefined}>
+      {connected.value ? `已连接 ${currentPort.value || ''}` : autoConnection.binding ? `${autoConnection.connecting ? '正在连接' : '等待'} ${autoConnection.binding.params.port}` : '未连接'}
+    </span>
   </span>
 
   <div class="w-px h-4 bg-[var(--border)]"></div>
