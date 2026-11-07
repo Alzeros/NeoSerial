@@ -10,6 +10,7 @@ import { emit } from '@tauri-apps/api/event';
 import { mount, tick } from 'svelte';
 import * as stores from '/src/lib/stores.svelte.ts';
 import { presetScriptModules } from '/src/lib/types.ts';
+import { installReadonlyBridge } from './readonly-bridge.mjs';
 
 // All native commands are mocked. This page never reads or writes the user's profile.
 const label = new URL(location.href).searchParams.get('window') === 'settings' ? 'settings' : 'main';
@@ -82,11 +83,20 @@ mockIPC(async (cmd, args) => {
     default: return null;
   }
 }, { shouldMockEvents: true });
+installReadonlyBridge();
 
-const { preloadBeforeMount } = await import('/src/lib/startup.ts');
-await preloadBeforeMount();
-const App = (await import('/src/App.svelte')).default;
-mount(App, { target: document.querySelector('#app') });
+if (new URL(location.href).searchParams.has('entry')) {
+  await import('/src/main.ts');
+} else {
+  const diagnostics = new URL(location.href).searchParams.get('diagnostics') !== '0'
+    ? await import('/src/lib/frontendDiagnostics.ts') : null;
+  diagnostics?.installFrontendDiagnostics();
+  const { preloadBeforeMount } = await import('/src/lib/startup.ts');
+  await preloadBeforeMount();
+  const App = (await import('/src/App.svelte')).default;
+  mount(App, { target: document.querySelector('#app') });
+  diagnostics?.registerFrontendState('stores', stores);
+}
 await tick();
 window.persistenceTest = {
   stores, calls, tick, emit, run: new URL(location.href).searchParams.get('run'),

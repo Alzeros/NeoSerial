@@ -82,7 +82,7 @@
   );
 </script>
 
-<div class="flex h-full flex-col border-l border-[var(--border)]" data-theme-target="background-elevated" style="background: var(--background-elevated);">
+<div class="flex h-full flex-col border-l border-[var(--border)]" data-diagnostic-region="tools" data-theme-target="background-elevated" style="background: var(--background-elevated);">
   <!-- 顶部视图切换:快捷指令 / 数据处理 / 指令查询 / MCP 日志。用文字下划线风格(轻),与下方页签的实心块(重)拉开层级。 -->
   <div bind:this={navigation} data-module-navigation class="relative flex items-center gap-4 border-b border-[var(--border)] px-4 py-1" style="background: var(--background);">
     <button data-module-tab="scripts" aria-current={scriptView === 'scripts' ? 'page' : undefined}

@@ -17,6 +17,8 @@ src-tauri/.cargo/config.toml
 # Node / Vite
 node_modules/
 dist/
+frontend-symbols/
+NeoSerial-frontend-symbols.zip
 .svelte-kit/
 
 # Docs

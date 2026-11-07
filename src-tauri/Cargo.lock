@@ -2479,6 +2479,7 @@ dependencies = [
  "env_logger",
  "log",
  "rand 0.9.5",
+ "regex",
  "reqwest",
  "rmcp",
  "rustls",
@@ -2495,6 +2496,8 @@ dependencies = [
  "thiserror 2.0.19",
  "tokio",
  "tokio-util",
+ "webview2-com",
+ "windows-core",
  "windows-sys 0.59.0",
  "winres",
 ]

@@ -39,8 +39,9 @@ try {
   assert.equal(await evaluate('copy()'),hex,'HEX keeps actual newlines and padding');
   await call('Browser.grantPermissions',{origin:new URL(baseUrl).origin,permissions:['clipboardReadWrite','clipboardSanitizedWrite']});
   await evaluate(`root.focus()`);
-  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'c',code:'KeyC',windowsVirtualKeyCode:67,modifiers:2});
-  await call('Input.dispatchKeyEvent',{type:'keyUp',key:'c',code:'KeyC',windowsVirtualKeyCode:67,modifiers:2});
+  const copyModifiers=process.platform==='darwin'?4:2;
+  await call('Input.dispatchKeyEvent',{type:'keyDown',key:'c',code:'KeyC',windowsVirtualKeyCode:67,modifiers:copyModifiers,...(process.platform==='darwin'?{commands:['copy']}:{})});
+  await call('Input.dispatchKeyEvent',{type:'keyUp',key:'c',code:'KeyC',windowsVirtualKeyCode:67,modifiers:copyModifiers});
   assert.equal(await evaluate('navigator.clipboard.readText()'),hex,'real Ctrl+C clipboard');
   await evaluate(`navigator.clipboard.writeText('context-copy-sentinel')`);
   await evaluate(`root.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true,clientX:200,clientY:150}));await logTest.tick();document.querySelectorAll('button').forEach(b=>{if(b.textContent.trim()==='复制')b.click();});`);

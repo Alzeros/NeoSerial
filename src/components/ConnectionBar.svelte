@@ -7,6 +7,7 @@
   import { notifyError } from '$lib/notifications.svelte';
   import CustomSelect from '$components/ui/CustomSelect.svelte';
   import ConnectionButton from '$components/ui/ConnectionButton.svelte';
+  import { recordFrontend } from '$lib/frontendDiagnostics';
 
   let manualBusy = $state(false);
   let autoChanging = $state(false);
@@ -17,6 +18,17 @@
   let bindingRevision = 0;
   let controlQueue: Promise<unknown> = Promise.resolve();
   const controlsLocked = $derived(connected.value || autoConnection.binding !== null || manualBusy || autoChanging);
+  let lastControlState = '';
+  $effect(() => {
+    const state = { locked: controlsLocked, connected: connected.value, auto_bound: autoConnection.binding !== null, manual_busy: manualBusy, auto_changing: autoChanging };
+    const serialized = JSON.stringify(state);
+    untrack(() => {
+      if (serialized !== lastControlState) {
+        lastControlState = serialized;
+        recordFrontend('ports.controls', state, 'info', true);
+      }
+    });
+  });
   const canAutoConnect = $derived(!!connectionParams.port && Number.isFinite(connectionParams.baudRate) && connectionParams.baudRate > 0);
   const connectionTitle = $derived(autoConnection.binding
     ? `自动连接 ${autoConnection.binding.params.port}，点击断开并关闭自动连接`
@@ -230,43 +242,43 @@
   });
 </script>
 
-<div class="layout-fixed relative flex items-end border-b px-5 py-2" data-theme-target="background-elevated" style="background: var(--background-elevated); border-color: var(--border);">
+<div class="layout-fixed relative flex items-end border-b px-5 py-2" data-diagnostic-region="connection" data-theme-target="background-elevated" style="background: var(--background-elevated); border-color: var(--border);">
   <!-- 左侧：所有配置项分组（紧凑间距，左对齐紧凑排列，不拉伸） -->
   <div class="config-group" style="margin-right: 24px; gap: 12px;">
     <!-- 端口号(所有窗口都可选,连不同 port) -->
     <label class="control-group">
       <span>端口号</span>
-      <CustomSelect bind:value={connectionParams.port} options={portOptions} width="100px" disabled={controlsLocked} emptyLabel="暂无可用端口" />
+      <CustomSelect diagnosticId="serial-port" bind:value={connectionParams.port} options={portOptions} width="100px" disabled={controlsLocked} emptyLabel="暂无可用端口" />
     </label>
 
     <!-- 波特率 -->
     <label class="control-group">
       <span>波特率</span>
-      <CustomSelect bind:value={getBaudStr, setBaudStr} options={baudOptions} width="96px" disabled={controlsLocked} onAddOption={openBaudSettings} />
+      <CustomSelect diagnosticId="serial-baud" bind:value={getBaudStr, setBaudStr} options={baudOptions} width="96px" disabled={controlsLocked} onAddOption={openBaudSettings} />
     </label>
 
     <!-- 数据位 -->
     <label class="control-group">
       <span>数据位</span>
-      <CustomSelect bind:value={connectionParams.dataBits} options={dataBitOptions} width="64px" disabled={controlsLocked} />
+      <CustomSelect diagnosticId="serial-data-bits" bind:value={connectionParams.dataBits} options={dataBitOptions} width="64px" disabled={controlsLocked} />
     </label>
 
     <!-- 校验位 -->
     <label class="control-group">
       <span>校验位</span>
-      <CustomSelect bind:value={connectionParams.parity} options={parityOptions} width="80px" disabled={controlsLocked} />
+      <CustomSelect diagnosticId="serial-parity" bind:value={connectionParams.parity} options={parityOptions} width="80px" disabled={controlsLocked} />
     </label>
 
     <!-- 停止位 -->
     <label class="control-group">
       <span>停止位</span>
-      <CustomSelect bind:value={getStopBitsStr, setStopBitsStr} options={stopBitOptions} width="60px" disabled={controlsLocked} />
+      <CustomSelect diagnosticId="serial-stop-bits" bind:value={getStopBitsStr, setStopBitsStr} options={stopBitOptions} width="60px" disabled={controlsLocked} />
     </label>
 
     <!-- 流控制 -->
     <label class="control-group">
       <span>流控制</span>
-      <CustomSelect bind:value={connectionParams.flowControl} options={flowControlOptions} width="84px" disabled={controlsLocked} />
+      <CustomSelect diagnosticId="serial-flow-control" bind:value={connectionParams.flowControl} options={flowControlOptions} width="84px" disabled={controlsLocked} />
     </label>
   </div>
 

@@ -1,4 +1,7 @@
 <script lang="ts">
+  import { tick, untrack } from 'svelte';
+  import { recordFrontend } from '$lib/frontendDiagnostics';
+  import { afterDiagnosticLayout, diagnosticDomSnapshot, describeDiagnosticElement } from '$lib/frontendDomDiagnostics';
   /** 选项:label = 触发按钮与菜单显示,value = 绑定值,tip = hover 提示(可空,如设备名)。 */
   type SelectOption = { label: string; value: string; tip?: string | null };
   let {
@@ -9,6 +12,7 @@
     emptyLabel = '暂无选项',
     selectedFallbackLabel,
     onAddOption,
+    diagnosticId,
   }: {
     value?: string;
     options: SelectOption[];
@@ -18,6 +22,7 @@
     /** 当前 value 不在 options 中时，仅用于触发按钮显示，不会加入展开菜单。 */
     selectedFallbackLabel?: string;
     onAddOption?: () => void;
+    diagnosticId?: string;
   } = $props();
 
   let open = $state(false);
@@ -34,6 +39,28 @@
   const selectedIndex = $derived(
     options.findIndex((o) => o.value === value),
   );
+
+  function trace(stage: string, extra: Record<string, unknown> = {}) {
+    recordFrontend(`select.${stage}`, {
+      control: diagnosticId ?? 'custom-select', open, disabled,
+      options_count: options.length, selected_index: selectedIndex, ...extra,
+    }, 'info', true);
+  }
+  let stateVersion = 0;
+  function probeMenu() {
+    const version = ++stateVersion;
+    void tick().then(() => afterDiagnosticLayout((via, elapsed_ms) => {
+      trace('dom', { version, superseded: version !== stateVersion, via, elapsed_ms,
+        trigger: diagnosticDomSnapshot(triggerEl), menu: diagnosticDomSnapshot(menuEl) });
+    }));
+  }
+  let lastAvailability = '';
+  $effect(() => {
+    const snapshot = JSON.stringify({ disabled, options_count: options.length, selected_index: selectedIndex });
+    untrack(() => {
+      if (snapshot !== lastAvailability) { lastAvailability = snapshot; trace('availability'); }
+    });
+  });
 
   // 选项 hover 提示:fixed 定在选项右侧,空间不足时翻到左侧。菜单容器
   // overflow-y-auto,提示必须渲染在菜单元素之外,否则会被裁掉;故这里独立渲染,
@@ -64,16 +91,19 @@
   }
 
   // 所有关闭入口同步清理提示，避免下次展开时恢复上次悬停的设备名。
-  function closeMenu() {
+  function closeMenu(reason = 'unspecified') {
+    if (open) trace('close', { reason });
     open = false;
     fixedPos = null;
     hideOptionTip();
+    stateVersion++;
   }
 
-  function toggleOpen() {
-    if (disabled) return;
+  function toggleOpen(event?: MouseEvent) {
+    trace('toggle_received', { trusted: event?.isTrusted, detail: event?.detail });
+    if (disabled) { trace('ignored', { reason: 'disabled' }); return; }
     if (open) {
-      closeMenu();
+      closeMenu('trigger_toggle');
       return;
     }
     hideOptionTip();
@@ -82,11 +112,14 @@
     // 计算 fixed 定位:突破父容器 overflow 裁剪
     const rect = triggerEl.getBoundingClientRect();
     fixedPos = { left: rect.left, top: rect.bottom + 4, width: rect.width };
+    trace('opened', { position: fixedPos });
+    probeMenu();
   }
 
   function selectOption(opt: SelectOption) {
+    trace('option_selected', { option_index: options.indexOf(opt) });
     value = opt.value;
-    closeMenu();
+    closeMenu('option_selected');
   }
 
   // 选项是 div,不算交互元素:组件若放在 <label> 里(连接栏就是),点选项后 label 的默认行为
@@ -99,7 +132,7 @@
   function handleAddClick(e: MouseEvent) {
     e.preventDefault();
     onAddOption?.();
-    closeMenu();
+    closeMenu('add_option');
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -126,24 +159,25 @@
         e.preventDefault();
         if (highlightIndex === options.length && onAddOption) {
           onAddOption();
-          closeMenu();
+          closeMenu('keyboard_add');
         } else if (highlightIndex >= 0 && highlightIndex < options.length) {
           selectOption(options[highlightIndex]);
         }
         break;
       case 'Escape':
         e.preventDefault();
-        closeMenu();
+        closeMenu('escape');
         break;
       case 'Tab':
-        closeMenu();
+        closeMenu('tab');
         break;
     }
   }
 
   function handleClickOutside(e: MouseEvent) {
     if (container && !container.contains(e.target as Node)) {
-      closeMenu();
+      trace('outside_pointer', { target: describeDiagnosticElement(e.target instanceof Element ? e.target : null) });
+      closeMenu('outside_pointer');
     }
   }
 
@@ -155,7 +189,7 @@
         // 菜单内滚动只隐藏提示，保留菜单；外层滚动则关闭整个菜单。
         hideOptionTip();
         if (event.target instanceof Node && menuEl?.contains(event.target)) return;
-        closeMenu();
+        closeMenu('outer_scroll');
       };
       window.addEventListener('scroll', closeOnScroll, true);
       return () => {
@@ -180,6 +214,9 @@
     class="custom-select-trigger w-full flex items-center justify-center cursor-pointer select-none transition-[border-color,box-shadow]"
     style="height: 32px; padding: 0 28px 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--border-strong); background-color: var(--background-input); color: var(--foreground); font-size: 13px; font-family: var(--font-sans); box-shadow: var(--shadow-sm);"
     {disabled}
+    data-diagnostic-control={diagnosticId ?? 'custom-select'}
+    aria-expanded={open}
+    aria-haspopup="listbox"
     onclick={toggleOpen}
     onkeydown={handleKeyDown}
   >
@@ -205,6 +242,8 @@
   {#if open && fixedPos}
     <div
       bind:this={menuEl}
+      data-diagnostic-control={`${diagnosticId ?? 'custom-select'}-menu`}
+      role="listbox"
       class="fixed z-[300] py-1 overflow-y-auto overscroll-contain"
       style="left: {fixedPos.left}px; top: {fixedPos.top}px; width: {fixedPos.width}px; background: var(--background-elevated); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow-lg); max-height: 240px;"
     >

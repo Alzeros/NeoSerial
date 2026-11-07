@@ -666,6 +666,7 @@
     bind:this={scrollContainer}
     tabindex="-1"
     role="log"
+    data-diagnostic-private
     aria-label="串口日志"
     onwheel={userScroll}
     onscroll={handleScroll}

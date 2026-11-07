@@ -1,4 +1,4 @@
-import { invoke } from '@tauri-apps/api/core';
+import { diagnosticInvoke as invoke } from './frontendDiagnostics';
 import { getCurrentWebview } from '@tauri-apps/api/webview';
 import { open, save } from '@tauri-apps/plugin-dialog';
 import { mergePresetModules, type FrameConfig } from './dataProcessing';
@@ -233,6 +233,15 @@ export async function stopLogging(): Promise<void> {
 
 export async function exportLogSnippet(path: string, text: string): Promise<void> {
   await invoke('export_log_snippet', { path, text });
+}
+
+export interface FrontendExportResult {
+  unresponsive_windows: string[];
+  failed_windows: string[];
+}
+
+export async function exportFrontendDiagnostics(path: string): Promise<FrontendExportResult> {
+  return await invoke<FrontendExportResult>('export_frontend_diagnostics', { path });
 }
 
 /** 文件日志的全局状态(logger 是进程级单份)。path:记录中是正在写的文件,停止后是上次路径。 */

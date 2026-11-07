@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<title>Isolated frontend diagnostics</title>
+<body>
+<div id="app"></div>
+<button id="private-button" title="PRIVATE_TITLE">PRIVATE_BUTTON_TEXT</button>
+<input id="private-input" value="PRIVATE_INPUT" type="password">
+<script type="module">
+import '/src/app.css';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { emit, listen } from '@tauri-apps/api/event';
+import { mount, tick } from 'svelte';
+import { installReadonlyBridge } from './readonly-bridge.mjs';
+mockWindows(new URL(location.href).searchParams.get('window') || 'main');
+const calls = [], records = [];
+const failure = new Error('isolated IPC error');
+let failWrites = false, failExport = false, partialExport = false, savePath = '/isolated/report.json';
+let releasePending;
+mockIPC(async (cmd, args) => {
+  calls.push({cmd, args});
+  if (cmd === 'append_frontend_diagnostics') {
+    if (failWrites) throw new Error('isolated write error');
+    records.push(...args.records);
+  }
+  if (cmd === 'failing_command') throw failure;
+  if (cmd === 'pending_command') await new Promise(resolve => { releasePending = resolve; });
+  if (cmd === 'plugin:dialog|save') return savePath;
+  if (cmd === 'export_frontend_diagnostics') {
+    if (failExport) throw new Error('isolated export error');
+    return { unresponsive_windows: partialExport ? ['main'] : [], failed_windows: [] };
+  }
+  return null;
+}, { shouldMockEvents: true });
+installReadonlyBridge();
+const diag = await import('/src/lib/frontendDiagnostics.ts');
+let consoleCalls = 0;
+const original = console.error;
+console.error = (...args) => { consoleCalls++; original(...args); };
+diag.installFrontendDiagnostics();
+diag.installFrontendDiagnostics(); // Reinstall is a no-op.
+const flushReplies = [];
+await listen('test-diagnostics-flushed', event => flushReplies.push(event.payload));
+const Component = (await import('/src/components/FrontendDiagnostics.svelte')).default;
+mount(Component, { target: document.querySelector('#app') });
+await tick();
+window.diagTest = {
+  ...diag, calls, records, tick, failure, flushReplies,
+  requestFlush: () => emit('frontend-diagnostics-flush', {reply_event:'test-diagnostics-flushed'}),
+  consoleCalls: () => consoleCalls,
+  failWrites: value => { failWrites = value; },
+  failExport: value => { failExport = value; },
+  partialExport: value => { partialExport = value; },
+  releasePending: () => releasePending(),
+  savePath: value => { savePath = value; },
+};
+</script>
+</body></html>

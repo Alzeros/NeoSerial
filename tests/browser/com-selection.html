@@ -1,18 +1,26 @@
 <!doctype html><html lang="en"><meta charset="utf-8"><title>COM selection regression</title>
 <body><div id="app"></div><script>window.errors = []; window.addEventListener('error', event => window.errors.push(event.message));</script><script type="module">
 import '/src/app.css';
+import { installReadonlyBridge } from './readonly-bridge.mjs';
 import { mount, tick } from 'svelte';
-import { mockIPC } from '@tauri-apps/api/mocks';
+import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
 import ConnectionBar from '/src/components/ConnectionBar.svelte';
-import { connectionParams } from '/src/lib/stores.svelte.ts';
-window.comTest = { tick, connectionParams, ports: [
+import { connectionParams, connected } from '/src/lib/stores.svelte.ts';
+import { installFrontendDiagnostics, flushFrontendDiagnostics } from '/src/lib/frontendDiagnostics.ts';
+mockWindows('main');
+window.comTest = { tick, connectionParams, connected, records: [], flushFrontendDiagnostics, ports: [
   { port: 'COM3', device: null },
   { port: 'COM3', device: 'USB serial device' },
   { port: 'COM8', device: 'Second device' },
 ] };
-mockIPC(async command => {
+mockIPC(async (command, args) => {
+  if (command === 'append_frontend_diagnostics') { comTest.records.push(...args.records); return; }
+  if (command === 'append_frontend_replay' || command === 'frontend_diagnostics_heartbeat') return;
   if (command === 'list_ports') return comTest.ports;
+  if (command === 'get_auto_connect') return null;
   throw Error('Unexpected IPC: ' + command);
-});
+}, { shouldMockEvents: true });
+installReadonlyBridge();
+if (new URL(location.href).searchParams.has('diagnostics')) installFrontendDiagnostics();
 mount(ConnectionBar, { target: document.querySelector('#app') });
 </script></body></html>

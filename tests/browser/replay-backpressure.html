@@ -1,0 +1,23 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Replay disk failure recovery</title>
+<body><div id="pressure"></div><script type="module">
+import {startFrontendReplay} from '/src/lib/frontendReplay.ts';
+const pressure=document.querySelector('#pressure');
+pressure.dataset.large='a'.repeat(3*1024*1024);
+const logs=[],batches=[],attemptedBytes=[];
+let release,first=true;
+const gate=new Promise(resolve=>{release=resolve;});
+const replay=startFrontendReplay('disk-failure-test',async(segment,events)=>{
+  attemptedBytes.push(new TextEncoder().encode(JSON.stringify(events)).length);
+  if(first){first=false;await gate;throw new Error('simulated delayed disk failure');}
+  batches.push({segment,events:structuredClone(events)});
+},(kind,data)=>logs.push({kind,data}));
+window.pressureTest={logs,batches,attemptedBytes,replay,release,
+  async fill(){
+    pressure.removeAttribute('data-large');
+    for(let index=0;index<95;index++){
+      pressure.dataset.buffer='b'.repeat(64*1024)+index;
+      await new Promise(resolve=>setTimeout(resolve,0));
+    }
+  }
+};
+</script></body></html>

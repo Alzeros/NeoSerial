@@ -55,6 +55,7 @@
     disabled={busy}
     {title}
     onclick={() => { closeMenu(); onPrimary(); }}
+    data-diagnostic-action={active ? 'disconnect' : 'connect'}
   >
     {#if autoEnabled}<Repeat2 size={13} aria-hidden="true" />{/if}
     {active ? '断开' : '连接'}

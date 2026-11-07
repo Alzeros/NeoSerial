@@ -41,6 +41,7 @@ crc = "3"
 rand = "0.9"
 log = "0.4"
 env_logger = "0.11"
+regex = "1"
 rmcp = { version = "3.1", features = ["server", "transport-streamable-http-server"] }
 axum = { version = "0.8", features = ["http1", "tokio"], default-features = false }
 tokio = { version = "1", features = ["sync", "macros", "rt", "time"] }
@@ -54,6 +55,9 @@ reqwest = { version = "0.13", default-features = false, features = ["json", "rus
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 
 [target.'cfg(windows)'.dependencies]
+# Reuse the WebView2 bindings already used by Tauri; observe native engine failure events.
+webview2-com = "0.38"
+windows-core = "0.61"
 # Win32_Security_Cryptography: DPAPI(CryptProtectData/CryptUnprotectData),给知识库 API Key 加密落盘,见 config/secret.rs
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_System_Threading", "Win32_System_Registry", "Win32_Devices_DeviceAndDriverInstallation", "Win32_Devices_Communication", "Win32_Storage_FileSystem", "Win32_Security", "Win32_Security_Cryptography", "Win32_UI_HiDpi", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
 

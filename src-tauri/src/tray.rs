@@ -121,6 +121,7 @@ fn ensure_tray(app: &AppHandle) -> Option<TrayIcon> {
             }
             match id {
                 "tray-new" => open_blank_window(app),
+                "tray-diagnostics" => crate::logging::frontend::export_from_tray(app),
                 "tray-quit" => {
                     if let Some(state) = app.try_state::<AppState>() {
                         crate::cleanup_and_exit(&state, app);
@@ -164,6 +165,7 @@ fn build_menu(app: &AppHandle, entries: &[MenuEntry]) -> tauri::Result<Menu<taur
         }
     }
     menu.append(&PredefinedMenuItem::separator(app)?)?;
+    menu.append(&MenuItem::with_id(app, "tray-diagnostics", "导出诊断文件", true, None::<&str>)?)?;
     menu.append(&MenuItem::with_id(app, "tray-quit", "退出", true, None::<&str>)?)?;
     Ok(menu)
 }

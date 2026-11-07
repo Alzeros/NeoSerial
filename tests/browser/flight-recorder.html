@@ -1,0 +1,54 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>Unknown future feature diagnostics</title>
+<body><div id="app" style="height:auto"></div><div id="future-root"></div>
+<script type="module">
+import '/src/app.css';
+import {mockIPC,mockWindows} from '@tauri-apps/api/mocks';
+import {invoke} from '@tauri-apps/api/core';
+import {listen,emit} from '@tauri-apps/api/event';
+import {mount,tick} from 'svelte';
+import {installReadonlyBridge} from './readonly-bridge.mjs';
+mockWindows('win-future');
+// Deterministic stream/worker implementations verify observers without external services.
+window.WebSocket=class extends EventTarget {
+  static OPEN=1;static CLOSED=3;readyState=0;
+  constructor(url){super();this.url=String(url);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
+  send(data){this.dispatchEvent(new MessageEvent('message',{data}));}
+  close(){this.readyState=3;this.dispatchEvent(new CloseEvent('close',{code:1000,wasClean:true}));}
+};
+window.EventSource=class extends EventTarget {
+  readyState=0;
+  constructor(url){super();this.url=String(url);setTimeout(()=>{this.readyState=1;this.dispatchEvent(new Event('open'));},0);}
+  close(){this.readyState=2;}
+};
+window.Worker=class extends EventTarget {constructor(url){super();this.url=String(url);}terminate(){this.terminated=true;}};
+const records=[],batches=[],calls=[];
+mockIPC(async (command,args)=>{
+  calls.push({command,args});
+  if(command==='append_frontend_diagnostics') records.push(...args.records);
+  if(command==='append_frontend_replay') batches.push(structuredClone(args));
+  if(command==='future_command') return {ready:true,count:73,text:'PRIVATE_RESULT'};
+  return null;
+},{shouldMockEvents:true});
+installReadonlyBridge();
+const diag=await import('/src/lib/frontendDiagnostics.ts');
+diag.installFrontendDiagnostics();
+const state={enabled:false,count:0};
+diag.registerFrontendState('future-module',{neverSeenState:state});
+const Component=(await import('/src/components/FrontendDiagnostics.svelte')).default;
+mount(Component,{target:document.querySelector('#app')});await tick();
+await listen('future-event',()=>{});
+window.flightTest={...diag,records,batches,calls,state,invoke,emit,tick,
+  report(){
+    const segments=new Map();for(const batch of batches){const key=batch.session+':'+batch.segment;const part=segments.get(key)??{window:'win-future',session:batch.session,segment:batch.segment,events:[]};part.events.push(...batch.events);segments.set(key,part);}
+    return {schema:'neoserial.frontend-diagnostics.v1',replay:{segments:[...segments.values()]},records:records.map(record=>({window:'win-future',received_at:record.ts,record}))};
+  },
+  addUnknownFeature(){
+    const button=document.createElement('button');button.id='future-trigger';button.textContent='PRIVATE_FUTURE_LABEL';button.title='PRIVATE_TITLE';button.style.cssText='width:180px;height:40px;background:#22c55e';
+    const panel=document.createElement('div');panel.id='future-panel';panel.className='future-widget';panel.dataset.unseenMode='collapsed';panel.hidden=true;panel.textContent='PRIVATE_PANEL';panel.style.cssText='width:300px;height:60px;background:#fb923c';
+    const style=document.createElement('style');style.textContent='.future-widget[data-unseen-mode="expanded"] {border:4px solid purple;}';document.head.append(style);
+    const input=document.createElement('input');input.type='password';input.value='PRIVATE_PASSWORD';input.id='future-password';
+    button.onclick=()=>{panel.hidden=false;panel.style.width='340px';panel.dataset.unseenMode='expanded';document.documentElement.dataset.theme='preset-3';state.enabled=true;state.count=73;void invoke('future_command',{text:'PRIVATE_REQUEST'});};
+    document.querySelector('#future-root').append(button,panel,input);
+  }
+};
+</script></body></html>

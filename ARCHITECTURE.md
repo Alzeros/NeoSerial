@@ -121,6 +121,33 @@ TX 回显统一走 `emit_tx_line`：手动发送、脚本序列、文件发送�
 - 输入法处理：中文输入法用第一次 Enter 确认上屏时，在 `compositionend` 补发送。
 - 挂载前先预取设置和快捷指令（`preloadBeforeMount`），避免开窗口时布局跳变。
 
+### 前端诊断
+
+`main.ts` 在 UI 加载前安装通用观察器，页面按 session/seq、原生按 native_seq 关联。应用自己的 HTML 页面默认启用；新控件使用 DOM 观察，新命令/插件使用 Tauri 公共传输入口，新事件通过统一回调观察，不依赖已知故障清单。原有串口下拉和设置窗口的语义阶段记录仅作补充。
+
+真实 Tauri 的 invoke/回调入口不可写。`bridge-bootstrap.js` 通过 Builder 的 `append_invoke_initialization_script` 在 core 定义前接入，仅在定义这三个入口时包装函数，保留只读描述符并立即恢复 `Object.defineProperty`；未完整初始化也会自动恢复。页面观察器连接到独立客户端，不改写已锁定入口。`diagnosticBootstrap.test.ts` 使用锁定版本的官方 core/IPC 初始化脚本验证 Windows/macOS/Linux URL 形式、冻结原型、普通/插件/Channel 调用、错误、传输回退和断开；升级 Cargo.lock 中的 Tauri 时必须刷新对应 fixture。浏览器业务回归也使用同样的只读入口，并默认开启诊断。
+
+| 层 | 实现与自动覆盖 | 边界 |
+|---|---|---|
+| 操作与界面 | `frontendReplay.ts` 用 rrweb 2.2.1 记录 DOM、属性/CSS、滚动和交互；指针日志带 rrweb 节点 ID | DOM 回放，不是原生屏幕视频；iframe/Canvas/媒体和显式私有区域不录内部 |
+| 通信 | `diagnosticBridge.ts` 包装 `__TAURI_INTERNALS__` 的 invoke/回调；`diagnosticNetwork.ts` 观察 HTTP、WebSocket、EventSource、Worker | 记录结构、状态、时间、样本/计数，不存业务正文；Tauri 内部接口升级需跑回归 |
+| 共享状态 | `diagnosticState.ts` 自动枚举 store 导出对象，在操作后和每秒检查摘要变化 | 不遍历任意组件闭包或 JS 堆；大集合仅计数和首尾结构，凭据/正文脱敏 |
+| 性能与错误 | 全局异常、Promise、资源错误、Long Tasks、内存摘要和 JS 心跳 | 浏览器未提供的性能字段标为空；崩溃后无法继续执行页面代码 |
+| 窗口与存活 | `logging/runtime.rs` 独立检查页面心跳，`logging/window.rs` 对所有窗口采样原生状态 | 排除无前端脚本的保活/外部页面；心跳缺失仅是观察事实，不自动认定死锁 |
+| Windows 引擎 | `logging/webview.rs` 接导航、ProcessFailed、BrowserProcessExited；内部 Runtime/Log 通知覆盖页面采集器启动前的异常/资源错误，`logging/cdp.rs` 筛选错误、位置和脱敏摘要 | 按窗口记录接入和启用结果；不打开远程调试端口，不展开控制台远程对象，不自动收集内存转储；Mac 不提供这些 WebView2 事件 |
+
+记录层自身的失败不会修改操作返回值、错误对象或取消语义。普通日志运行时每 10 秒最多接收 1000 条、待写队列最多 1000 条；丢弃数显式记录。真实输入使用独立的有界原生提交路径，避免先前写入等待 ACK 时，点击处理函数立即卡死而丢失最后操作。导出确认会等待普通写入、真实输入写入和回放片段提交完成。
+
+网络观察排除 Tauri 的 `ipc:`/`ipc.localhost` 原生传输，由命令观察器统一记录，避免日志写入经 `fetch` 再次触发日志。原生生命周期记录使用单个后台写入线程，待写队列最多 256 条，磁盘阻塞时计数丢弃，恢复后写入缺失标记；导出最多等待原生队列 2 秒，结果写入 `native_queue`。事件/回放写入先异步等待各自的写入许可，避免慢磁盘下大量线程阻塞在存储锁上。页面心跳最多一个请求在途，避免后端阻塞时持续积累回调。异常退出的日志尾部先分行再追加，保留坏行标记和新启动记录。导出拒绝写入诊断存储目录，并限制同一时刻只有一个导出任务。`replay-backpressure.mjs` 覆盖在途大批次延迟失败、重试超过缓冲限额时的缺失标记及新检查点恢复。
+
+回放约每 30 秒或 1000 个事件生成检查点；`logging/replay.rs` 以独立片段存储，单片段上限 8 MiB、总额 64 MiB，淘汰整片段。前端待写队列限 8 MiB/4000 事件，单事件超过 4 MiB或反复录制失败会降级并注明，不反复生成超大快照。检查点携带构建/浏览器环境，即使较早事件日志淘汰也保留版本上下文。`replayPrivacy.ts` 同时处理完整节点和增量属性数组，保留样式差量/属性移除的格式；未知渲染属性默认保留，避免未来组件的 data-state、主题、方向或表格属性被白名单丢弃。UI 固定文字由 Svelte 模板 AST 自动提取，不读取脚本常量、属性或表达式。动态文本和输入脱敏，已知用户文字/凭据属性及外部资源 URL 去除；技术属性仍可能包含业务信息，导出前需检查。回放查看器只在禁脚本 iframe 中重建界面，不运行原来的串口或应用代码。
+
+`logging/frontend.rs` 保存最多 8 × 4 MiB 的事件日志，与串口 FileLogger 独立。导出前收集所有受观察页面的提交确认，最多等 6 秒，未响应/失败窗口在报告中注明；坏行/不完整片段保留缺失标记。JSON 以流式写出，避免再分配整份导出文本。后台模式托盘提供原生导出入口，所有页面失效时也能导出先前记录。
+
+回归 `tests/browser/flight-recorder.mjs` 在运行时创建没有专门记录代码的新控件，验证新控件、未知命令/插件/事件、状态变化、业务脱敏和 2000 行私有区域压力；再从导出的 JSON 在沙箱中还原显隐/尺寸变化。`ui-failure-diagnostics.mjs` 另覆盖遮罩、禁用、隐藏、立即关闭及设置读取阻塞。原生测试验证检查点轮换、损坏处理、看门狗、显示器坐标和导出保护。Windows COM 接口另做 Windows 目标类型检查；实际 Windows WebView2 故障触发仍需实机验证。
+
+发行构建的 `npm run build` 会生成隐藏 source map，并在 Tauri 打包前移到 `frontend-symbols/<build-id>/`，不嵌入安装包。该目录包含资源文件名/hash 清单，构建标识也写入页面启动和回放检查点。工作流保存 Actions artifact（90 天），同时将 `NeoSerial-frontend-symbols.zip` 附在该版本 Release，保留与版本相同的生命周期。用诊断文件的构建标识和压缩 JS 文件名选择 source map，恢复堆栈位置，避免长期使用版本丢失符号。
+
 ## 配置持久化
 
 - 写设置统一走 `patch_settings`：以后端内存中的状态为底做深合并。

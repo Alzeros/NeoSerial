@@ -10,6 +10,7 @@ mod tray;
 mod util;
 mod window_sizing;
 mod settings_open;
+mod settings_diagnostics;
 
 use tauri::{Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindowBuilder};
 use commands::connection::{connect, disconnect, list_ports, reset_stats, open_port_window, get_window_conn_state, get_window_history, get_mcp_only_connections, take_pending_takeover, open_theme_editor, get_modem_status};
@@ -54,14 +55,17 @@ async fn open_settings_window(
         anchor,
     };
     log::info!("[settings] request={} origin={} stage=queued", request_id, webview_window.label());
+    settings_diagnostics::stage(webview_window.label(), Some(request_id), "queued", serde_json::json!({"section": request.section}));
     let result = tokio::time::timeout(std::time::Duration::from_secs(15), async {
         let guard = SETTINGS_OPEN_LOCK.clone().lock_owned().await;
+        settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, Some(request_id), "lock_acquired", serde_json::json!({}));
         let reply = SETTINGS_OPEN_REPLIES.begin(request_id)?;
         let prepare_app = app_handle.clone();
         let prepare_source = webview_window.clone();
         let _guard = settings_open::run_preparation(guard, move || {
             prepare_settings_window(&prepare_app, &prepare_source, request)
         }).await?;
+        settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, Some(request_id), "waiting_for_frontend", serde_json::json!({}));
         reply.await.map_err(|error| format!("设置窗口就绪确认中断: {}", error))?
     })
     .await
@@ -71,6 +75,10 @@ async fn open_settings_window(
         Ok(settings_open::SettingsOpenOutcome::Ready) => log::info!("[settings] request={} stage=ready", request_id),
         Ok(settings_open::SettingsOpenOutcome::Cancelled) => log::info!("[settings] request={} stage=cancelled", request_id),
         Err(error) => log::warn!("[settings] request={} stage=failed error={}", request_id, error),
+    }
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, Some(request_id), "finished", serde_json::json!({"result": format!("{:?}", result)}));
+    if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        settings_diagnostics::snapshot(window, Some(request_id), "open_finished");
     }
     result.map(|_| ())
 }
@@ -84,7 +92,9 @@ fn prepare_settings_window(
         .try_state::<AppState>()
         .ok_or("无法访问应用状态")?;
     *state.pending_settings.lock().map_err(|e| e.to_string())? = Some(request.clone());
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request.request_id, "preparing", serde_json::json!({}));
     if let Some(window) = app_handle.get_webview_window(SETTINGS_WINDOW_LABEL) {
+        settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request.request_id, "reuse_found", serde_json::json!({}));
         if !window.is_visible().map_err(|e| e.to_string())? {
             if let (Ok(origin), Ok(parent_size), Ok(size)) = (
                 webview_window.outer_position(),
@@ -99,10 +109,15 @@ fn prepare_settings_window(
             }
         }
         log::info!("[settings] request={:?} stage=restore", request.request_id);
+        settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request.request_id, "restore_started", serde_json::json!({}));
         window.unminimize().map_err(|error| format!("恢复设置窗口失败: {}", error))?;
         window.show().map_err(|error| format!("显示设置窗口失败: {}", error))?;
         window.set_focus().map_err(|error| format!("聚焦设置窗口失败: {}", error))?;
+        settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request.request_id, "native_restored", serde_json::json!({}));
+        settings_diagnostics::snapshot(window.clone(), request.request_id, "reuse_restored");
+        let request_id = request.request_id;
         window.emit("settings-open-request", request).map_err(|e| e.to_string())?;
+        settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request_id, "request_emitted", serde_json::json!({}));
         return Ok(());
     }
 
@@ -121,6 +136,7 @@ fn prepare_settings_window(
     };
 
     log::info!("[settings] request={:?} stage=create", request.request_id);
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request.request_id, "create_started", serde_json::json!({}));
     let window = WebviewWindowBuilder::new(
         app_handle,
         SETTINGS_WINDOW_LABEL,
@@ -134,9 +150,11 @@ fn prepare_settings_window(
     .visible(false)
     .build()
     .map_err(|e| format!("创建设置窗口失败: {}", e))?;
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request.request_id, "created", serde_json::json!({}));
     if let Some(position) = centered_position {
         let _ = window.set_position(position);
     }
+    settings_diagnostics::snapshot(window, request.request_id, "created_hidden");
 
     Ok(())
 }
@@ -152,12 +170,14 @@ fn complete_settings_open(
     if webview_window.label() != SETTINGS_WINDOW_LABEL {
         return Err("只能由设置窗口确认打开结果".to_string());
     }
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, Some(request_id), "ack_received", serde_json::json!({"cancelled": cancelled, "error": error}));
     let outcome = if cancelled.unwrap_or(false) {
         Ok(settings_open::SettingsOpenOutcome::Cancelled)
     } else {
         error.map_or(Ok(settings_open::SettingsOpenOutcome::Ready), Err)
     };
     let matched = SETTINGS_OPEN_REPLIES.complete(request_id, outcome)?;
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, Some(request_id), "ack_matched", serde_json::json!({"matched": matched}));
     if matched {
         if let Some(state) = app_handle.try_state::<AppState>() {
             let mut pending = state.pending_settings.lock().map_err(|error| error.to_string())?;
@@ -177,9 +197,15 @@ fn show_settings_window(webview_window: tauri::WebviewWindow) -> Result<(), Stri
     if webview_window.label() != SETTINGS_WINDOW_LABEL {
         return Err("只能由设置窗口请求显示".to_string());
     }
+    let request_id = webview_window.app_handle().try_state::<AppState>().and_then(|state| {
+        state.pending_settings.lock().ok().and_then(|pending| pending.as_ref().and_then(|request| request.request_id))
+    });
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request_id, "show_started", serde_json::json!({}));
     webview_window.unminimize().map_err(|e| e.to_string())?;
     webview_window.show().map_err(|e| e.to_string())?;
     webview_window.set_focus().map_err(|e| e.to_string())?;
+    settings_diagnostics::stage(SETTINGS_WINDOW_LABEL, request_id, "show_returned", serde_json::json!({}));
+    settings_diagnostics::snapshot(webview_window, request_id, "show_returned");
     Ok(())
 }
 
@@ -365,6 +391,7 @@ pub fn run() {
     config::init_dirs();
     config::migrate::run_once();
     tauri::Builder::default()
+        .append_invoke_initialization_script(include_str!("logging/bridge-bootstrap.js"))
         // 单实例必须最先注册。应用在托盘里跑着(或窗口都关了)时用户再双击图标"打开软件",
         // 若起了第二个进程:MCP 落到 34595、第一个进程还占着 COM 口,第二个里连同一口报
         // "被占用"。二次启动只把已有实例的窗口拉出来(没有窗口就新建一个),然后自行退出。
@@ -375,8 +402,19 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .on_page_load(|webview, payload| {
+            logging::webview::install(webview);
+            let url = payload.url();
+            let own_frontend = url.scheme() == "tauri" || url.host_str() == Some("tauri.localhost")
+                || webview.app_handle().config().build.dev_url.as_ref().is_some_and(|dev| url.origin() == dev.origin());
+            logging::runtime::page_load(webview.label(), &format!("{:?}", payload.event()), own_frontend);
+            logging::frontend::native_event(webview.label().to_string(), "webview.page_load", serde_json::json!({
+                "stage": format!("{:?}", payload.event()),
+            }));
+        })
         .setup(|app| {
             let handle = app.handle().clone();
+            logging::runtime::start(&handle);
             let mut state = AppState::new(handle.clone());
             // 清理 registry 中前次/崩溃残留的死 pid 条目(无论是否起 MCP)
             mcp::registry::cleanup_dead();
@@ -403,6 +441,7 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(|window, event| {
+            logging::runtime::window_event(window.label(), event);
             match event {
                 // 窗口关闭生命周期:所有串口窗口(main / win-*)一个规则,由 tray::close_plan 决定——
                 // 后台模式:连接一律留在后台,窗口放行销毁;关的是最后一个窗口则应用留在托盘
@@ -447,6 +486,9 @@ pub fn run() {
                     }
                 }
                 tauri::WindowEvent::Destroyed => {
+                    logging::webview::closed(window.label());
+                    logging::runtime::closed(window.label());
+                    logging::frontend::native_event(window.label().to_string(), "webview.window_destroyed", serde_json::json!({}));
                     if let Some(state) = window.app_handle().try_state::<AppState>() {
                         let _ = commands::auto_connect::cancel_window(&state, window.app_handle(), window.label());
                     }
@@ -491,6 +533,10 @@ pub fn run() {
             stop_logging,
             get_logging_status,
             export_log_snippet,
+            logging::frontend::append_frontend_diagnostics,
+            logging::frontend::export_frontend_diagnostics,
+            logging::replay::append_frontend_replay,
+            logging::runtime::frontend_diagnostics_heartbeat,
             sequence_run,
             sequence_stop,
             save_sequence_config,

@@ -155,6 +155,7 @@
     <button
       class="relative flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
       onclick={handleNewWindow}
+      data-diagnostic-action="new-window"
       title={mcpOnlyConnections.value.length > 0 ? '打开新窗口 / 打开后台连接' : '打开新窗口'}
     >
       <Plus size={15} />
@@ -219,6 +220,7 @@
   <button
     class="flex items-center h-full px-3 text-[13px] text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={toggleScriptPanel}
+    data-diagnostic-action="toggle-tools"
     title={scriptPanelOpen.value ? '收起脚本面板' : '展开脚本面板'}
   >
     {#if scriptPanelOpen.value}
@@ -232,6 +234,7 @@
   <button
     class="flex items-center h-full px-3 text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={handleOpenSettings}
+    data-diagnostic-action="open-settings"
     title="设置"
   >
     <SettingsIcon size={15} />
@@ -243,6 +246,7 @@
   <button
     class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={handleMinimize}
+    data-diagnostic-action="minimize"
     title="最小化"
   >
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
@@ -252,6 +256,7 @@
   <button
     class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] cursor-pointer transition-colors"
     onclick={handleToggleMaximize}
+    data-diagnostic-action="toggle-maximize"
     title="最大化/还原"
   >
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
@@ -261,6 +266,7 @@
   <button
     class="flex items-center justify-center w-12 h-full text-[var(--muted-foreground)] hover:bg-[var(--error)] hover:text-white cursor-pointer transition-colors"
     onclick={handleClose}
+    data-diagnostic-action="close-window"
     title={closeTitle}
   >
     <svg width="11" height="11" viewBox="0 0 12 12" fill="none">

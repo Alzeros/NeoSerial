@@ -15,12 +15,15 @@
   import { SMS_ENCODING_OPTIONS, SMS_VALIDITY_OPTIONS, smsDefaultsFromSettings, type SmsDefaults } from '$lib/sms';
   import { Github, Eye, EyeOff, Plug, Loader2, RefreshCw, ChevronDown, ChevronRight } from 'lucide-svelte';
   import UpdaterCard from '$components/UpdaterCard.svelte';
+  import FrontendDiagnostics from '$components/FrontendDiagnostics.svelte';
   import McpSetup from '$components/McpSetup.svelte';
   import Collapsible from '$components/ui/Collapsible.svelte';
   import SettingsHelp from '$components/ui/SettingsHelp.svelte';
   import type { ManualDocument, Settings, SettingsPatch } from '$lib/types';
   import { completeSettingsOpen } from '$lib/tauri';
   import { withSettingsTimeout } from '$lib/settingsTimeout';
+  import { recordFrontend } from '$lib/frontendDiagnostics';
+  import { afterDiagnosticLayout, diagnosticDomSnapshot } from '$lib/frontendDomDiagnostics';
   // 应用图标：从 src/assets 引入，Vite 自动处理打包（src-tauri/icons 在 watch ignored 中，无法直接 import）
   import appIcon from '$assets/icon.png';
 
@@ -35,6 +38,19 @@
   let loading = $state(false);
   let retryPendingRequest = false;
   let lastRequest: SettingsOpenRequest = { section: 'about', ext_module: null, anchor: null };
+  let diagnosticRoot = $state<HTMLDivElement>();
+  function traceSettings(stage: string, request = lastRequest, extra: Record<string, unknown> = {}) {
+    recordFrontend('settings.frontend', {
+      stage, request_id: request.request_id ?? null, section: request.section,
+      epoch: requestEpoch, mounted, open, loading, ...extra,
+    }, 'info', true);
+  }
+  function probeSettings(request: SettingsOpenRequest, epoch: number) {
+    afterDiagnosticLayout((via, elapsed_ms) => traceSettings('dom_probe', request, {
+      via, elapsed_ms, superseded: epoch !== requestEpoch, visibility: document.visibilityState,
+      focused: document.hasFocus(), root: diagnosticDomSnapshot(diagnosticRoot),
+    }));
+  }
 
   function emitPreview() {
     if (!standalone) return;
@@ -56,10 +72,13 @@
       return;
     }
     if (hidingTask) return hidingTask;
+    const closingRequest = lastRequest;
+    traceSettings('hide_started', closingRequest);
     requestEpoch++;
     loading = false;
     hidingTask = (async () => {
       await withSettingsTimeout(appWindow.hide(), '隐藏设置窗口', 2000);
+      traceSettings('native_hide_returned', closingRequest);
       open = false;
       openingError = '';
       editKbApiKey = '';
@@ -67,6 +86,7 @@
       showApiKey = false;
       if (exitArmTimer) { clearTimeout(exitArmTimer); exitArmTimer = null; }
     })().catch((error) => {
+      traceSettings('hide_failed', closingRequest, { error });
       console.error('隐藏设置窗口失败:', error);
       if (open) saveError = `关闭设置窗口失败:${error}`;
       else openingError = `关闭设置窗口失败:${error}`;
@@ -409,10 +429,13 @@
     lastRequest = request;
     openingError = '';
     loading = !open;
+    traceSettings('prepare_started', request);
     let failure: string | null = null;
     try {
       if (!open) {
+        traceSettings('loading_settings', request);
         const settings = await withSettingsTimeout(getSettings(), '读取设置');
+        traceSettings('settings_loaded', request, { superseded: !mounted || epoch !== requestEpoch });
         if (!mounted || epoch !== requestEpoch) return;
         applySharedSettings(settings);
         showRequest(request);
@@ -423,25 +446,33 @@
       }
       loading = false;
       await tick();
+      traceSettings('dom_committed', request, { superseded: !mounted || epoch !== requestEpoch, root: diagnosticDomSnapshot(diagnosticRoot) });
       if (!mounted || epoch !== requestEpoch) return;
       await withSettingsTimeout(showSettingsWindow(), '显示设置窗口', 2000);
+      traceSettings('native_show_returned', request);
+      probeSettings(request, epoch);
     } catch (error) {
+      traceSettings('prepare_failed', request, { error });
       failure = `打开设置失败:${error}`;
       if (!mounted || epoch !== requestEpoch) return;
       if (open) saveError = `打开设置失败:${error}`;
       else openingError = `读取设置失败:${error}`;
       await tick();
       await withSettingsTimeout(showSettingsWindow(), '显示设置窗口', 2000)
+        .then(() => { traceSettings('error_page_show_returned', request); probeSettings(request, epoch); })
         .catch((showError) => console.error('显示设置窗口失败:', showError));
     } finally {
       if (epoch === requestEpoch) loading = false;
       const cancelled = !mounted || epoch !== requestEpoch;
+      traceSettings('acknowledging', request, { cancelled, failure });
       await completeSettingsOpen(request.request_id, cancelled ? null : failure, cancelled)
+        .then(() => traceSettings('acknowledged', request, { cancelled, failure }))
         .catch((completionError) => console.error('确认设置窗口打开结果失败:', completionError));
     }
   }
 
   function openPendingRequest(initial = false, request?: SettingsOpenRequest) {
+    traceSettings('request_queued', request ?? lastRequest, { initial, notified: Boolean(request) });
     openingTask = openingTask.catch((error) => console.error('上次打开设置失败:', error))
       .then(() => consumePendingRequest(initial, request))
       .catch((error) => console.error('处理设置打开请求失败:', error));
@@ -457,6 +488,7 @@
     try {
       await withSettingsTimeout(hidingTask ?? Promise.resolve(), '等待设置窗口关闭');
       const request = notifiedRequest ?? await withSettingsTimeout(takePendingSettings(), '读取设置打开请求');
+      traceSettings('request_consumed', request ?? lastRequest, { initial, has_request: Boolean(request) });
       if (!mounted) return;
       if (request || (initial && !open && !openingError)) await prepareRequest(request ?? lastRequest);
     } catch (error) {
@@ -476,12 +508,13 @@
   onMount(() => {
     if (!standalone) return;
     mounted = true;
+    traceSettings('mounted');
     const unlistenClose = appWindow.onCloseRequested((event) => {
       event.preventDefault();
       handleCancel();
     });
     const unlistenRequest = onSettingsOpenRequest((request) => { void openPendingRequest(false, request); });
-    unlistenRequest.then(() => openPendingRequest(true)).catch((error) => console.error('初始化设置窗口失败:', error));
+    unlistenRequest.then(() => { traceSettings('listener_ready'); return openPendingRequest(true); }).catch((error) => console.error('初始化设置窗口失败:', error));
     const unlistenSettings = onSettingsChanged(() => {
       if (!open) return;
       const epoch = requestEpoch;
@@ -490,6 +523,7 @@
       }).catch((error) => console.error('刷新设置失败:', error));
     });
     return () => {
+      traceSettings('unmounted');
       mounted = false;
       requestEpoch++;
       for (const listener of [unlistenRequest, unlistenClose, unlistenSettings]) {
@@ -1053,7 +1087,7 @@
 }} />
 
 {#if openingError}
-  <div class="h-screen flex flex-col" style="background: var(--background); color: var(--foreground);">
+  <div bind:this={diagnosticRoot} data-diagnostic-control="settings-error-page" class="h-screen flex flex-col" style="background: var(--background); color: var(--foreground);">
     <div data-tauri-drag-region class="h-8 px-3 flex items-center border-b border-[var(--border)]">设置</div>
     <div class="flex-1 flex flex-col items-center justify-center gap-4 p-6">
       <p role="alert" class="text-[13px] break-all">{openingError}</p>
@@ -1064,7 +1098,7 @@
     </div>
   </div>
 {:else if loading}
-  <div class="h-screen flex flex-col" style="background: var(--background); color: var(--foreground);">
+  <div bind:this={diagnosticRoot} data-diagnostic-control="settings-loading-page" class="h-screen flex flex-col" style="background: var(--background); color: var(--foreground);">
     <div data-tauri-drag-region class="h-8 px-3 flex items-center border-b border-[var(--border)]">设置</div>
     <div class="flex-1 flex flex-col items-center justify-center gap-4 p-6">
       <div role="status" class="flex items-center gap-2 text-[13px]"><Loader2 size={16} class="animate-spin" />正在读取设置…</div>
@@ -1073,10 +1107,13 @@
   </div>
 {:else if open}
   <div
+    bind:this={diagnosticRoot}
+    data-diagnostic-control="settings-page"
     class={standalone ? 'flex h-screen w-screen overflow-hidden' : 'fixed inset-0 z-[100] flex items-center justify-center'}
     style={standalone ? 'background: var(--background);' : 'background: var(--overlay-mask);'}
   >
     <div
+      data-diagnostic-region="settings"
       class={standalone ? 'h-full w-full border flex flex-col' : 'rounded-lg shadow-xl w-[600px] border flex flex-col'}
       style="background: var(--background-elevated); border-color: var(--border);"
       onclick={(e) => e.stopPropagation()}
@@ -1106,6 +1143,7 @@
         <nav class="w-[120px] flex-shrink-0 border-r border-[var(--border)] py-2">
           {#each sections as s}
             <button
+              data-diagnostic-action={`settings-${s.key}`}
               class="block w-full text-left px-4 py-2 text-[13px] transition-colors {activeSection === s.key
                 ? 'bg-[var(--overlay-hover)] text-[var(--primary)] font-medium border-l-2 border-[var(--primary)]'
                 : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] border-l-2 border-transparent'}"
@@ -1140,6 +1178,7 @@
               <!-- 更新检查卡片:版本号已懒加载,作 prop 传入(卡片内部展示) -->
               <UpdaterCard version={version.value} />
             </div>
+            <FrontendDiagnostics />
           {:else if activeSection === 'general'}
             <!-- 四节全折叠:铺开约 1100px 而内容区只有 360px,要滚三屏。折叠头右侧显示当前值,
                  收起也知道现在是什么设置;四节等价,视觉上比"两节展开两节折叠"整齐。
