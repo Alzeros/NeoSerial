@@ -574,6 +574,7 @@ pub fn run() {
             // 进程退出时注销 registry,避免残留条目让 agent 发现后连接失败;
             // 没经 cleanup_and_exit 的退出路径(更新器 relaunch 等)也把文件日志写完。
             tauri::RunEvent::Exit => {
+                logging::webview::shutdown();
                 let _ = crate::commands::logging::stop_logging_impl(app);
                 if let Some(state) = app.try_state::<AppState>() {
                     if let Some(reg) = &state.registry {

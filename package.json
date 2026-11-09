@@ -34,7 +34,6 @@
   },
   "dependencies": {
     "@rrweb/record": "2.2.1",
-    "@rrweb/replay": "2.2.1",
     "@tauri-apps/api": "^2.2.0",
     "@tauri-apps/plugin-dialog": "^2.7.2",
     "@tauri-apps/plugin-process": "^2.3.1",

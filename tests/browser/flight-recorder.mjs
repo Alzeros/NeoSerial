@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import {withHeadlessBrowser} from './headless.mjs';
 
-await withHeadlessBrowser(async ({base,call,evaluate,until,delay,screenshot})=>{
+await withHeadlessBrowser(async ({base,call,evaluate,until,delay})=>{
   await call('Page.navigate',{url:`${base}/tests/browser/flight-recorder.html`});
   await until('window.flightTest && flightTest.records.some(r=>r.kind==="replay.started")');
   await evaluate('flightTest.addUnknownFeature()');
@@ -41,18 +41,23 @@ await withHeadlessBrowser(async ({base,call,evaluate,until,delay,screenshot})=>{
   assert.doesNotMatch(JSON.stringify(report),/PRIVATE_SERIAL/);
   assert.ok(JSON.stringify(report).length-before<100000,'High volume serial regions do not flood the DOM recording');
 
-  await evaluate(`document.querySelector('[data-diagnostic-action="view-frontend-logs"]').click()`);
-  await until('Boolean(document.querySelector("[data-replay-file]"))');
-  await evaluate(`(()=>{const file=new File([JSON.stringify(flightTest.report())],'future.json',{type:'application/json'});const transfer=new DataTransfer();transfer.items.add(file);const input=document.querySelector('[data-replay-file]');input.files=transfer.files;input.dispatchEvent(new Event('change',{bubbles:true}));})()`);
-  await until('Boolean(document.querySelector("[data-replay-viewer] iframe"))');
-  assert.equal(await evaluate('document.querySelector("[data-replay-viewer] [role=alert]")?.textContent ?? ""'),'');
-  await evaluate(`(()=>{const slider=document.querySelector('[aria-label="回放进度"]');slider.value=slider.max;slider.dispatchEvent(new Event('input',{bubbles:true}));})()`);
-  await delay(300);
-  await until(`(()=>{const iframe=document.querySelector('[data-replay-viewer] iframe');return iframe?.contentDocument?.getElementById('future-panel')?.hidden===false;})()`);
-  assert.equal(await evaluate(`document.querySelector('[data-replay-viewer] iframe').contentDocument.getElementById('future-panel').style.width`),'340px');
-  assert.equal(await evaluate(`document.querySelector('[data-replay-viewer] iframe').contentDocument.documentElement.dataset.theme`),'preset-3');
-  assert.equal(await evaluate(`(()=>{const frame=document.querySelector('[data-replay-viewer] iframe');return frame.contentWindow.getComputedStyle(frame.contentDocument.getElementById('future-panel')).borderTopWidth;})()`),'4px');
-  assert.ok(!(await evaluate(`document.querySelector('[data-replay-viewer] iframe').getAttribute('sandbox')`)).includes('allow-scripts'));
-  await screenshot('/tmp/neoserial-flight-recorder-viewer.png');
-  console.log('PASS generic flight recorder: unknown DOM/plugin/event/state, HTTP/XHR/WebSocket/SSE/Worker, privacy, serial pressure, report and sandboxed replay');
+  // Verify exported UI data directly; viewing diagnostic files is outside the app.
+  const mutations=report.replay.segments.flatMap(segment=>segment.events)
+    .filter(event=>event.type===3&&event.data.source===0).map(event=>event.data);
+  function findPanel(nodes) {
+    for(const node of nodes) {
+      if(node.attributes?.id==='future-panel') return node;
+      const found=findPanel(node.childNodes??[]);if(found) return found;
+    }
+  }
+  const panel=findPanel(mutations.flatMap(mutation=>mutation.adds??[]).map(add=>add.node));
+  assert.ok(panel,'Export retains the identity of a newly added control');
+  const attributes=mutations.flatMap(mutation=>mutation.attributes??[]);
+  const panelChanges=attributes.filter(change=>change.id===panel.id).map(change=>change.attributes);
+  assert.ok(panelChanges.some(change=>Object.hasOwn(change,'hidden')&&change.hidden===null));
+  assert.match(JSON.stringify(panelChanges),/340px/);
+  assert.ok(panelChanges.some(change=>change['data-unseen-mode']==='expanded'));
+  assert.ok(attributes.some(change=>change.attributes['data-theme']==='preset-3'));
+  assert.match(JSON.stringify(report),/4px solid purple/,'Export retains dynamic component styles');
+  console.log('PASS generic flight recorder: unknown DOM/plugin/event/state, HTTP/XHR/WebSocket/SSE/Worker, privacy, serial pressure and exported UI checkpoints/mutations');
 });

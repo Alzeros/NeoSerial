@@ -2,9 +2,8 @@
 #[cfg(windows)]
 mod windows_hooks {
     use super::super::frontend::native_event;
+    use super::super::webview_hooks::HookRegistry;
     use serde_json::json;
-    use std::cell::RefCell;
-    use std::collections::HashMap;
     use webview2_com::Microsoft::Web::WebView2::Win32::*;
     use webview2_com::{
         take_pwstr, BrowserProcessExitedEventHandler, CallDevToolsProtocolMethodCompletedHandler,
@@ -40,7 +39,7 @@ mod windows_hooks {
             }
         }
     }
-    thread_local! { static HOOKS: RefCell<HashMap<String, Hooks>> = RefCell::new(HashMap::new()); }
+    thread_local! { static HOOKS: HookRegistry<Hooks> = HookRegistry::new(); }
 
     fn kind_name(kind: COREWEBVIEW2_PROCESS_FAILED_KIND) -> &'static str {
         match kind {
@@ -83,7 +82,7 @@ mod windows_hooks {
         let label = webview.label().to_string();
         let dispatch_label = label.clone();
         if let Err(error) = webview.with_webview(move |platform| unsafe {
-            if HOOKS.with(|hooks| hooks.borrow().contains_key(&label)) { return; }
+            if !HOOKS.with(|hooks| hooks.accepts(&label)) { return; }
             let result = (|| -> windows_core::Result<()> {
                 let core = platform.controller().CoreWebView2()?;
                 let environment = platform.environment();
@@ -162,7 +161,7 @@ mod windows_hooks {
                     if environment5.add_BrowserProcessExited(&handler, &mut token).is_ok() { hooks.browser = Some((environment5, token)); }
                 }
                 native_event(label.clone(), "webview.capabilities", json!({"engine":"WebView2","process_failed":true,"browser_exited":hooks.browser.is_some(),"navigation_completed":hooks.navigation.is_some(),"frame_navigation_completed":hooks.frame_navigation.is_some(),"browser_log_receivers":hooks.browser_logs.len(),"browser_version":version,"failure_report_folder":failure_report_folder,"dumps_included_in_export":false}));
-                HOOKS.with(|all| { all.borrow_mut().insert(label.clone(), hooks); });
+                drop(HOOKS.with(|all| all.insert(label.clone(), hooks)));
                 Ok(())
             })();
             if let Err(error) = result { native_event(label, "webview.hook_failed", json!({"error":error.to_string()})); }
@@ -172,15 +171,22 @@ mod windows_hooks {
     }
     pub fn closed(label: &str) {
         super::super::cdp::closed(label);
-        HOOKS.with(|hooks| {
-            hooks.borrow_mut().remove(label);
-        });
+        // Unregistering COM callbacks can reenter the UI thread. Release the
+        // registry borrow before any of those callbacks or COM releases run.
+        drop(HOOKS.with(|hooks| hooks.remove(label)));
+    }
+    pub fn shutdown() {
+        // RunEvent::Exit is still on the UI thread, before Tauri tears down the
+        // engine and Windows enters ExitProcess/TLS destruction.
+        drop(HOOKS.with(|hooks| hooks.take_for_shutdown()));
     }
 }
 
 #[cfg(windows)]
-pub use windows_hooks::{closed, install};
+pub use windows_hooks::{closed, install, shutdown};
 #[cfg(not(windows))]
 pub fn install(_webview: &tauri::Webview) {}
 #[cfg(not(windows))]
 pub fn closed(_label: &str) {}
+#[cfg(not(windows))]
+pub fn shutdown() {}

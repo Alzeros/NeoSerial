@@ -18,7 +18,7 @@ function keepAttribute(name: string, value: unknown): boolean {
 }
 
 /** Preserve rrweb's mutation schema while removing user-facing attributes and resource URLs. */
-export function sanitizeReplayEvent(event: eventWithTime, preserveRecordedText = false): eventWithTime {
+export function sanitizeReplayEvent(event: eventWithTime): eventWithTime {
   const visit = (value: unknown): unknown => {
     if (Array.isArray(value)) return value.map(visit);
     if (!value || typeof value !== 'object') return value;
@@ -29,7 +29,7 @@ export function sanitizeReplayEvent(event: eventWithTime, preserveRecordedText =
       if (key === 'attributes' && item && typeof item === 'object' && !Array.isArray(item)) {
         result[key] = Object.fromEntries(Object.entries(item).filter(([name, content]) => keepAttribute(name, content)).map(([name, content]) => [name,
           name === 'style' || name === '_cssText' ? sanitizeStyle(content) : content]));
-      } else if (key === 'textContent' || key === 'text') result[key] = typeof item === 'string' ? (object.isStyle ? cleanCSS(item) : preserveRecordedText ? item : maskReplayText(item)) : item;
+      } else if (key === 'textContent' || key === 'text') result[key] = typeof item === 'string' ? (object.isStyle ? cleanCSS(item) : maskReplayText(item)) : item;
       else if ((key === 'rule' || key === 'cssText') && typeof item === 'string') result[key] = cleanCSS(item);
       else if (key === 'href') result[key] = 'about:blank';
       else result[key] = visit(item);

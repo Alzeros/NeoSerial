@@ -1,9 +1,6 @@
 <script lang="ts">
   import { Download, Loader2 } from 'lucide-svelte';
   import { saveFileDialog, exportFrontendDiagnostics } from '$lib/tauri';
-  import type { Component } from 'svelte';
-  let Viewer = $state<Component<{ onclose: () => void }> | null>(null);
-  async function viewLogs() { Viewer = (await import('./DiagnosticReplayViewer.svelte')).default; }
 
   let busy = $state(false);
   let message = $state('');
@@ -29,7 +26,7 @@
 <div class="mt-4 rounded-lg border p-4 text-left" style="border-color: var(--border); background: var(--background-elevated);" data-frontend-diagnostics>
   <div class="mb-1 text-[13px] font-medium">前端诊断日志</div>
   <p class="text-[12px] leading-relaxed text-[var(--muted-foreground)]">
-    持续保留界面变化、操作、通信和 WebView 状态，支持回放故障前后的界面；重启后仍可导出。仅存本机。
+    持续保留界面变化、操作、通信和 WebView 状态，重启后仍可导出用于问题排查。仅存本机。
   </p>
   <p class="mt-1 text-[12px] leading-relaxed text-[var(--muted-foreground)]">
     输入和动态文本节点做脱敏，保留固定标签及渲染属性。属性、地址、控制台或异常仍可能含业务信息，分享前请确认。
@@ -38,7 +35,5 @@
     {#if busy}<Loader2 size={13} class="animate-spin" />{:else}<Download size={13} />{/if}
     {busy ? '正在导出…' : '导出前端日志'}
   </button>
-  <button class="btn btn-secondary mt-3 ml-2" style="font-size:12px;padding:6px 10px;" onclick={viewLogs} data-diagnostic-action="view-frontend-logs">查看诊断文件</button>
   {#if message}<p class="mt-2 break-words text-[12px] select-text" role="status" style:color={failed ? 'var(--error)' : 'var(--muted-foreground)'}>{message}</p>{/if}
 </div>
-{#if Viewer}<Viewer onclose={() => Viewer = null} />{/if}
