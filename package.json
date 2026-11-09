@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "test:unit": "node --test tests/*.test.ts",
+    "test:connection": "node tests/browser/com-selection.mjs && node tests/browser/auto-connect-selection.mjs",
     "test:settings": "node tests/browser/settings-recovery.mjs && node tests/browser/settings-reuse.mjs && node tests/browser/settings-shortcuts.mjs && node tests/browser/persistence-regressions.mjs",
     "test:logs": "node tests/browser/log-follow-settings.mjs && node tests/browser/log-diagnostics.mjs && node tests/browser/log-regressions.mjs",
     "test:frontend-diagnostics": "node --test tests/frontendDiagnostics.test.ts tests/diagnosticBridge.test.ts tests/diagnosticBootstrap.test.ts tests/diagnosticNetwork.test.ts tests/replayPrivacy.test.ts tests/publicUiLabels.test.ts && node tests/browser/frontend-diagnostics.mjs && node tests/browser/ui-failure-diagnostics.mjs && node tests/browser/flight-recorder.mjs && node tests/browser/replay-backpressure.mjs",

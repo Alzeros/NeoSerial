@@ -4,20 +4,53 @@ import '/src/app.css';
 import { installReadonlyBridge } from './readonly-bridge.mjs';
 import { mount, tick } from 'svelte';
 import { mockIPC, mockWindows } from '@tauri-apps/api/mocks';
+import { emit } from '@tauri-apps/api/event';
 import ConnectionBar from '/src/components/ConnectionBar.svelte';
-import { connectionParams, connected } from '/src/lib/stores.svelte.ts';
+import { autoConnection, connectionParams, connected, windowPort } from '/src/lib/stores.svelte.ts';
 import { installFrontendDiagnostics, flushFrontendDiagnostics } from '/src/lib/frontendDiagnostics.ts';
 mockWindows('main');
-window.comTest = { tick, connectionParams, connected, records: [], flushFrontendDiagnostics, ports: [
+window.comTest = { tick, connectionParams, connected, autoConnection, windowPort, emit,
+  calls: [], binding: null, nextBindingId: 0, deferAttempt: false, releaseAttempt() {},
+  records: [], flushFrontendDiagnostics, ports: [
   { port: 'COM3', device: null },
   { port: 'COM3', device: 'USB serial device' },
   { port: 'COM8', device: 'Second device' },
 ] };
 mockIPC(async (command, args) => {
+  comTest.calls.push({ command, args: structuredClone(args) });
   if (command === 'append_frontend_diagnostics') { comTest.records.push(...args.records); return; }
   if (command === 'append_frontend_replay' || command === 'frontend_diagnostics_heartbeat') return;
   if (command === 'list_ports') return comTest.ports;
-  if (command === 'get_auto_connect') return null;
+  if (command === 'get_auto_connect') return structuredClone(comTest.binding);
+  if (command === 'set_auto_connect') {
+    comTest.binding = args.params ? { id: ++comTest.nextBindingId, params: structuredClone(args.params) } : null;
+    await emit('auto-connect-changed', structuredClone(comTest.binding));
+    return structuredClone(comTest.binding);
+  }
+  if (command === 'auto_connect_once') {
+    if (comTest.deferAttempt) {
+      comTest.deferAttempt = false;
+      await new Promise(resolve => { comTest.releaseAttempt = resolve; });
+    }
+    if (comTest.binding?.id !== args.bindingId) return false;
+    connected.value = true;
+    windowPort.value = comTest.binding.params.port;
+    return true;
+  }
+  if (command === 'connect') {
+    comTest.binding = null;
+    connected.value = true;
+    windowPort.value = args.port;
+    await emit('auto-connect-changed', null);
+    return;
+  }
+  if (command === 'disconnect') {
+    comTest.binding = null;
+    connected.value = false;
+    windowPort.value = null;
+    await emit('auto-connect-changed', null);
+    return;
+  }
   throw Error('Unexpected IPC: ' + command);
 }, { shouldMockEvents: true });
 installReadonlyBridge();

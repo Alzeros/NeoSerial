@@ -75,7 +75,7 @@
     <span
       class="h-2 w-2 rounded-full {connected.value ? 'bg-[var(--rx)]' : 'bg-[var(--muted-foreground)]'} {ioActive ? 'status-dot-pulse' : ''}"
     ></span>
-    <span class="text-[var(--muted-foreground)]" title={autoConnection.binding ? autoConnection.error || '自动连接已开启；手动断开会关闭' : undefined}>
+    <span class="text-[var(--muted-foreground)]" title={autoConnection.binding ? autoConnection.error || '自动重连已开启；手动断开会停止重连' : undefined}>
       {connected.value ? `已连接 ${currentPort.value || ''}` : autoConnection.binding ? `${autoConnection.connecting ? '正在连接' : '等待'} ${autoConnection.binding.params.port}` : '未连接'}
     </span>
   </span>

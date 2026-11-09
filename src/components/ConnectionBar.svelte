@@ -11,6 +11,7 @@
 
   let manualBusy = $state(false);
   let autoChanging = $state(false);
+  let autoSelected = $state(false);
   let disposed = false;
   let refreshing = false;
   let ignoreEnabled = false;
@@ -29,10 +30,9 @@
       }
     });
   });
-  const canAutoConnect = $derived(!!connectionParams.port && Number.isFinite(connectionParams.baudRate) && connectionParams.baudRate > 0);
   const connectionTitle = $derived(autoConnection.binding
-    ? `自动连接 ${autoConnection.binding.params.port}，点击断开并关闭自动连接`
-    : connected.value ? '断开串口' : '连接串口');
+    ? `自动重连 ${autoConnection.binding.params.port}，点击断开并停止自动重连`
+    : connected.value ? '断开串口' : autoSelected ? '连接串口并启用自动重连' : '连接串口');
 
   function queueControl<Result>(operation: () => Promise<Result>): Promise<Result> {
     const result = controlQueue.then(operation, operation);
@@ -57,6 +57,7 @@
     autoConnection.binding = binding;
     autoConnection.error = '';
     if (binding) {
+      autoSelected = true;
       const params = binding.params;
       connectionParams.port = params.port;
       connectionParams.baudRate = params.baud_rate;
@@ -82,17 +83,20 @@
     }
   }
 
-  async function toggleAutoConnect() {
-    if (manualBusy || autoChanging || (!autoConnection.binding && !canAutoConnect)) return;
+  async function toggleAutoConnect(checked: boolean) {
+    if (manualBusy || autoChanging) return;
+    // Selection configures the next Connect; only an active binding may retry.
+    autoSelected = checked;
+    if (checked) return;
     const previous = autoConnection.binding;
     const version = ++controlVersion;
     const revision = bindingRevision;
-    ignoreEnabled = previous !== null;
-    const params = previous ? null : captureParams();
-    if (previous) applyBinding(null);
+    ignoreEnabled = true;
+    if (!previous) return;
+    applyBinding(null);
     autoChanging = true;
     try {
-      const binding = await queueControl(() => setAutoConnect(params));
+      const binding = await queueControl(() => setAutoConnect(null));
       if (!disposed && controlVersion === version && bindingRevision === revision) applyBinding(binding);
     } catch (error) {
       if (!disposed && controlVersion === version) {
@@ -100,8 +104,23 @@
           ignoreEnabled = false;
           applyBinding(previous);
         }
-        notifyError('自动连接设置失败', error);
+        notifyError('自动重连设置失败', error);
       }
+    } finally {
+      if (!disposed && controlVersion === version) autoChanging = false;
+    }
+  }
+
+  async function startAutoConnect(params: ConnectionParams) {
+    const version = ++controlVersion;
+    const revision = bindingRevision;
+    ignoreEnabled = false;
+    autoChanging = true;
+    try {
+      const binding = await queueControl(() => setAutoConnect(params));
+      if (!disposed && controlVersion === version && bindingRevision === revision) applyBinding(binding);
+    } catch (error) {
+      if (!disposed && controlVersion === version) notifyError('自动重连启动失败', error);
     } finally {
       if (!disposed && controlVersion === version) autoChanging = false;
     }
@@ -113,7 +132,7 @@
       const before = bindingRevision;
       const binding = await getAutoConnect();
       if (!disposed && bindingRevision === before) applyBinding(binding);
-    }).catch(error => console.error('读取自动连接状态失败:', error));
+    }).catch(error => console.error('读取自动重连状态失败:', error));
     return () => {
       disposed = true;
       listener.then(unlisten => unlisten()).catch(() => {});
@@ -187,6 +206,10 @@
     // windowPort 只用于"已连接后"定位 send/disconnect,连接前用 connectionParams.port。
     const targetPort = connectionParams.port;
     if (!targetPort) return;
+    if (autoSelected) {
+      await startAutoConnect(captureParams());
+      return;
+    }
     ignoreEnabled = true;
     manualBusy = true;
     try {
@@ -287,11 +310,11 @@
     <ConnectionButton
       connected={connected.value}
       autoEnabled={autoConnection.binding !== null}
+      {autoSelected}
       busy={manualBusy || autoChanging}
-      {canAutoConnect}
       title={connectionTitle}
       onPrimary={() => connected.value || autoConnection.binding ? void handleDisconnect() : void handleConnect()}
-      onAutoToggle={() => { void toggleAutoConnect(); }}
+      onAutoToggle={checked => { void toggleAutoConnect(checked); }}
     />
   </div>
 </div>
