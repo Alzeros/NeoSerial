@@ -183,6 +183,8 @@ pub fn spawn_reader(
                             if let Ok(wl) = window_label.read() {
                                 let _ = app_handle.emit_to(&*wl, "error", crate::connection::ErrorEvent {
                                     message: format!("读取端口锁错误: {}", e),
+                                    port: port_name.clone(),
+                                    source: crate::connection::SerialErrorSource::ReadLock,
                                 });
                             }
                             continue;
@@ -191,6 +193,8 @@ pub fn spawn_reader(
                     if let Ok(wl) = window_label.read() {
                         let _ = app_handle.emit_to(&*wl, "error", crate::connection::ErrorEvent {
                             message: format!("串口读取错误: {}", e),
+                            port: port_name.clone(),
+                            source: crate::connection::SerialErrorSource::Read,
                         });
                     }
                     running.store(false, std::sync::atomic::Ordering::SeqCst);

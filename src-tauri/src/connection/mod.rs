@@ -147,10 +147,21 @@ pub struct ConnectionState {
     pub baud_rate: Option<u32>,
 }
 
-/// 错误事件。
+/// 串口错误来源，用于区分读取中断和需要用户处理的操作错误。
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum SerialErrorSource {
+    Read,
+    ReadLock,
+    Write,
+}
+
+/// 错误事件。携带端口身份，避免自动重连时误隐藏其他端口的错误。
 #[derive(Clone, Serialize)]
 pub struct ErrorEvent {
     pub message: String,
+    pub port: String,
+    pub source: SerialErrorSource,
 }
 
 /// 连接模式。

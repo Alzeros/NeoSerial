@@ -15,6 +15,7 @@
     appendLogLines,
     insertLogLines,
     applySharedSettings,
+    autoConnection,
     cachedSettings,
     connected,
     connectionParams,
@@ -332,6 +333,13 @@
     });
     const unlistenError = onError((e) => {
       console.error('[Serial Error]', e.message);
+      const binding = autoConnection.binding;
+      if (binding && e.source === 'read' && e.port === binding.params.port) {
+        // The native monitor still disconnects the dead handle. Keep the cause
+        // in diagnostics/status while the existing binding waits and retries.
+        autoConnection.error = e.message;
+        return;
+      }
       notifyError('串口错误', e);
     });
     const unlistenMode = onConnectionMode((mode) => {

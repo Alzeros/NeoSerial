@@ -38,6 +38,8 @@ export interface RxUpdate {
 
 export interface ErrorEvent {
   message: string;
+  port?: string;
+  source?: 'read' | 'read_lock' | 'write';
 }
 
 export interface SequenceProgress {

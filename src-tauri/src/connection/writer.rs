@@ -106,6 +106,8 @@ pub fn spawn_writer(
                             let wl = window_label.read().map(|s| s.clone()).unwrap_or_default();
                             let _ = app_handle.emit_to(&wl, "error", crate::connection::ErrorEvent {
                                 message: format!("发送失败: {} (已写出 {}/{} 字节)", e, written, data_len),
+                                port: port_name.clone(),
+                                source: crate::connection::SerialErrorSource::Write,
                             });
                         }
                     }
