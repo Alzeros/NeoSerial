@@ -933,6 +933,10 @@
   /** 收起时看得见当前值:全部预设波特率(过长由折叠头自己截断) */
   const baudSummary = $derived(editBaudRates.join(' · ') || '无');
   const sendSummary = $derived(editSendHalfwidthPunct ? '中文标点转半角' : '原样发送');
+  /** 关闭的详细说明收进感叹号:一两句讲清"做什么、不管哪里" */
+  const sendPunctHelp = $derived.by(() => editSendHalfwidthPunct
+    ? '把中文标点(？，：（）等)转成半角再发,引号内的不动。只影响输入框与快捷指令,MCP 和 HEX 模式不受影响。'
+    : '原样透传,中文标点按 UTF-8 多字节发出去,模组通常回 ERROR。只影响输入框与快捷指令。');
   const mainPanelsSummary = $derived(
     editShowLogTools
       ? (editShowFileLogPanel ? '全部显示' : '仅筛选工具')
@@ -1223,21 +1227,15 @@
               <!-- 独立成节而不是并进日志页:日志页全是显示/留存层的事,
                    这里改的是真正发到线上的字节,混进去容易被误以为也只影响显示。 -->
               <Collapsible title="发送处理" summary={sendSummary} bind:open={openSend}>
-                <!-- 说明挂在标签上(与「数据目录」同一路子):常驻在页面上的只有开关与当前状态 -->
-                <label class="switch switch-row">
-                  <input type="checkbox" bind:checked={editSendHalfwidthPunct} />
-                  <span class="switch-track"></span>
-                  <span
-                    class="switch-label cursor-help"
-                    title={'中文输入法打出的 ？，：（）等,模组一概不认——发送是纯透传,？走的是 UTF-8 三个字节,模组只认半角 ?。\n引号内不动:AT+CMGS="你好,世界" 这类引号里是要发出去的正文。\n只作用于输入框与快捷指令;MCP 收到什么发什么,不受此开关影响。\nHEX 模式不涉及。'}
-                  >中文标点转半角</span>
-                </label>
-                <div class="text-[12px] text-[var(--muted-foreground)] mt-2 leading-relaxed">
-                  {#if editSendHalfwidthPunct}
-                    <span style="font-family: var(--font-mono);">AT+CSQ？</span> 发出去的是 <span style="font-family: var(--font-mono);">AT+CSQ?</span>,日志的 Tx 行显示的就是实际发出的内容。
-                  {:else}
-                    原样透传:中文标点按 UTF-8 多字节发出去,模组通常回 ERROR。
-                  {/if}
+                <!-- 常驻只留开关;完整规则和当前效果都在感叹号里(随开关状态切换),
+                     与「后台与退出」的托盘常驻同一处理 -->
+                <div class="flex items-center gap-1">
+                  <label class="switch switch-row">
+                    <input type="checkbox" bind:checked={editSendHalfwidthPunct} />
+                    <span class="switch-track"></span>
+                    <span class="switch-label">中文标点转半角</span>
+                  </label>
+                  <SettingsHelp icon="alert" label="中文标点转半角" text={sendPunctHelp} />
                 </div>
               </Collapsible>
               </SettingsGroup>
@@ -1262,54 +1260,58 @@
               </Collapsible>
               <Collapsible title="后台与退出" summary={appSummary} bind:open={openApp}>
                 <!-- 开关用 switch-row(标签在左、开关贴右),与扩展三个子页一致。
-                     常驻只留一句,完整后果放进问号(随开关状态切换) -->
+                     完整后果都在感叹号里(随开关状态切换),底下不再重复一行说明 -->
                 <div class="flex items-center gap-1">
                   <label class="switch switch-row">
                     <input type="checkbox" bind:checked={editBackgroundMode} />
                     <span class="switch-track"></span>
                     <span class="switch-label">托盘常驻</span>
                   </label>
-                  <SettingsHelp label="托盘常驻" text={editBackgroundMode
+                  <SettingsHelp icon="alert" label="托盘常驻" text={editBackgroundMode
                     ? '关窗不断开连接:后台继续收发、存日志、跑序列;关掉所有窗口应用留在托盘,MCP 照常。托盘右键可重开窗口或退出。'
                     : '关窗断开本窗口建立的连接(agent 建立的交还 agent);关掉最后一个窗口即退出应用并停 MCP(agent 仍连着会先确认)。'} />
                 </div>
-                <div class="text-[12px] text-[var(--muted-foreground)] mt-2">
-                  {editBackgroundMode ? '关窗不断开连接,关掉所有窗口后留在托盘。' : '关掉最后一个窗口即退出应用并停止 MCP。'}
-                </div>
 
-                <!-- 按钮 shrink-0:原先与右侧长说明并排,被压得把"退出 NeoSerial"折成两行 -->
-                <div class="mt-4 flex items-start gap-3">
+                <!-- 按钮行与上面的开关同一结构:标签左、操作贴右,右边缘对齐成一列。
+                     说明退到标签下方的小字,不再和按钮抢一行;按钮用次级小号,
+                     悬停才转红(与日志「清空」同一路子),平时不抢注意力。 -->
+                <div class="mt-3 pt-3 flex items-start gap-3" style="border-top: 1px solid var(--border-subtle);">
+                  <div class="flex-1 min-w-0">
+                    <span class="text-[13px] text-[var(--foreground)]">退出 NeoSerial</span>
+                    <div class="mt-0.5 text-[12px] leading-relaxed" style="color: {exitArmed ? 'var(--error)' : 'var(--muted-foreground)'};">
+                      {#if exitArmed}
+                        再点一次立即退出;3 秒内不点则取消。
+                      {:else}
+                        断开所有连接并停止 MCP(agent 正连着也会断)。
+                      {/if}
+                    </div>
+                  </div>
                   <button
-                    class="btn shrink-0 whitespace-nowrap {exitArmed ? 'btn-danger-solid' : 'btn-secondary'}"
-                    style="padding: 6px 14px;"
+                    class="btn shrink-0 whitespace-nowrap {exitArmed ? 'btn-danger-solid' : 'btn-secondary btn-clear-hover'}"
+                    style="padding: 2px 10px; font-size: 12px;"
                     onclick={handleExitClick}
-                  >{exitArmed ? '确认退出?' : '退出 NeoSerial'}</button>
-                  <span class="text-[12px] flex-1 min-w-0 leading-relaxed" style="color: {exitArmed ? 'var(--error)' : 'var(--muted-foreground)'};">
-                    {#if exitArmed}
-                      再点一次立即退出;3 秒内不点则取消。
-                    {:else}
-                      断开所有连接并停止 MCP(agent 正连着也会断)。
-                    {/if}
-                  </span>
+                  >{exitArmed ? '确认退出?' : '退出'}</button>
                 </div>
               </Collapsible>
 
               <!-- 数据目录:整个应用的东西都在这两个目录下(设置、脚本序列、发送历史、凭据、
                    日志、指令库缓存),与知识库没有特别关系——原先挂在扩展页的「知识库服务器」
-                   节里,位置不对,挪到通用页。只能看与打开:换位置得在启动前指定,见下面那行说明。 -->
-              <Collapsible title="数据目录" summary={dirsSummary} bind:open={openDirs}>
+                   节里,位置不对,挪到通用页。只能看与打开:换位置得在启动前指定,见感叹号。 -->
+              <Collapsible title="数据目录" summary={dirsSummary} bind:open={openDirs}
+                helpIcon="alert"
+                help={'位置在启动前定,应用内改不了。\n要换位置:设环境变量 NEOSERIAL_DATA_DIR 指到目标目录,或在 exe 同目录放一个空文件 neoserial.portable(数据落到 exe 旁的 data 里)。\n两者都只在启动时生效,已有数据不会自动搬。'}>
                 {#if dirs}
                   <!-- 两个目录各一个"打开"(后端 open_data_dir 本来就分 config/cache 两个)。
-                       目录里装什么、位置怎么换都挂 title:这些是问一次就够的说明,
-                       常摆在页面上只是噪声。路径本身要往别处粘,开 select-text。 -->
+                       目录里装什么挂标题的 title:问一次就够的说明,常摆在页面上只是噪声。
+                       路径本身要往别处粘,开 select-text。 -->
                   {#snippet dirRow(label: string, what: string, path: string, cache: boolean)}
                     <div class="flex items-center gap-3 text-[12px]">
                       <span class="w-8 shrink-0 cursor-help" style="color: var(--muted-foreground);" title={what}>{label}</span>
                       <span class="flex-1 min-w-0 select-text break-all" style="font-family: var(--font-mono);">{path}</span>
                       <button
                         type="button"
-                        class="btn btn-ghost shrink-0"
-                        style="padding: 2px 8px; font-size: 12px;"
+                        class="btn btn-secondary shrink-0"
+                        style="padding: 2px 10px; font-size: 12px; color: var(--primary);"
                         title="在资源管理器里打开"
                         onclick={() => openDataDir(cache).catch((e) => console.error('打开目录失败:', e))}
                       >打开</button>
@@ -1318,12 +1320,6 @@
                   {@render dirRow('配置', '设置、脚本序列、发送历史、知识库凭据', dirs.config, false)}
                   <div class="mt-1.5">
                     {@render dirRow('缓存', '指令库缓存、默认日志目录', dirs.local, true)}
-                  </div>
-                  <div class="mt-2 text-[12px]" style="color: var(--muted-foreground);">
-                    <span
-                      class="cursor-help underline decoration-dotted"
-                      title={'要换位置:设环境变量 NEOSERIAL_DATA_DIR 指到目标目录,或在 exe 同目录放一个空文件 neoserial.portable(数据落到 exe 旁的 data 里)。\n两者都只在启动时生效,已有数据不会自动搬。'}
-                    >位置在启动前定,应用内改不了</span>
                   </div>
                 {:else}
                   <div class="text-[12px]" style="color: var(--muted-foreground);">读取中…</div>
