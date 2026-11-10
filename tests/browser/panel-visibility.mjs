@@ -20,7 +20,7 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, click, fresh, de
   assert.ok(await evaluate("Boolean(persistenceTest.button('主界面功能区'))"),'General contains the approved panel visibility group');
   const generalOrder = await evaluate("[...document.querySelectorAll('[data-settings-collapse]')].map(element=>element.querySelector('button').textContent.trim())");
   const groupIndex = generalOrder.findIndex(text=>text.startsWith('主界面功能区'));
-  assert.ok(generalOrder[groupIndex-1].startsWith('日志内容'));
+  assert.ok(generalOrder[groupIndex-1].startsWith('发送处理'));
   assert.ok(generalOrder[groupIndex+1].startsWith('后台与退出'));
   assert.equal(await evaluate("persistenceTest.button('主界面功能区').getAttribute('aria-expanded')"),'false');
   assert.match(generalOrder[groupIndex],/仅文件与日志/);
@@ -30,12 +30,20 @@ await withHeadlessBrowser(async ({ base, call, evaluate, until, click, fresh, de
   assert.equal(await evaluate(`document.querySelector(${JSON.stringify(settingsFiles)}).checked`),true);
   assert.equal(await evaluate("persistenceTest.button('应用').disabled"),true,'default fallbacks do not dirty old settings');
 
+  // 摘要只在收起时显示:展开时头部只有标题,收起后摘要反映刚改的值
+  const summaryAfterCollapse = async () => {
+    await click('主界面功能区');
+    const text = await evaluate("persistenceTest.button('主界面功能区').textContent");
+    await click('主界面功能区');
+    return text;
+  };
   await setChecked(settingsTools);
-  assert.match(await evaluate("persistenceTest.button('主界面功能区').textContent"),/全部显示/);
+  assert.equal(await evaluate("persistenceTest.button('主界面功能区').textContent.trim()"),'主界面功能区','expanded header hides the summary');
+  assert.match(await summaryAfterCollapse(),/全部显示/);
   await setChecked(settingsFiles);
-  assert.match(await evaluate("persistenceTest.button('主界面功能区').textContent"),/仅筛选工具/);
+  assert.match(await summaryAfterCollapse(),/仅筛选工具/);
   await setChecked(settingsTools);
-  assert.match(await evaluate("persistenceTest.button('主界面功能区').textContent"),/全部隐藏/);
+  assert.match(await summaryAfterCollapse(),/全部隐藏/);
   assert.equal(await evaluate("persistenceTest.calls.filter(record=>record.cmd==='patch_settings').length"),0,'draft toggles do not write settings');
   assert.equal(await evaluate('persistenceTest.stores.cachedSettings.value.ui.show_log_tools'),undefined);
   await click('取消');

@@ -96,17 +96,17 @@
   onDestroy(() => {alive = false; requestId++; copyId++; clearTimeout(copyTimer);});
 </script>
 
-<section class="mcp-setup mt-3 pt-3 border-t border-[var(--border-subtle)] min-w-0" aria-label="MCP 客户端接入">
-  <div class="flex items-center justify-between gap-2 mb-2">
-    <h3 class="text-[13px] font-medium">客户端接入</h3>
-    <button class="text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-50" onclick={refresh} disabled={loading || checking}>刷新状态</button>
-  </div>
-  <div class="text-[12px] text-[var(--muted-foreground)] mb-2" role="status">
-    {#if loading}正在读取服务状态…
-    {:else if statusError}<span class="text-[var(--error)] select-text">{statusError}</span>
-    {:else if endpoint}服务运行中 · Streamable HTTP · 仅本机
-    {:else}服务未运行。启用 MCP 服务并保存后，重启应用，再刷新状态。
-    {/if}
+<section class="mcp-setup min-w-0" aria-label="MCP 客户端接入">
+  <!-- 组名「客户端接入」由设置页的 SettingsGroup 给出;这里只留状态行,「刷新状态」贴在右边 -->
+  <div class="flex items-start justify-between gap-2 mb-2">
+    <div class="min-w-0 text-[12px] text-[var(--muted-foreground)]" role="status">
+      {#if loading}正在读取服务状态…
+      {:else if statusError}<span class="text-[var(--error)] select-text">{statusError}</span>
+      {:else if endpoint}服务运行中 · Streamable HTTP · 仅本机
+      {:else}服务未运行。启用 MCP 服务并保存后，重启应用，再刷新状态。
+      {/if}
+    </div>
+    <button class="shrink-0 text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-50" onclick={refresh} disabled={loading || checking}>刷新状态</button>
   </div>
 
   {#if endpoint && !loading}
@@ -168,7 +168,7 @@
       {/if}
       {#if guide.blocks.length > 1}
         <div class="mt-2">
-          <Collapsible title="手动配置（替代命令）" bind:open={showAlternative}>
+          <Collapsible title="手动配置（替代命令）" variant="inline" bind:open={showAlternative}>
             <p class="text-[12px] text-[var(--muted-foreground)]">与上方命令二选一，无需重复配置。</p>
             {#each guide.blocks.slice(1) as block, index (`${client}-${scope}-${index}`)}
               {@render configBlock(block, index + 1)}
@@ -191,7 +191,7 @@
     </section>
 
     <div class="mt-3">
-      <Collapsible title="接入遇到问题？" bind:open={showTroubleshooting}>
+      <Collapsible title="接入遇到问题？" variant="inline" bind:open={showTroubleshooting}>
         <div class="space-y-2 text-[12px] leading-relaxed text-[var(--muted-foreground)] select-text">
           <p>{guide.notes}</p>
           <p><span class="text-[var(--foreground)]">本机自检通过，客户端仍连不上：</span>自检仅验证 NeoSerial 的服务，不会替客户端注册配置。请核对配置位置、生效范围，再按上方步骤验证。</p>
@@ -210,7 +210,7 @@
   .setup-step {
     margin-top: 16px;
     padding-top: 12px;
-    border-top: 1px solid var(--border-subtle);
+    border-top: 1px solid var(--border);
   }
   .step-heading {
     display: flex;

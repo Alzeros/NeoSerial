@@ -14,7 +14,7 @@ function call(method,params={}){return new Promise((resolve,reject)=>{const next
 async function ev(expression){const r=await call('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true,userGesture:true});if(r.exceptionDetails)throw Error(JSON.stringify(r.exceptionDetails));return r.result.value;}
 async function until(expression){for(let i=0;i<100;i++){if(await ev(expression))return;await new Promise(r=>setTimeout(r,50));}assert.fail(expression);}
 const button=text=>"[...document.querySelectorAll('#settings button')].find(b=>b.textContent.trim()==="+JSON.stringify(text)+")";
-async function expand(){await ev("[...document.querySelectorAll('#settings button[aria-expanded]')].find(b=>b.textContent.includes('日志内容')).click()");}
+async function expand(){await ev("[...document.querySelectorAll('#settings button[aria-expanded]')].find(b=>b.textContent.includes('缓存上限')).click()");}
 async function setRange(label,value){await ev("(()=>{const el=document.querySelector('input[aria-label="+JSON.stringify(label)+"]');el.value="+JSON.stringify(String(value))+";el.dispatchEvent(new Event('input',{bubbles:true}));})()");}
 const timeout=setTimeout(()=>{console.error('native log settings regression timed out');process.exit(1);},60000);
 try{

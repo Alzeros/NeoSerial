@@ -29,11 +29,14 @@ await withHeadlessBrowser(async ({ call, fresh, evaluate, until, click, delay, s
   await evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true})); persistenceTest.tick()`);
   await until('!document.querySelector("[role=tooltip]")');
   await click('通用');
-  await evaluate(`document.querySelector('button[aria-label="日志显示说明"]').click(); persistenceTest.tick()`);
-  assert.equal(await evaluate(`document.querySelector('button[aria-label="日志显示说明"]').closest('[data-settings-collapse]').querySelector('button').getAttribute('aria-expanded')`), 'false');
+  await evaluate(`document.querySelector('button[aria-label="预设波特率说明"]').click(); persistenceTest.tick()`);
+  assert.equal(await evaluate(`document.querySelector('button[aria-label="预设波特率说明"]').closest('[data-settings-collapse]').querySelector('button').getAttribute('aria-expanded')`), 'false');
   await evaluate(`document.body.dispatchEvent(new PointerEvent('pointerdown', {bubbles:true})); persistenceTest.tick()`);
-  await click('日志显示');
+  await click('预设波特率');
   await delay(200);
-  assert.ok(await evaluate('document.body.innerText.includes("英文字体")'));
+  assert.ok(await evaluate('Boolean(document.querySelector("[data-collapse-content] input[type=number]"))'));
+  await click('日志');
+  assert.ok(await evaluate(`Boolean(document.querySelector('button[aria-label="显示说明"]'))`), 'Log display group keeps its help');
+  assert.ok(await evaluate('document.body.innerText.includes("英文字体")'), 'Log display is visible without expanding');
   console.log('PASS settings help: hover, focus, click, Escape isolation, outside dismissal, viewport bounds and independent collapse');
 }, { timeoutMs: 180000 });

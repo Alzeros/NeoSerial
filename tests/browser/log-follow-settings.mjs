@@ -104,8 +104,8 @@ await withHeadlessBrowser(async ({ fresh, evaluate, until, click, delay }) => {
   console.log('PASS: enabled/disabled changes apply live and leave manual following and display pause independent.');
 
   const openLogSettings = async () => {
-    await click('通用');
-    if ((await evaluate("persistenceTest.button('日志内容').getAttribute('aria-expanded')")) === 'false') await click('日志内容');
+    await click('日志');
+    if ((await evaluate("persistenceTest.button('编码与跟随').getAttribute('aria-expanded')")) === 'false') await click('编码与跟随');
     await until(`Boolean(document.querySelector(${JSON.stringify(preference)}))`);
   };
   const toggle = async () => {
