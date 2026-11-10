@@ -97,8 +97,11 @@
 </script>
 
 <section class="mcp-setup min-w-0" aria-label="MCP 客户端接入">
-  <!-- 组名「客户端接入」由设置页的 SettingsGroup 给出;这里只留状态行,「刷新状态」贴在右边 -->
-  <div class="flex items-start justify-between gap-2 mb-2">
+  <!-- 组名「客户端接入」由设置页的 SettingsGroup 给出。
+       状态行单独一条;下面的可交互项统一成「标签列 + 控件 + 操作」的行结构:
+       标签列固定 64px,输入框/下拉框统一 32px 高,按钮同高、右边缘对齐,
+       不再出现大小高低参差的控件。 -->
+  <div class="flex items-center justify-between gap-3">
     <div class="min-w-0 text-[12px] text-[var(--muted-foreground)]" role="status">
       {#if loading}正在读取服务状态…
       {:else if statusError}<span class="text-[var(--error)] select-text">{statusError}</span>
@@ -106,38 +109,48 @@
       {:else}服务未运行。启用 MCP 服务并保存后，重启应用，再刷新状态。
       {/if}
     </div>
-    <button class="shrink-0 text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] disabled:opacity-50" onclick={refresh} disabled={loading || checking}>刷新状态</button>
+    <button class="btn btn-secondary shrink-0" style="height: 32px; padding: 0 12px; font-size: 12px;" onclick={refresh} disabled={loading || checking}>刷新状态</button>
   </div>
 
   {#if endpoint && !loading}
-    <div class="flex items-center gap-2 min-w-0">
-      <input aria-label="MCP 服务地址" readonly value={endpoint}
-        class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[12px] font-mono" />
-      <button class="btn btn-secondary shrink-0 text-[12px]" onclick={() => copy('address',endpoint!)}>{copied === 'address' ? '已复制' : '复制地址'}</button>
-    </div>
-    <div class="flex items-center gap-2 mt-2">
-      <button class="btn btn-secondary text-[12px] shrink-0" onclick={check} disabled={checking}>{checking ? '自检中…' : '本机服务自检'}</button>
-      <span class="text-[12px] text-[var(--muted-foreground)]">检查协议与工具列表，不操作串口。</span>
-    </div>
-    {#if checkMessage}
-      <p role="status" class="mt-2 text-[12px] break-words select-text" style="color: {checkFailed ? 'var(--error)' : 'var(--primary)'}">{checkMessage}</p>
-    {/if}
+    <div class="mt-3 flex flex-col gap-2">
+      <!-- 服务地址 -->
+      <div class="flex items-center gap-2">
+        <span class="w-16 shrink-0 text-[12px] text-[var(--muted-foreground)]">服务地址</span>
+        <input aria-label="MCP 服务地址" readonly value={endpoint}
+          class="h-8 min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 font-mono text-[12px]" />
+        <button class="btn btn-secondary shrink-0" style="height: 32px; padding: 0 12px; font-size: 12px;" onclick={() => copy('address',endpoint!)}>{copied === 'address' ? '已复制' : '复制地址'}</button>
+      </div>
 
-    <div class="flex flex-wrap items-center gap-2 mt-4 mb-2">
-      <label class="text-[12px]" for="mcp-client">客户端</label>
-      <select id="mcp-client" bind:value={client} class="min-w-0 flex-1 text-[12px]">
-        {#each MCP_CLIENTS as option}<option value={option.value}>{option.label}</option>{/each}
-      </select>
-    </div>
-    {#if client !== 'generic'}
-      <div class="flex items-center gap-2 mb-2">
-        <label class="text-[12px]" for="mcp-scope">生效范围</label>
-        <select id="mcp-scope" bind:value={scope} class="min-w-0 flex-1 text-[12px]">
-          <option value="user">{client === 'vscode' ? '当前 VS Code 配置文件' : '当前用户 · 各项目可用'}</option>
-          <option value="project">{client === 'claude' ? '当前项目 · 仅自己' : '仅当前项目'}</option>
+      <!-- 客户端 -->
+      <div class="flex items-center gap-2">
+        <label class="w-16 shrink-0 text-[12px] text-[var(--muted-foreground)]" for="mcp-client">客户端</label>
+        <select id="mcp-client" bind:value={client} class="min-w-0 flex-1 text-[12px]">
+          {#each MCP_CLIENTS as option}<option value={option.value}>{option.label}</option>{/each}
         </select>
       </div>
-    {/if}
+
+      <!-- 生效范围 -->
+      {#if client !== 'generic'}
+        <div class="flex items-center gap-2">
+          <label class="w-16 shrink-0 text-[12px] text-[var(--muted-foreground)]" for="mcp-scope">生效范围</label>
+          <select id="mcp-scope" bind:value={scope} class="min-w-0 flex-1 text-[12px]">
+            <option value="user">{client === 'vscode' ? '当前 VS Code 配置文件' : '当前用户 · 各项目可用'}</option>
+            <option value="project">{client === 'claude' ? '当前项目 · 仅自己' : '仅当前项目'}</option>
+          </select>
+        </div>
+      {/if}
+
+      <!-- 连接自检:按钮后跟一行说明 -->
+      <div class="flex items-center gap-2">
+        <span class="w-16 shrink-0 text-[12px] text-[var(--muted-foreground)]">连接自检</span>
+        <button class="btn btn-secondary shrink-0" style="height: 32px; padding: 0 12px; font-size: 12px;" onclick={check} disabled={checking}>{checking ? '自检中…' : '本机服务自检'}</button>
+        <span class="text-[12px] text-[var(--muted-foreground)]">检查协议与工具列表，不操作串口。</span>
+      </div>
+      {#if checkMessage}
+        <p role="status" class="text-[12px] break-words select-text" style="color: {checkFailed ? 'var(--error)' : 'var(--primary)'}">{checkMessage}</p>
+      {/if}
+    </div>
     {#snippet configBlock(block: SetupBlock, index: number)}
       <div class="mt-2 min-w-0">
         <p class="text-[12px] leading-relaxed text-[var(--muted-foreground)] select-text break-words"><span class="text-[var(--foreground)]">{block.merge ? '配置位置：' : '执行位置：'}</span>{block.location}</p>
@@ -217,6 +230,9 @@
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
+    /* 全局 h1~h4 用的是衬线字体(应用里给文章式标题的),步骤标题属于设置页的
+       操作说明,跟正文一样用无衬线,不然两个小标题会和下面的说明脱节 */
+    font-family: var(--font-sans);
     font-size: 13px;
     font-weight: 500;
   }
