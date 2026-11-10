@@ -13,24 +13,43 @@
   let visible = $state(false);
   let pinned = false;
   let hideTimer: ReturnType<typeof setTimeout> | undefined;
+  let showTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** 悬停多久才弹出:太短会被"鼠标划过"误触,太长又像没反应。
+      350ms 与常见桌面工具提示一致:扫过不会弹,停住能立刻看到。 */
+  const HOVER_DELAY_MS = 350;
 
   function cancelHide() {
     clearTimeout(hideTimer);
   }
 
+  function cancelShow() {
+    clearTimeout(showTimer);
+  }
+
   function show() {
     cancelHide();
+    cancelShow();
     visible = true;
+  }
+
+  /** 悬停入口:先等一小会儿,真的停在问号上才弹 */
+  function scheduleShow() {
+    cancelHide();
+    cancelShow();
+    showTimer = setTimeout(show, HOVER_DELAY_MS);
   }
 
   function close() {
     cancelHide();
+    cancelShow();
     visible = false;
     pinned = false;
   }
 
   function scheduleHide() {
     cancelHide();
+    cancelShow();
     hideTimer = setTimeout(() => {
       if (!pinned && document.activeElement !== trigger) close();
     }, 150);
@@ -81,12 +100,12 @@
     };
   });
 
-  onDestroy(cancelHide);
+  onDestroy(() => { cancelHide(); cancelShow(); });
 </script>
 
 <button bind:this={trigger} type="button" class="settings-help"
   aria-label={`${label}说明`} aria-describedby={visible ? id : undefined}
-  onpointerenter={show} onpointerleave={scheduleHide} onfocus={show} onblur={scheduleHide}
+  onpointerenter={scheduleShow} onpointerleave={scheduleHide} onfocus={show} onblur={scheduleHide}
   onclick={() => { if (pinned) close(); else { pinned = true; show(); } }}>
   {#if icon === 'alert'}<CircleAlert size={14} aria-hidden="true" />{:else}<Info size={14} aria-hidden="true" />{/if}
 </button>

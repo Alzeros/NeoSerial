@@ -1143,12 +1143,13 @@
 
       <!-- 左右分栏：左导航 + 右内容（固定高度，内容多时右栏独立滚动） -->
       <div class={standalone ? 'flex flex-1 min-h-0' : 'flex'} style={standalone ? undefined : 'height: 400px;'}>
-        <!-- 左侧导航 -->
-        <nav class="w-[120px] flex-shrink-0 border-r border-[var(--border)] py-2">
+        <!-- 左侧导航:窄一些、行高一些。五个一级项在 500 高的窗口里仍占不满侧栏,
+             所以把高度给足,点击区域更大,视觉也不至于挤在顶部 -->
+        <nav class="w-[96px] flex-shrink-0 border-r border-[var(--border)] py-2">
           {#each sections as s}
             <button
               data-diagnostic-action={`settings-${s.key}`}
-              class="block w-full text-left px-4 py-2 text-[13px] transition-colors {activeSection === s.key
+              class="block w-full text-center px-2 py-3.5 text-[13px] transition-colors {activeSection === s.key
                 ? 'bg-[var(--overlay-hover)] text-[var(--primary)] font-medium border-l-2 border-[var(--primary)]'
                 : 'text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)] border-l-2 border-transparent'}"
               onclick={() => {
@@ -1272,26 +1273,20 @@
                     : '关窗断开本窗口建立的连接(agent 建立的交还 agent);关掉最后一个窗口即退出应用并停 MCP(agent 仍连着会先确认)。'} />
                 </div>
 
-                <!-- 按钮行与上面的开关同一结构:标签左、操作贴右,右边缘对齐成一列。
-                     说明退到标签下方的小字,不再和按钮抢一行;按钮用次级小号,
-                     悬停才转红(与日志「清空」同一路子),平时不抢注意力。 -->
-                <div class="mt-3 pt-3 flex items-start gap-3" style="border-top: 1px solid var(--border-subtle);">
-                  <div class="flex-1 min-w-0">
-                    <span class="text-[13px] text-[var(--foreground)]">退出 NeoSerial</span>
-                    <div class="mt-0.5 text-[12px] leading-relaxed" style="color: {exitArmed ? 'var(--error)' : 'var(--muted-foreground)'};">
-                      {#if exitArmed}
-                        再点一次立即退出;3 秒内不点则取消。
-                      {:else}
-                        断开所有连接并停止 MCP(agent 正连着也会断)。
-                      {/if}
-                    </div>
-                  </div>
+                <!-- 只留一排:标签 + 问号 + 退出按钮;后果说明进问号,不再占第二行。
+                     二次确认的提示要即时反馈,所以确认态时才在下面临时显示一行红字。 -->
+                <div class="mt-3 pt-3 flex items-center gap-1" style="border-top: 1px solid var(--border-subtle);">
+                  <span class="text-[13px] text-[var(--foreground)]">退出 NeoSerial</span>
+                  <SettingsHelp icon="alert" label="退出 NeoSerial" text="断开所有连接并停止 MCP(agent 正连着也会断)。需要再点一次确认,3 秒内不点则取消。" />
                   <button
-                    class="btn shrink-0 whitespace-nowrap {exitArmed ? 'btn-danger-solid' : 'btn-secondary btn-clear-hover'}"
+                    class="btn shrink-0 whitespace-nowrap ml-auto {exitArmed ? 'btn-danger-solid' : 'btn-secondary btn-clear-hover'}"
                     style="padding: 2px 10px; font-size: 12px;"
                     onclick={handleExitClick}
                   >{exitArmed ? '确认退出?' : '退出'}</button>
                 </div>
+                {#if exitArmed}
+                  <div class="mt-1 text-[12px] leading-relaxed" style="color: var(--error);">再点一次立即退出;3 秒内不点则取消。</div>
+                {/if}
               </Collapsible>
 
               <!-- 数据目录:整个应用的东西都在这两个目录下(设置、脚本序列、发送历史、凭据、
@@ -1565,9 +1560,9 @@
             </SettingsGroup>
           {:else if activeSection === 'extensions'}
             {#if extModule === null}
-              <!-- 文件夹视图:四个模块。快捷指令常驻开启,其余模块各自独立开关 -->
+              <!-- 文件夹视图:四个模块。启用开关放在这一层,点开只改具体设置 -->
               <div class="text-[12px] text-[var(--muted-foreground)] mb-4 leading-relaxed">
-                扩展功能按模块独立管理。点开进入各自设置:快捷指令常驻开启;数据处理、指令联想与 MCP 可独立开关。
+                扩展功能按模块独立管理。右侧开关直接启用或停用;点开进入各自设置。
               </div>
               <button
                 class="flex items-center w-full text-left px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)] mb-2"
@@ -1578,33 +1573,36 @@
                 <span class="ml-2 text-[12px]" style="color: var(--primary);">常驻</span>
                 <span class="ml-auto text-[var(--muted-foreground)]">›</span>
               </button>
-              <button
-                class="flex items-center w-full text-left px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)] mb-2"
-                style="border: 1px solid var(--border);"
-                onclick={() => (extModule = 'data')}
-              >
-                <span class="text-[14px] font-medium text-[var(--foreground)]">数据处理</span>
-                <span class="ml-2 text-[12px]" style="color: {editShowDataTab ? 'var(--primary)' : 'var(--muted-foreground)'};">{editShowDataTab ? '已启用' : '未启用'}</span>
-                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
-              </button>
-              <button
-                class="flex items-center w-full text-left px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)] mb-2"
-                style="border: 1px solid var(--border);"
-                onclick={() => (extModule = 'suggest')}
-              >
-                <span class="text-[14px] font-medium text-[var(--foreground)]">指令联想</span>
-                <span class="ml-2 text-[12px]" style="color: {editSuggestEnabled ? 'var(--primary)' : 'var(--muted-foreground)'};">{editSuggestEnabled ? '已启用' : '未启用'}</span>
-                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
-              </button>
-              <button
-                class="flex items-center w-full text-left px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)]"
-                style="border: 1px solid var(--border);"
-                onclick={() => (extModule = 'mcp')}
-              >
-                <span class="text-[14px] font-medium text-[var(--foreground)]">MCP 服务</span>
-                <span class="ml-2 text-[12px]" style="color: {editMcpAutoStart ? 'var(--primary)' : 'var(--muted-foreground)'};">{editMcpAutoStart ? '已启用' : '未启用'}</span>
-                <span class="ml-auto text-[var(--muted-foreground)]">›</span>
-              </button>
+              <div class="flex items-center gap-2 px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)] mb-2" style="border: 1px solid var(--border);">
+                <button class="flex flex-1 min-w-0 items-center text-left" onclick={() => (extModule = 'data')}>
+                  <span class="text-[14px] font-medium text-[var(--foreground)]">数据处理</span>
+                </button>
+                <label class="switch shrink-0" title={editShowDataTab ? '关闭数据处理' : '启用数据处理'}>
+                  <input type="checkbox" aria-label="启用数据处理" bind:checked={editShowDataTab} />
+                  <span class="switch-track"></span>
+                </label>
+                <button class="shrink-0 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)]" aria-label="进入数据处理设置" onclick={() => (extModule = 'data')}>›</button>
+              </div>
+              <div class="flex items-center gap-2 px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)] mb-2" style="border: 1px solid var(--border);">
+                <button class="flex flex-1 min-w-0 items-center text-left" onclick={() => (extModule = 'suggest')}>
+                  <span class="text-[14px] font-medium text-[var(--foreground)]">指令联想</span>
+                </button>
+                <label class="switch shrink-0" title={editSuggestEnabled ? '关闭输入联想' : '启用输入联想'}>
+                  <input type="checkbox" aria-label="启用输入联想" bind:checked={editSuggestEnabled} />
+                  <span class="switch-track"></span>
+                </label>
+                <button class="shrink-0 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)]" aria-label="进入指令联想设置" onclick={() => (extModule = 'suggest')}>›</button>
+              </div>
+              <div class="flex items-center gap-2 px-3 py-3 rounded-[var(--radius)] transition-colors hover:bg-[var(--overlay-hover)]" style="border: 1px solid var(--border);">
+                <button class="flex flex-1 min-w-0 items-center text-left" onclick={() => (extModule = 'mcp')}>
+                  <span class="text-[14px] font-medium text-[var(--foreground)]">MCP 服务</span>
+                </button>
+                <label class="switch shrink-0" title={editMcpAutoStart ? '关闭 MCP 服务' : '启用 MCP 服务'}>
+                  <input type="checkbox" aria-label="启用 MCP 服务" bind:checked={editMcpAutoStart} />
+                  <span class="switch-track"></span>
+                </label>
+                <button class="shrink-0 px-1 text-[var(--muted-foreground)] hover:text-[var(--foreground)]" aria-label="进入 MCP 服务设置" onclick={() => (extModule = 'mcp')}>›</button>
+              </div>
             {:else if extModule === 'quick'}
               <!-- 快捷指令子页:常驻开启(无总开关),只有一组密度设置。
                    与指令联想页同一套页头(标题行 + 一行说明 + 分隔线收口),但项目少,不套折叠。 -->
@@ -1683,12 +1681,7 @@
               </button>
               <div class="flex items-center gap-3 mb-1">
                 <div class="flex items-center gap-1 text-[15px] font-semibold text-[var(--foreground)]">数据处理<SettingsHelp label="数据处理" text="关闭后隐藏数据处理入口，已填写的内容、配置和模板仍会保留。" /></div>
-                <label class="switch ml-auto" title={editShowDataTab ? '关闭数据处理' : '启用数据处理'}>
-                  <input type="checkbox" aria-label="启用数据处理" bind:checked={editShowDataTab} />
-                  <span class="switch-track"></span>
-                </label>
               </div>
-              {#if editShowDataTab}
                 <SettingsGroup label="显示模块" variant="padded">
                   <div class="flex flex-wrap gap-x-4 gap-y-2">
                     {#each DATA_TOOL_OPTIONS as option (option.value)}
@@ -1785,32 +1778,25 @@
                     </div>
                   </Collapsible>
                 </SettingsGroup>
-              {/if}
             {:else if extModule === 'suggest'}
               <!-- 指令联想子页:分节折叠(默认只展开一节),按自然流排布,超出由外层内容区滚动 -->
               <div>
                 <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
                   <span>‹</span><span>返回扩展</span>
                 </button>
-                <!-- 标题与总开关同一行:开关管的是整页,不必再写一遍"启用输入联想"
-                     (label 只包 track,标题不是它的 label;可点区域交给 aria-label/title) -->
                 <div class="flex items-center gap-3 mb-1">
                   <div class="flex items-center gap-1 text-[15px] font-semibold text-[var(--foreground)]">指令联想<SettingsHelp label="指令联想" text="输入指令时显示知识库手册和发送历史候选，手册包含语法、参数与示例。" /></div>
-                  <label class="switch ml-auto" title={editSuggestEnabled ? '关闭输入联想' : '启用输入联想'}>
-                    <input type="checkbox" aria-label="启用输入联想" bind:checked={editSuggestEnabled} />
-                    <span class="switch-track"></span>
-                  </label>
                 </div>
 
-                {#if editSuggestEnabled}
-                  <!-- tab 显隐是"启用"的从属项,但层级靠"总开关关掉它就不渲染"表达就够了:
-                       缩进 + 淡字反而跟谁都不对齐、比谁都淡,像掉在那儿的注释。
-                       switch-row 让轨道与总开关的轨道右对齐成一列(否则一左一右像两套东西)。 -->
-                  <label class="switch switch-row mt-2">
-                    <input type="checkbox" bind:checked={editShowSuggestTab} />
-                    <span class="switch-track"></span>
-                    <span class="switch-label">显示"指令查询"tab</span>
-                  </label>
+                  <!-- tab 显隐是"启用"的从属项;启用开关在扩展列表里。
+                       和下面的分组一样画框,单独看也是"一个设置项"而不是页面说明文字 -->
+                  <div class="mt-3 rounded-[var(--radius)] px-3 py-2" style="border: 1px solid var(--border);">
+                    <label class="switch switch-row">
+                      <input type="checkbox" bind:checked={editShowSuggestTab} />
+                      <span class="switch-track"></span>
+                      <span class="switch-label">显示指令查询标签页</span>
+                    </label>
+                  </div>
 
                   <!-- 手册行:平铺与分组两种排布共用,故抽成 snippet(同一本手册属多个分组时会渲染多次,
                        勾选绑 doc id 所以联动) -->
@@ -2076,39 +2062,33 @@
                       </div>
                     </Collapsible>
                   </SettingsGroup>
-                {/if}
               </div>
             {:else if extModule === 'mcp'}
-              <!-- MCP 服务子页:与指令联想页同一套页头(标题行带总开关 + 一行说明 + 从属开关
-                   + 分隔线下的常驻状态行);项目少,不套折叠。 -->
+              <!-- MCP 服务子页:标题行 + 从属开关与端口 + 客户端接入;开关在扩展列表里。
+                   "重启生效"挂在端口行的问号上,页面不再常驻说明 -->
               <button class="flex items-center gap-1 text-[13px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] mb-3" onclick={() => (extModule = null)}>
                 <span>‹</span><span>返回扩展</span>
               </button>
               <div class="flex items-center gap-3 mb-1">
                 <div class="flex items-center gap-1 text-[15px] font-semibold text-[var(--foreground)]">MCP 服务<SettingsHelp label="MCP 服务" text="支持 MCP Streamable HTTP 的客户端可接入并操作串口。" /></div>
-                <label class="switch ml-auto" title={editMcpAutoStart ? '关闭 MCP 服务' : '启用 MCP 服务'}>
-                  <input type="checkbox" aria-label="启用 MCP 服务" bind:checked={editMcpAutoStart} />
-                  <span class="switch-track"></span>
-                </label>
-              </div>
-              <div class="text-[12px] text-[var(--muted-foreground)]">
-                开关与端口修改后，重启应用生效。
               </div>
 
-              {#if editMcpAutoStart}
-                <!-- tab 显隐是启用的从属项:功能关了 tab 必然关,开关也藏起来 -->
-                <label class="switch switch-row mt-2">
-                  <input type="checkbox" bind:checked={editShowMcpTab} />
-                  <span class="switch-track"></span>
-                  <span class="switch-label">显示"MCP 日志"tab</span>
-                </label>
-
-                <div class="flex items-center gap-3 mt-3 mb-3">
-                  <span class="flex items-center gap-1 w-20 text-[13px] text-[var(--foreground)] shrink-0">端口<SettingsHelp label="MCP 端口" text="端口被占用时，会自动向上寻找可用端口。" /></span>
-                  <input type="number" class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-input)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
+                <!-- 从属开关与端口放进一个框:与下面的分组同一套边界,
+                     两行之间用分隔线,像正常的设置行 -->
+                <div class="mt-3 rounded-[var(--radius)]" style="border: 1px solid var(--border);">
+                  <div class="px-3 py-2">
+                    <label class="switch switch-row">
+                      <input type="checkbox" bind:checked={editShowMcpTab} />
+                      <span class="switch-track"></span>
+                      <span class="switch-label">显示 MCP 日志标签页</span>
+                    </label>
+                  </div>
+                  <div class="flex items-center gap-3 px-3 py-2" style="border-top: 1px solid var(--border);">
+                    <span class="flex items-center gap-1 w-20 text-[13px] text-[var(--foreground)] shrink-0">端口<SettingsHelp label="MCP 端口" text="端口被占用时，会自动向上寻找可用端口。修改后需重启应用生效。" /></span>
+                    <input type="number" class="w-24 px-2 py-1 text-[13px] rounded border border-[var(--border)] bg-[var(--background-input)] text-[var(--foreground)]" bind:value={editMcpPort} min="1024" max="65535" />
+                  </div>
                 </div>
 
-              {/if}
               <SettingsGroup label="客户端接入" variant="padded">
                 <McpSetup />
               </SettingsGroup>

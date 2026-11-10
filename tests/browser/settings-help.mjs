@@ -11,6 +11,7 @@ await withHeadlessBrowser(async ({ call, fresh, evaluate, until, click, delay, s
   assert.ok(await evaluate(`Boolean(${trigger})`), 'Module heading has a help button');
   assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'), false);
   await evaluate(`${trigger}.dispatchEvent(new PointerEvent('pointerenter')); persistenceTest.tick()`);
+  assert.equal(await evaluate('Boolean(document.querySelector("[role=tooltip]"))'), false, 'Hover waits before showing help');
   await until('Boolean(document.querySelector("[role=tooltip]"))');
   assert.ok(await evaluate('document.querySelector("[role=tooltip]").textContent.includes("关闭后隐藏数据处理入口")'));
   await evaluate(`${trigger}.dispatchEvent(new PointerEvent('pointerleave'))`);
