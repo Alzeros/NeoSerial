@@ -4,6 +4,7 @@
   import { RefreshCw, Download, Rocket } from 'lucide-svelte';
   import { onMount } from 'svelte';
   import { updateView, watchUpdates, setUpdatePreferences, recordUpdate } from '$lib/updates.svelte';
+  import SettingsHelp from '$components/ui/SettingsHelp.svelte';
 
   // 版本号由父组件(SettingsDialog 已懒加载)传入,避免卡片重复请求。
   let { version = '' }: { version?: string } = $props();
@@ -261,12 +262,17 @@
     </button>
   {/if}
   <div class="mt-3 pt-3 border-t text-left" style="border-color: var(--border);">
-    <label class="flex items-center gap-2 text-[12px] cursor-pointer">
-      <input type="checkbox" checked={updateView.settings.auto_check} disabled={!updateView.ready || savingPreference}
-        onchange={(event) => { void setPreference({ auto_check: event.currentTarget.checked }); }} />
-      自动检查更新
-    </label>
-    <p class="mt-1 text-[11px] leading-relaxed" style="color: var(--muted-foreground);">启动后后台检查，有更新时在标题栏提醒；不会自动下载安装。此项修改立即保存。</p>
+    <!-- 开关与设置页其余开关同形(标签左、轨道贴右);说明压进感叹号气泡,
+         卡片上只留一行可操作项 -->
+    <div class="flex items-center gap-1">
+      <label class="switch switch-row">
+        <input type="checkbox" checked={updateView.settings.auto_check} disabled={!updateView.ready || savingPreference}
+          onchange={(event) => { void setPreference({ auto_check: event.currentTarget.checked }); }} />
+        <span class="switch-track"></span>
+        <span class="switch-label">自动检查更新</span>
+      </label>
+      <SettingsHelp icon="alert" label="自动检查更新" text="启动后后台检查，有更新时在标题栏提醒；不会自动下载安装。此项修改立即保存。" />
+    </div>
     {#if preferenceError || updateView.error}
       <p class="mt-1 text-[11px]" role="alert" style="color: var(--error);">{preferenceError || updateView.error}</p>
     {/if}

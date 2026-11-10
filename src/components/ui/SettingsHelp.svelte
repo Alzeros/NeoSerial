@@ -4,9 +4,9 @@
 
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { Info } from 'lucide-svelte';
+  import { Info, CircleAlert } from 'lucide-svelte';
 
-  let { label, text }: { label: string; text: string } = $props();
+  let { label, text, icon = 'info' }: { label: string; text: string; icon?: 'info' | 'alert' } = $props();
   const id = `settings-help-${++nextId}`;
   let trigger: HTMLButtonElement;
   let tooltip = $state<HTMLDivElement>();
@@ -88,7 +88,7 @@
   aria-label={`${label}说明`} aria-describedby={visible ? id : undefined}
   onpointerenter={show} onpointerleave={scheduleHide} onfocus={show} onblur={scheduleHide}
   onclick={() => { if (pinned) close(); else { pinned = true; show(); } }}>
-  <Info size={14} aria-hidden="true" />
+  {#if icon === 'alert'}<CircleAlert size={14} aria-hidden="true" />{:else}<Info size={14} aria-hidden="true" />{/if}
 </button>
 {#if visible}
   <div bind:this={tooltip} use:position {id} role="tooltip" class="settings-help-tooltip"
