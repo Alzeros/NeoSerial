@@ -1427,32 +1427,34 @@
             <!-- 日志显示:只管日志长什么样,改动即时预览到主窗口;「取消」靠
                  origFontLatin / origFontCJK / origDirLabel 回滚。内容不多,不折叠 -->
             <SettingsGroup label="显示" help="英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。" variant="padded">
-              <!-- 英文字体 -->
-              <div class="flex items-center gap-3 mb-4">
-                <span class="w-16 text-[13px] text-[var(--foreground)]">英文字体</span>
-                <select
-                  class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                  value={editFontLatin}
-                  onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
-                >
-                  {#each logFontLatinPresets as p}
-                    <option value={p.value}>{p.label}</option>
-                  {/each}
-                </select>
-              </div>
-
-              <!-- 中文字体 -->
-              <div class="flex items-center gap-3 mb-4">
-                <span class="w-16 text-[13px] text-[var(--foreground)]">中文字体</span>
-                <select
-                  class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
-                  value={editFontCJK}
-                  onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
-                >
-                  {#each logFontCJKPresets as p}
-                    <option value={p.value}>{p.label}</option>
-                  {/each}
-                </select>
+              <!-- 字体:两列等宽,每列内部「标签 + 下拉框」间距一致;
+                   下拉框固定 150px(不撑满整列),选中文字居中;
+                   左内边距补到与右侧箭头留白一致,视觉上才是正中 -->
+              <div class="grid grid-cols-2 gap-x-5 gap-y-3 mb-4">
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="shrink-0 text-[13px] text-[var(--foreground)]">英文字体</span>
+                  <select
+                    class="w-[150px] shrink-0 text-center [text-align-last:center] pl-7"
+                    value={editFontLatin}
+                    onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
+                  >
+                    {#each logFontLatinPresets as p}
+                      <option value={p.value}>{p.label}</option>
+                    {/each}
+                  </select>
+                </div>
+                <div class="flex items-center gap-2 min-w-0">
+                  <span class="shrink-0 text-[13px] text-[var(--foreground)]">中文字体</span>
+                  <select
+                    class="w-[150px] shrink-0 text-center [text-align-last:center] pl-7"
+                    value={editFontCJK}
+                    onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
+                  >
+                    {#each logFontCJKPresets as p}
+                      <option value={p.value}>{p.label}</option>
+                    {/each}
+                  </select>
+                </div>
               </div>
 
               <!-- 字号 -->
@@ -1498,12 +1500,25 @@
                 </div>
               </div>
 
-              <!-- 预览 -->
-              <div class="mt-4 p-3 rounded border" style="border-color: var(--border); background: var(--background-data); font-family: var(--log-font-family); font-size: {editFontSize}px; line-height: {editLineHeight};">
-                <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.362 AT</div>
-                <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.484 OK</div>
-                <div>{editDirLabel === 'full' ? '发送' : 'Tx'} 10:39:47.545 AT+CSQ</div>
-                <div>{editDirLabel === 'full' ? '接收' : 'Rx'} 10:39:47.612 模块就绪</div>
+              <!-- 预览:按主窗口日志区的实际排版还原——方向徽章(dir-badge,按 tx/rx 着色)
+                   + 等宽时间戳 + 右侧竖线分隔 + 正文;字体/字号/行高实时联动。 -->
+              <div class="mt-4 p-3 rounded border" style="border-color: var(--border); background: var(--background-data);">
+                <div style="font-family: var(--log-font-family); font-size: {editFontSize}px; line-height: {editLineHeight};">
+                  {#each [
+                    { dir: 'tx', ts: '10:39:47.362', text: 'AT' },
+                    { dir: 'rx', ts: '10:39:47.484', text: 'OK' },
+                    { dir: 'tx', ts: '10:39:47.545', text: 'AT+CSQ' },
+                    { dir: 'rx', ts: '10:39:47.612', text: '模块就绪' },
+                  ] as sample (sample.ts)}
+                    <div class="flex px-1 py-px">
+                      <div class="flex items-baseline gap-2 shrink-0 pr-2 mr-2 border-r border-[var(--border)]">
+                        <span class="dir-badge" data-dir={sample.dir}>{editDirLabel === 'full' ? (sample.dir === 'tx' ? '发送' : '接收') : (sample.dir === 'tx' ? 'Tx' : 'Rx')}</span>
+                        <span class="tabular-nums" style="color: var(--muted-foreground);">{sample.ts}</span>
+                      </div>
+                      <span class="break-all whitespace-pre-wrap">{sample.text}</span>
+                    </div>
+                  {/each}
+                </div>
               </div>
             </SettingsGroup>
           {:else if activeSection === 'appearance'}
@@ -1645,7 +1660,7 @@
               <div class="flex items-center gap-3 mb-4">
                 <span class="w-20 text-[13px] text-[var(--foreground)] shrink-0">字体</span>
                 <select
-                  class="flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[13px] focus-visible:outline-none focus-visible:border-[var(--primary)]"
+                  class="flex-1 min-w-0"
                   value={editQcFontFamily}
                   onchange={(e) => (editQcFontFamily = (e.target as HTMLSelectElement).value)}
                 >
@@ -1735,7 +1750,7 @@
                   <Collapsible title="默认参数" help="首次使用时生效；已有草稿可在工具中点击“使用默认编码”。" summary={codecEncodingLabel(editCodecDefaultEncoding)} bind:open={openCodecDefaults}>
                     <div class="flex items-center gap-3 text-[13px]">
                       <label for="settings-codec-encoding" class="w-24 shrink-0">默认文本编码</label>
-                      <select id="settings-codec-encoding" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editCodecDefaultEncoding}>
+                      <select id="settings-codec-encoding" class="min-w-0 flex-1" bind:value={editCodecDefaultEncoding}>
                         {#each CODEC_ENCODINGS as option}<option value={option.value}>{option.label}</option>{/each}
                       </select>
                     </div>
@@ -1764,13 +1779,13 @@
                       </div>
                       <div class="flex items-center gap-3">
                         <label for="settings-sms-encoding" class="w-24 shrink-0">默认短信编码</label>
-                        <select id="settings-sms-encoding" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editSmsDefaultEncoding}>
+                        <select id="settings-sms-encoding" class="min-w-0 flex-1" bind:value={editSmsDefaultEncoding}>
                           {#each SMS_ENCODING_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}
                         </select>
                       </div>
                       <div class="flex items-center gap-3">
                         <label for="settings-sms-validity" class="w-24 shrink-0">默认有效期</label>
-                        <select id="settings-sms-validity" class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5" bind:value={editSmsDefaultValidity}>
+                        <select id="settings-sms-validity" class="min-w-0 flex-1" bind:value={editSmsDefaultValidity}>
                           {#each SMS_VALIDITY_OPTIONS as option}<option value={option.value}>{option.label}</option>{/each}
                           {#if !SMS_VALIDITY_OPTIONS.some(option => option.value === editSmsDefaultValidity)}<option value={editSmsDefaultValidity}>自定义（{editSmsDefaultValidity}）</option>{/if}
                         </select>

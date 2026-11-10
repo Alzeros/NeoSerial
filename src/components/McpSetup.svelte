@@ -125,14 +125,14 @@
 
     <div class="flex flex-wrap items-center gap-2 mt-4 mb-2">
       <label class="text-[12px]" for="mcp-client">客户端</label>
-      <select id="mcp-client" bind:value={client} class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[12px]">
+      <select id="mcp-client" bind:value={client} class="min-w-0 flex-1 text-[12px]">
         {#each MCP_CLIENTS as option}<option value={option.value}>{option.label}</option>{/each}
       </select>
     </div>
     {#if client !== 'generic'}
       <div class="flex items-center gap-2 mb-2">
         <label class="text-[12px]" for="mcp-scope">生效范围</label>
-        <select id="mcp-scope" bind:value={scope} class="min-w-0 flex-1 rounded border border-[var(--border)] bg-[var(--background-input)] px-2 py-1.5 text-[12px]">
+        <select id="mcp-scope" bind:value={scope} class="min-w-0 flex-1 text-[12px]">
           <option value="user">{client === 'vscode' ? '当前 VS Code 配置文件' : '当前用户 · 各项目可用'}</option>
           <option value="project">{client === 'claude' ? '当前项目 · 仅自己' : '仅当前项目'}</option>
         </select>
