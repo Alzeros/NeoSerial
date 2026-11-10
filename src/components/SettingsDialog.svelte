@@ -1509,49 +1509,48 @@
               </div>
             </SettingsGroup>
           {:else if activeSection === 'appearance'}
-            <!-- 外观：只有主题。主题卡片自带边框,这一组只有组名不画框(bare) -->
+            <!-- 外观：只有主题。主题卡片自带边框,这一组只有组名不画框(bare)。
+                 三列紧凑行卡:色块 32px、名称与色值两行,卡片高度和其它设置的
+                 行高接近,不再是一块块大色板;选中自定义时「编辑配色」补第 6 格。 -->
             <SettingsGroup label="主题" help="选择应用的整体配色方案，点击即时预览。" variant="bare">
-            <div class="grid grid-cols-2 gap-3">
+            <div class="grid grid-cols-3 gap-3">
               {#each themeMeta as t}
                 <button
-                  class="flex items-center gap-3 rounded-lg border-2 p-3 transition-all cursor-pointer {editTheme === t.key
+                  class="flex items-center gap-2.5 rounded-lg border-2 px-2.5 py-2 text-left transition-all cursor-pointer {editTheme === t.key
                     ? 'border-[var(--primary)]'
                     : 'border-[var(--border)] hover:border-[var(--border-strong)]'}"
                   onclick={() => selectTheme(t.key)}
                 >
-                  <!-- 预览色块：背景色 + 强调色圆点 -->
-                  <div class="relative w-10 h-10 rounded-md flex-shrink-0" style="background: {t.bg};">
-                    <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {t.accent};"></div>
+                  <!-- 预览色块：背景色 + 强调色圆点;浅色主题与页面同底,靠边框区分 -->
+                  <div class="relative h-8 w-8 shrink-0 rounded-md border" style="background: {t.bg}; border-color: var(--border);">
+                    <div class="absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full" style="background: {t.accent};"></div>
                   </div>
-                  <div class="flex flex-col items-start">
-                    <span class="text-[13px] font-medium text-[var(--foreground)]">{t.label}</span>
+                  <div class="flex min-w-0 flex-col">
+                    <span class="truncate text-[13px] font-medium text-[var(--foreground)]">{t.label}</span>
                     <span class="text-[11px] text-[var(--muted-foreground)]">{t.accent}</span>
                   </div>
                 </button>
               {/each}
               <!-- 自定义主题卡片：预览色块跟随当前编辑中的色板 -->
               <button
-                class="flex items-center gap-3 rounded-lg border-2 p-3 transition-all cursor-pointer {editTheme === 'custom'
+                class="flex items-center gap-2.5 rounded-lg border-2 px-2.5 py-2 text-left transition-all cursor-pointer {editTheme === 'custom'
                   ? 'border-[var(--primary)]'
                   : 'border-[var(--border)] hover:border-[var(--border-strong)]'}"
                 onclick={() => selectTheme('custom')}
               >
-                <div class="relative w-10 h-10 rounded-md flex-shrink-0 border border-[var(--border)]" style="background: {editCustom['background']};">
-                  <div class="absolute bottom-1 right-1 w-3 h-3 rounded-full" style="background: {editCustom['primary']};"></div>
+                <div class="relative h-8 w-8 shrink-0 rounded-md border" style="background: {editCustom['background']}; border-color: var(--border);">
+                  <div class="absolute bottom-0.5 right-0.5 h-2 w-2 rounded-full" style="background: {editCustom['primary']};"></div>
                 </div>
-                <div class="flex flex-col items-start">
-                  <span class="text-[13px] font-medium text-[var(--foreground)]">自定义</span>
+                <div class="flex min-w-0 flex-col">
+                  <span class="truncate text-[13px] font-medium text-[var(--foreground)]">自定义</span>
                   <span class="text-[11px] text-[var(--muted-foreground)]">自己调配色板</span>
                 </div>
               </button>
-              <!-- 选中自定义时：右列空位放编辑器入口，与左侧卡片同尺寸 -->
+              <!-- 选中自定义时：第 6 格放编辑器入口,与主题卡片同高 -->
               {#if editTheme === 'custom'}
-                <div class="flex items-center gap-3 rounded-lg border-2 border-dashed p-3" style="border-color: var(--border);">
-                  <div class="flex-1 min-w-0">
-                    <div class="text-[13px] font-medium text-[var(--foreground)]">编辑配色</div>
-                    <div class="text-[11px] text-[var(--muted-foreground)]">实时预览</div>
-                  </div>
-                  <button class="btn btn-primary flex-shrink-0" style="padding: 4px 10px; font-size: 12px; white-space: nowrap;" disabled={saving} onclick={openThemeEditorWindow}>
+                <div class="flex items-center gap-2 rounded-lg border-2 border-dashed px-2.5 py-2" style="border-color: var(--border);">
+                  <span class="flex-1 text-[13px] font-medium text-[var(--foreground)]">编辑配色</span>
+                  <button class="btn btn-primary shrink-0" style="padding: 2px 10px; font-size: 12px; white-space: nowrap;" disabled={saving} onclick={openThemeEditorWindow}>
                     打开 →
                   </button>
                 </div>
