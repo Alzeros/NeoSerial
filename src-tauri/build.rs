@@ -3,6 +3,8 @@ fn main() {
     // 声明依赖,改了环境变量能触发重新编译,不然会拿着上次编进去的值。
     println!("cargo:rerun-if-env-changed=NEOSERIAL_KB_BASE_URL");
     println!("cargo:rerun-if-env-changed=NEOSERIAL_KB_API_KEY");
+    // 图标会嵌入原生程序；只改图片时也要重新生成窗口图标和 Windows EXE 资源。
+    println!("cargo:rerun-if-changed=icons");
     // DPI 模式必须在创建任何 HWND 前确定。默认构建写入系统 DPI 的 exe manifest，
     // 避免应用启动后再调用 SetProcessDpiAwareness 被框架已设的模式拒绝。
     println!("cargo:rerun-if-changed=windows-system-dpi.manifest");
