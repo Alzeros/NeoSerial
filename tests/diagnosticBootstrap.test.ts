@@ -14,7 +14,7 @@ const core = load(`./fixtures/tauri-core-${fixtureVersion}.js`);
 const transport = load(`./fixtures/tauri-ipc-protocol-${fixtureVersion}.js`);
 
 for (const os of ['windows', 'macos', 'linux']) test(`real Tauri ${os} bootstrap preserves readonly methods, calls, callbacks, channels and fallback transport`, async t => {
-  assert.equal(load('../src-tauri/Cargo.lock').match(/\[\[package\]\]\nname = "tauri"\nversion = "([^"]+)"/)?.[1], fixtureVersion);
+  assert.equal(load('../src-tauri/Cargo.lock').match(/\[\[package\]\]\r?\nname = "tauri"\r?\nversion = "([^"]+)"/)?.[1], fixtureVersion);
   const records: { kind: string; data: any }[] = [];
   const nativeCalls: string[] = [];
   let failFetch = false;
