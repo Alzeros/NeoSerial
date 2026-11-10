@@ -163,13 +163,14 @@
 
     <!-- 右侧按钮:按状态切换文案/样式。downloading/installing 不显示按钮
          (提示移到下方进度/安装行),其余态:
-           - idle(含 latest 反馈)/ error:检查更新 / 重试,次要样式(非强调色)
+           - idle(含 latest 反馈)/ error:检查更新 / 重试,次级小按钮 + 强调色文字,
+             与下方「导出诊断日志」「打开」同一档尺寸
            - checking:文字变"检查中…"保持可点(忽略重复触发)
-           - available:立即更新,accent 强调色,与次要按钮形成视觉区分 -->
+           - available:立即更新,实心强调色,与次级按钮形成视觉区分 -->
     {#if status.kind === 'idle'}
       <button
-        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80 shrink-0"
-        style="color: var(--primary);"
+        class="btn btn-secondary inline-flex items-center gap-1.5 shrink-0"
+        style="font-size: 12px; padding: 2px 10px; color: var(--primary);"
         onclick={checkUpdate}
       >
         <RefreshCw size={13} />
@@ -177,8 +178,8 @@
       </button>
     {:else if status.kind === 'checking'}
       <button
-        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md shrink-0"
-        style="color: var(--muted-foreground);"
+        class="btn btn-secondary inline-flex items-center gap-1.5 shrink-0"
+        style="font-size: 12px; padding: 2px 10px; color: var(--muted-foreground);"
         onclick={checkUpdate}
       >
         <RefreshCw size={13} class="animate-spin" />
@@ -186,8 +187,8 @@
       </button>
     {:else if status.kind === 'available'}
       <button
-        class="flex items-center justify-center gap-1.5 text-[12px] font-medium px-3 py-1.5 rounded-md transition-colors hover:opacity-90 shrink-0"
-        style="background: var(--primary); color: var(--primary-foreground);"
+        class="btn btn-primary inline-flex items-center justify-center gap-1.5 shrink-0"
+        style="font-size: 12px; padding: 2px 10px;"
         onclick={downloadAndInstall}
       >
         <Download size={13} />
@@ -195,8 +196,8 @@
       </button>
     {:else if status.kind === 'error'}
       <button
-        class="flex items-center gap-1.5 text-[12px] px-2.5 py-1 rounded-md transition-colors hover:opacity-80 shrink-0"
-        style="color: var(--primary);"
+        class="btn btn-secondary inline-flex items-center gap-1.5 shrink-0"
+        style="font-size: 12px; padding: 2px 10px; color: var(--primary);"
         onclick={checkUpdate}
       >
         <RefreshCw size={13} />

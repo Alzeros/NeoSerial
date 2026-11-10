@@ -1113,7 +1113,7 @@
   <div
     bind:this={diagnosticRoot}
     data-diagnostic-control="settings-page"
-    class={standalone ? 'flex h-screen w-screen overflow-hidden' : 'fixed inset-0 z-[100] flex items-center justify-center'}
+    class={standalone ? 'settings-window flex h-screen w-screen overflow-hidden' : 'settings-window fixed inset-0 z-[100] flex items-center justify-center'}
     style={standalone ? 'background: var(--background);' : 'background: var(--overlay-mask);'}
   >
     <div
@@ -1689,7 +1689,7 @@
                         <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]"
                           checked={!editHiddenDataTools.includes(option.value)}
                           onchange={(event) => setDataToolVisible(option.value, event.currentTarget.checked)} />
-                        <span>{option.label}</span>
+                        <span class="option-label">{option.label}</span>
                       </label>
                     {/each}
                   </div>
@@ -1707,7 +1707,7 @@
                             disabled={fixed}
                             onchange={(e) => setDataFillPatternVisible(option.value, (e.target as HTMLInputElement).checked)}
                           />
-                          <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
+                          <span class="option-label">{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
                         </label>
                       {/each}
                     </div>
@@ -1725,7 +1725,7 @@
                             disabled={fixed}
                             onchange={(e) => setChecksumAlgorithmVisible(option.value, (e.target as HTMLInputElement).checked)}
                           />
-                          <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
+                          <span class="option-label">{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
                         </label>
                       {/each}
                     </div>
@@ -1748,7 +1748,7 @@
                           <input type="checkbox" class="h-4 w-4 rounded accent-[var(--primary)]"
                             disabled={fixed} checked={fixed || !editHiddenCodecOperations.includes(option.value)}
                             onchange={(event) => setCodecOperationVisible(option.value, event.currentTarget.checked)} />
-                          <span>{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
+                          <span class="option-label">{option.label}{#if fixed}<span class="ml-1 text-[11px]">固定</span>{/if}</span>
                         </label>
                       {/each}
                     </div>

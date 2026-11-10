@@ -50,8 +50,9 @@
   </div>
   {#if open}
     <!-- inline 的 pt-2:按钮自带 py-2,hover 灰底会贴着第一行内容,这 8px 把两者分开。
-         row 的悬停底色在头部容器上,内容只需 2px 起步。 -->
-    <div data-collapse-content class={row ? 'pt-0.5 pb-3.5 pl-[31px] pr-3' : 'px-1 pt-2 pb-3'} inert={!open}
+         row 与头部一致用 6px:标题到内容 12px(6 头部 + 6 内容),
+         内容到分隔线 6px、分隔线到下一行标题 6px,组框上下边也都是 6px,四周间距一致。 -->
+    <div data-collapse-content class={row ? 'py-1.5 pl-[31px] pr-3' : 'px-1 pt-2 pb-3'} inert={!open}
       onintrostart={(event) => { event.currentTarget.inert = false; }}
       onoutrostart={(event) => { event.currentTarget.inert = true; }}
       transition:slide={{ duration: prefersReducedMotion.current ? 0 : 150 }}>

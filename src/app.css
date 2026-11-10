@@ -665,6 +665,27 @@ select option {
   order: 1;
 }
 
+/* 设置页的开关标签属于「选项标签」一级:13px / 400 / 正文色。
+   主窗口工具栏的 switch 更紧凑,标签由上面的 `label span` 规则压到 12px/500/次要色;
+   设置页不跟工具栏共用这一档,否则与旁边的普通选项标签差一号。 */
+.settings-window .switch-label {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: inherit;
+  white-space: normal;
+}
+
+/* 复选框的选项标签同上:继承外层 label 的 13px 与颜色,
+   不被全局 `label span` 的 12px/500/次要色压小。 */
+.settings-window .option-label {
+  color: inherit;
+  font-size: inherit;
+  font-weight: inherit;
+  letter-spacing: inherit;
+  white-space: normal;
+}
+
 /* 普通复选框（表格内小方框） */
 input[type="checkbox"]:not(.switch input) {
   accent-color: var(--primary);
