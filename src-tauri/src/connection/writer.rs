@@ -140,21 +140,22 @@ const WRITE_STALL_LIMIT: std::time::Duration = std::time::Duration::from_secs(3)
 /// 超时且零进展的写会重试(见 [`WRITE_STALL_LIMIT`]),连接已在断开(running=false)则不再重试。
 /// 返回 (已写出字节数, 首个错误)。
 fn write_all(port: &mut PortWriter, data: &[u8], running: &AtomicBool) -> (usize, Option<std::io::Error>) {
-    write_all_with(|d| port.write_data(d), data, running, WRITE_STALL_LIMIT)
+    write_all_with(|d| port.write_data(d), data, running, WRITE_STALL_LIMIT, std::time::Instant::now)
 }
 
-/// [`write_all`] 的可测试内核:`write` 抽象掉端口。
+/// [`write_all`] 的可测试内核:注入端口和单调时钟，测试无需依赖线程调度与真实 sleep。
 fn write_all_with(
     mut write: impl FnMut(&[u8]) -> std::io::Result<usize>,
     data: &[u8],
     running: &AtomicBool,
     stall_limit: std::time::Duration,
+    mut now: impl FnMut() -> std::time::Instant,
 ) -> (usize, Option<std::io::Error>) {
     let mut written = 0usize;
     // 第一次零进展超时的起点(取该次 write 发起时刻,这次等掉的时间也算进停顿)
     let mut stall_start: Option<std::time::Instant> = None;
     while written < data.len() {
-        let attempt = std::time::Instant::now();
+        let attempt = now();
         match write(&data[written..]) {
             Ok(0) => {
                 return (written, Some(std::io::Error::new(
@@ -169,7 +170,7 @@ fn write_all_with(
             Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) if e.kind() == std::io::ErrorKind::TimedOut => {
                 let since = *stall_start.get_or_insert(attempt);
-                if since.elapsed() >= stall_limit || !running.load(std::sync::atomic::Ordering::SeqCst) {
+                if now().duration_since(since) >= stall_limit || !running.load(std::sync::atomic::Ordering::SeqCst) {
                     return (written, Some(e));
                 }
             }
@@ -182,8 +183,9 @@ fn write_all_with(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
     use std::io::{Error, ErrorKind};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     fn timed_out() -> Error {
         Error::new(ErrorKind::TimedOut, "write 超时")
@@ -201,46 +203,56 @@ mod tests {
             &[0u8; 1024],
             &running,
             Duration::from_secs(3),
+            Instant::now,
         );
         assert_eq!((written, err.is_none()), (1024, true));
         assert_eq!(calls, 3, "两次超时后第三次写成功");
     }
 
     #[test]
-    fn test_stall_longer_than_limit_is_an_error() {
+    fn test_stall_limit_includes_the_first_attempt() {
         let running = AtomicBool::new(true);
+        let start = Instant::now();
+        let clock = Cell::new(start);
         let mut calls = 0;
         let (written, err) = write_all_with(
             |_| {
                 calls += 1;
-                std::thread::sleep(Duration::from_millis(30));
+                clock.set(clock.get() + Duration::from_millis(25));
                 Err(timed_out())
             },
             &[0u8; 1024],
             &running,
             Duration::from_millis(100),
+            || clock.get(),
         );
         assert_eq!(written, 0);
         assert_eq!(err.map(|e| e.kind()), Some(ErrorKind::TimedOut));
-        assert!((3..=6).contains(&calls), "约 100ms/30ms ≈ 4 次尝试后放弃,实际 {} 次", calls);
+        assert_eq!(calls, 4, "累计停顿达到上限时放弃，包含第一次 write 的等待时间");
+        assert_eq!(clock.get().duration_since(start), Duration::from_millis(100));
     }
 
     #[test]
     fn test_progress_resets_the_stall_clock() {
         // 每次超时前先短写 1 字节:有进展就不算卡住,哪怕总耗时远超 limit
         let running = AtomicBool::new(true);
+        let start = Instant::now();
+        let clock = Cell::new(start);
         let mut calls = 0;
         let (written, err) = write_all_with(
             |_| {
                 calls += 1;
-                std::thread::sleep(Duration::from_millis(15));
+                clock.set(clock.get() + Duration::from_millis(15));
                 if calls % 2 == 1 { Ok(1) } else { Err(timed_out()) }
             },
             &[0u8; 8],
             &running,
             Duration::from_millis(40),
+            || clock.get(),
         );
         assert_eq!((written, err.is_none()), (8, true));
+        assert_eq!(calls, 15);
+        assert_eq!(clock.get().duration_since(start), Duration::from_millis(225));
     }
 
     #[test]
@@ -252,6 +264,7 @@ mod tests {
             &[0u8; 1024],
             &running,
             Duration::from_secs(3),
+            Instant::now,
         );
         assert_eq!((written, calls), (0, 1));
         assert_eq!(err.map(|e| e.kind()), Some(ErrorKind::TimedOut));
@@ -266,6 +279,7 @@ mod tests {
             &[0u8; 1000],
             &running,
             Duration::from_secs(3),
+            Instant::now,
         );
         assert_eq!((written, err.is_none(), calls), (1000, true, 4));
 
@@ -274,6 +288,7 @@ mod tests {
             &[0u8; 10],
             &running,
             Duration::from_secs(3),
+            Instant::now,
         );
         assert_eq!(written, 0);
         assert_eq!(err.map(|e| e.kind()), Some(ErrorKind::BrokenPipe));
