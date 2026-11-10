@@ -1427,63 +1427,55 @@
             <!-- 日志显示:只管日志长什么样,改动即时预览到主窗口;「取消」靠
                  origFontLatin / origFontCJK / origDirLabel 回滚。内容不多,不折叠 -->
             <SettingsGroup label="显示" help="英文字体用于 ASCII/HEX 对齐（等宽），中文字体渲染中文内容，两者自动拼成回退栈，即时预览。" variant="padded">
-              <!-- 字体:两列等宽,每列内部「标签 + 下拉框」间距一致;
-                   下拉框固定 150px(不撑满整列),选中文字居中;
-                   左内边距补到与右侧箭头留白一致,视觉上才是正中 -->
-              <div class="grid grid-cols-2 gap-x-5 gap-y-3 mb-4">
-                <div class="flex items-center gap-2 min-w-0">
-                  <span class="shrink-0 text-[13px] text-[var(--foreground)]">英文字体</span>
-                  <select
-                    class="w-[150px] shrink-0 text-center [text-align-last:center] pl-7"
-                    value={editFontLatin}
-                    onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
-                  >
-                    {#each logFontLatinPresets as p}
-                      <option value={p.value}>{p.label}</option>
-                    {/each}
-                  </select>
-                </div>
-                <div class="flex items-center gap-2 min-w-0">
-                  <span class="shrink-0 text-[13px] text-[var(--foreground)]">中文字体</span>
-                  <select
-                    class="w-[150px] shrink-0 text-center [text-align-last:center] pl-7"
-                    value={editFontCJK}
-                    onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
-                  >
-                    {#each logFontCJKPresets as p}
-                      <option value={p.value}>{p.label}</option>
-                    {/each}
-                  </select>
-                </div>
-              </div>
+              <!-- 两行共用一个网格:标签列取「英文字体」与「字号 13px」中较宽的那个,
+                   下拉框和滑杆都从同一列开始、同为 130px,上下严格对齐。
+                   中间那列用 1fr 吸收剩余宽度,把第二组推到右内边距处。
+                   左右各留 8px 内缩:文字的字形边缘比下方的预览框更靠里一点,
+                   视觉上才不会显得贴着框边(下方是面、这里是字,同样边距字看着更挤)。 -->
+              <div class="grid items-center gap-x-2 gap-y-3 mb-4 px-2" style="grid-template-columns: 64px 130px 1fr max-content 130px;">
+                <span class="text-[13px] text-[var(--foreground)]">英文字体</span>
+                <select
+                  class="w-[130px] text-center [text-align-last:center] pl-2"
+                  value={editFontLatin}
+                  onchange={(e) => selectFontLatin((e.target as HTMLSelectElement).value)}
+                >
+                  {#each logFontLatinPresets as p}
+                    <option value={p.value}>{p.label}</option>
+                  {/each}
+                </select>
+                <span></span>
+                <span class="text-[13px] text-[var(--foreground)]">中文字体</span>
+                <select
+                  class="w-[130px] text-center [text-align-last:center] pl-2"
+                  value={editFontCJK}
+                  onchange={(e) => selectFontCJK((e.target as HTMLSelectElement).value)}
+                >
+                  {#each logFontCJKPresets as p}
+                    <option value={p.value}>{p.label}</option>
+                  {/each}
+                </select>
 
-              <!-- 字号 -->
-              <div class="flex items-center gap-3 mb-4">
-                <span class="w-16 text-[13px] text-[var(--foreground)]">字号</span>
+                <span class="flex items-center gap-1 whitespace-nowrap text-[13px] text-[var(--foreground)]">字号<span class="text-[var(--muted-foreground)] tnum">{editFontSize}px</span></span>
                 <input
                   type="range" min="10" max="22" step="1"
-                  class="flex-1 accent-[var(--primary)]"
+                  class="w-[130px] accent-[var(--primary)]"
                   value={editFontSize}
                   oninput={(e) => changeFontSize(Number((e.target as HTMLInputElement).value))}
                 />
-                <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editFontSize}px</span>
-              </div>
-
-              <!-- 行高 -->
-              <div class="flex items-center gap-3 mb-4">
-                <span class="w-16 text-[13px] text-[var(--foreground)]">行高</span>
+                <span></span>
+                <span class="flex items-center gap-1 whitespace-nowrap text-[13px] text-[var(--foreground)]">行高<span class="text-[var(--muted-foreground)] tnum">{editLineHeight.toFixed(1)}</span></span>
                 <input
                   type="range" min="1.0" max="3.0" step="0.1"
-                  class="flex-1 accent-[var(--primary)]"
+                  class="w-[130px] accent-[var(--primary)]"
                   value={editLineHeight}
                   oninput={(e) => changeLineHeight(Number((e.target as HTMLInputElement).value))}
                 />
-                <span class="w-12 text-center text-[13px] text-[var(--muted-foreground)]">{editLineHeight.toFixed(1)}</span>
               </div>
 
-              <!-- 方向标签 -->
-              <div class="flex items-center gap-3 mb-4">
-                <span class="w-16 text-[13px] text-[var(--foreground)]">方向标签</span>
+              <!-- 方向标签:标签列宽与上面网格一致(64px + 8px 间距),
+                   Tx / Rx 按钮与上方的下拉框、滑杆左边缘对齐 -->
+              <div class="flex items-center gap-2 mb-4 px-2">
+                <span class="w-16 shrink-0 text-[13px] text-[var(--foreground)]">方向标签</span>
                 <div class="flex gap-2">
                   <button
                     class="px-3 py-1 rounded-md border text-[13px] transition-colors {editDirLabel === 'short'
