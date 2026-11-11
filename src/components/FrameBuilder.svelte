@@ -22,7 +22,7 @@
   } from '$lib/dataProcessing';
   import { hexSend, requestSuggestFill, cachedSettings } from '$lib/stores';
 
-  let { tool }: { tool: FrameBuilderTool } = $props();
+  let { tool = $bindable() }: { tool: FrameBuilderTool } = $props();
 
   // ---- 下拉选项 ----
   const lenSizeOpts = [

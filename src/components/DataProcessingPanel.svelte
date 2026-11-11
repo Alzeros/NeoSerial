@@ -1,6 +1,7 @@
 <script lang="ts">
   import { scriptModules, cachedSettings, settingsRequest, activeDataTool } from '$lib/stores';
   import { DATA_TOOL_OPTIONS, isFrameBuilderTool, isCodecTool, isSmsTool, initializeSmsToolDefaults, initializeCodecToolDefaults } from '$lib/dataProcessing';
+  import type { FrameBuilderTool } from '$lib/dataProcessing';
   import { codecDefaultEncoding } from '$lib/codec';
   import { smsDefaultsFromSettings } from '$lib/sms';
   import FrameBuilder from './FrameBuilder.svelte';
@@ -11,6 +12,11 @@
   const frameTool = $derived(module?.type === 'data_processing' ? module.tools.find(isFrameBuilderTool) : undefined);
   const codecTool = $derived(module?.type === 'data_processing' ? module.tools.find(isCodecTool) : undefined);
   const smsTool = $derived(module?.type === 'data_processing' ? module.tools.find(isSmsTool) : undefined);
+  function setFrameTool(tool: FrameBuilderTool) {
+    if (module?.type !== 'data_processing') return;
+    const index = module.tools.findIndex(isFrameBuilderTool);
+    if (index >= 0) module.tools[index] = tool;
+  }
   const visibleTools = $derived(DATA_TOOL_OPTIONS.filter((option) =>
     !(cachedSettings.value?.ui?.hidden_data_tools ?? []).includes(option.value),
   ));
@@ -49,7 +55,7 @@
   </div>
   <!-- 保持挂载以保留切换前的结果和展开状态，隐藏面板不参与布局。 -->
   <div class="min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style:display={selected === 'frame_builder' ? 'flex' : 'none'}>
-    {#if frameTool}<FrameBuilder tool={frameTool} />{:else}<p class="p-4 text-[13px] text-[var(--muted-foreground)]">帧构造器未就绪</p>{/if}
+    {#if frameTool}<FrameBuilder bind:tool={() => frameTool!, setFrameTool} />{:else}<p class="p-4 text-[13px] text-[var(--muted-foreground)]">帧构造器未就绪</p>{/if}
   </div>
   <div class="min-h-0 min-w-0 flex-1 flex-col overflow-hidden" style:display={selected === 'codec' ? 'flex' : 'none'}>
     {#if codecTool}

@@ -26,6 +26,50 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, delay }) => {
   assert.equal(await evaluate(`persistenceTest.calls.filter(c=>c.cmd==='save_sequence_auto').length`), saves, 'remote reload does not echo-save');
   console.log('PASS: hidden panels keep cross-window synchronization without an autosave loop');
 
+  await fresh('main');
+  await evaluate(`(() => {
+    window.frameOwnershipWarnings = [];
+    const warn = console.warn.bind(console);
+    console.warn = (...args) => {
+      if (args.some(arg => /ownership_invalid_(mutation|binding)/.test(String(arg)))) frameOwnershipWarnings.push(args.map(String).join(' '));
+      warn(...args);
+    };
+    window.frameTool = () => persistenceTest.stores.scriptModules.find(module => module.type === 'data_processing').tools.find(tool => tool.kind === 'frame_builder');
+    window.savedFrameTool = () => persistenceTest.sequence().find(module => module.type === 'data_processing').tools.find(tool => tool.kind === 'frame_builder');
+  })()`);
+  await click('数据处理');
+  await click('随机字符串');
+  const editFrameLength = async length => {
+    await evaluate(`(() => {
+      const input = document.querySelector('input[aria-label="数据长度（字节）"]');
+      input.value = ${length}; input.dispatchEvent(new Event('input', { bubbles: true }));
+      return persistenceTest.tick();
+    })()`);
+  };
+  await editFrameLength(32);
+  assert.equal(await evaluate('frameTool().config.data.length'), 32);
+  await click('存为模板');
+  await evaluate(`(() => {
+    const input = document.querySelector('input[placeholder="模板名称"]');
+    input.value = '绑定检查'; input.dispatchEvent(new Event('input', { bubbles: true }));
+    return persistenceTest.tick();
+  })()`);
+  await click('保存');
+  await editFrameLength(64);
+  await click('绑定检查');
+  assert.equal(await evaluate('frameTool().config.data.length'), 32, 'template loading updates the shared config');
+  await until(`savedFrameTool().config.data.length === 32 && savedFrameTool().templates.some(template => template.name === '绑定检查')`);
+  await evaluate(`document.querySelector('button[title="收起脚本面板"]').click();persistenceTest.tick()`);
+  await evaluate(`document.querySelector('button[title="展开脚本面板"]').click();persistenceTest.tick()`);
+  await click('数据处理');
+  assert.equal(await evaluate(`document.querySelector('input[aria-label="数据长度（字节）"]').value`), '32', 'remount keeps the edited config');
+  await evaluate(`window.previousFrameTool = frameTool(); persistenceTest.remoteCommand('FRAME RELOAD')`);
+  await until('frameTool() !== previousFrameTool');
+  await editFrameLength(48);
+  await until('savedFrameTool().config.data.length === 48');
+  assert.deepEqual(await evaluate('frameOwnershipWarnings'), [], 'real form edits, template loads and reloaded tools have no ownership warnings');
+  console.log('PASS: frame form bindings preserve templates, autosave and edits after remount/reload without ownership warnings');
+
   await fresh('settings');
   await click('雾灰松');
   await evaluate(`persistenceTest.holdNext('patch_settings')`);
