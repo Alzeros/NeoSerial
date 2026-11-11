@@ -1,11 +1,12 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
-  // 帧构造器表单 + 实时预览 + 发送/填入/模板。
+  import { X } from 'lucide-svelte';
+  // 帧构造器表单 + 实时预览 + 填入/模板。
   // 表单直接 bind tool.config.xxx($state 深响应):SequencePersistence 的自动保存 effect 深度
   // 订阅 scriptModules,改动即落盘,这里不做额外 clone。
   import CopyFeedback from './ui/CopyFeedback.svelte';
   import CustomSelect from './ui/CustomSelect.svelte';
-  import { buildFrame, send, type FrameResult } from '$lib/tauri';
+  import { buildFrame, type FrameResult } from '$lib/tauri';
   import {
     addTemplate,
     removeTemplate,
@@ -19,7 +20,7 @@
     type FrameBuilderTool,
     type DataSpec,
   } from '$lib/dataProcessing';
-  import { connected, windowPort, hexSend, requestSuggestFill, cachedSettings } from '$lib/stores';
+  import { hexSend, requestSuggestFill, cachedSettings } from '$lib/stores';
 
   let { tool }: { tool: FrameBuilderTool } = $props();
 
@@ -133,7 +134,6 @@
   // ---- 按键生成:点「生成」才调 build_frame;配置变更只打过期标,不自动重构 ----
   let built = $state<FrameResult | null>(null);
   let buildErr = $state<{ field: string | null; message: string } | null>(null);
-  let sending = $state(false);
   let building = $state(false);
   let seq = 0;
   // 生成成功时的配置快照;之后配置一变,快照对不上即旧预览「已过期」
@@ -154,13 +154,13 @@
   }
   async function doBuild() {
     const mySeq = ++seq;
+    expanded = false;
     building = true;
     copied = false;
     try {
       const r = await buildFrame(tool.config);
       if (mySeq !== seq) return; // 过期响应丢弃
       built = r;
-      expanded = false;
       builtJson = JSON.stringify(tool.config);
       buildErr = null;
     } catch (e) {
@@ -180,8 +180,9 @@
 
   /** 预览分段:先按 breakdown 切段;收起时裁到首 64 字节,展开显全帧,末段按截断边界收敛。
    *  在模板里现算容易越界,统一在这里算成纯数据。收起/展开状态驱动截断阈值。 */
-  // 展开显全帧;收起只显前 64 字节。生成新帧时复位为收起。
+  // 展开显全帧；收起时 HEX 预览 64 字节，数据文本预览 128 字节。
   const COLLAPSED_BYTES = 64;
+  const COLLAPSED_TEXT_BYTES = 128;
   let expanded = $state(false);
   const preview = $derived.by(() => {
     const r = built; // 闭包里直接用 built 会丢 null 收窄,先落局部量
@@ -202,7 +203,7 @@
   const dataText = $derived.by(() => {
     const r = built;
     if (!r) return null;
-    return dataTextPreview(r.hex, r.breakdown, expanded ? undefined : COLLAPSED_BYTES);
+    return dataTextPreview(r.hex, r.breakdown, expanded ? undefined : COLLAPSED_TEXT_BYTES);
   });
 
   // 分段四色:头/长度/数据/校验。title 供悬停核对每段字节数。
@@ -232,23 +233,8 @@
     return () => window.removeEventListener('keydown', onKeyDown);
   });
 
-  /** 未连接 / 构帧中 / 构帧出错 / 预览已过期 → 发送与填入都禁用 */
-  const canUseFrame = $derived(!sending && !building && !!built && !buildErr && !isStale);
-
-  // ---- 发送:发预览那一帧(所见即所发),hex 模式 + 行尾 None ----
-  async function handleSend() {
-    if (!canUseFrame || !connected.value) return;
-    sending = true;
-    try {
-      // 不给 windowPort 加空值守卫:main 窗口恒为 null,后端 resolve_port(None) 恰好
-      // 解析到那条唯一连接(同 QuickCommands 的 sendOne 写法)。
-      await send(windowPort.value!, built!.hex, 'None', true);
-    } catch (e) {
-      console.error('发送失败:', e);
-    } finally {
-      sending = false;
-    }
-  }
+  /** 构帧中 / 构帧出错 / 预览已过期 → 禁止填入 */
+  const canUseFrame = $derived(!building && !!built && !buildErr && !isStale);
 
   /** 整帧可无损转文本才返回字符串:任一字节不可显(帧头/长度/校验等二进制段)就返回 null */
   function frameAsText(hex: string): string | null {
@@ -277,7 +263,7 @@
     }
   }
 
-  // ---- 跟随预览模式复制完整内容，不受折叠预览的 64 字节限制 ----
+  // ---- 跟随预览模式复制完整内容，不受折叠预览的字节上限限制 ----
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   onDestroy(() => { if (copyTimer) clearTimeout(copyTimer); });
@@ -319,6 +305,21 @@
     cancelSave();
   }
 
+  // 与快捷指令页签一致：纵向滚轮转横滚，原生横向手势和 Ctrl 缩放保持浏览器行为。
+  function templateWheel(node: HTMLDivElement) {
+    const onWheel = (event: WheelEvent) => {
+      if (event.ctrlKey || node.scrollWidth <= node.clientWidth) return;
+      if (Math.abs(event.deltaX) > Math.abs(event.deltaY) || !event.deltaY) return;
+      event.preventDefault();
+      const unit = event.deltaMode === WheelEvent.DOM_DELTA_LINE
+        ? Number.parseFloat(getComputedStyle(node).lineHeight) || 16
+        : event.deltaMode === WheelEvent.DOM_DELTA_PAGE ? node.clientWidth : 1;
+      node.scrollLeft += event.deltaY * unit;
+    };
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return { destroy: () => node.removeEventListener('wheel', onWheel) };
+  }
+
   // 模板删除用原位两段式确认，避免小号 × 误触后立即丢失模板。
   let armedTemplateDelete = $state<string | null>(null);
   function cancelTemplateDelete() {
@@ -341,6 +342,32 @@
 </script>
 
 <svelte:window onclick={cancelTemplateDelete} onkeydown={handleTemplateDeleteKeydown} />
+
+{#snippet copyButton()}
+  <button
+    class="inline-flex h-6 shrink-0 items-center justify-center rounded-md border border-[var(--border-strong)] bg-[var(--background-input)] px-2 text-[12px] transition-colors cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {copied ? 'text-[var(--primary)]' : 'text-[var(--foreground-secondary)] hover:border-[var(--primary)] hover:text-[var(--foreground)]'}"
+    disabled={!built || isStale}
+    title={!built ? '请先生成数据' : isStale ? '帧已过期,请重新生成后再复制' : previewMode === 'text' ? '复制完整数据域文本到剪贴板' : '复制整帧 hex 到剪贴板'}
+    onclick={copyPreview}
+  ><CopyFeedback copied={copied && !isStale} /></button>
+{/snippet}
+
+{#snippet previewModeSwitch()}
+  <div role="group" aria-label="预览显示模式" class="ml-auto inline-flex h-6 shrink-0 items-center rounded-md border border-[var(--border-strong)] bg-[var(--background-deep)] p-0.5 text-[12px]">
+    <button
+      type="button"
+      aria-pressed={previewMode === 'hex'}
+      class="inline-flex h-full items-center justify-center rounded border px-2 leading-none transition-colors cursor-pointer {previewMode === 'hex' ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] font-medium shadow-sm' : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+      onclick={() => { previewMode = 'hex'; copied = false; }}
+    >Hex</button>
+    <button
+      type="button"
+      aria-pressed={previewMode === 'text'}
+      class="inline-flex h-full items-center justify-center rounded border px-2 leading-none transition-colors cursor-pointer {previewMode === 'text' ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] font-medium shadow-sm' : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+      onclick={() => { previewMode = 'text'; copied = false; }}
+    >数据文本</button>
+  </div>
+{/snippet}
 
 <div class="relative flex h-full min-h-0 flex-1 flex-col">
   <!-- 段开关:复选框控制四段展开/收起;不勾 = 该段不参与构帧(数据域必勾) -->
@@ -520,14 +547,16 @@
   {#if expanded && preview}
     <div class="flex min-h-0 flex-1 flex-col border-t border-[var(--border)] px-4 py-2.5" style="background: var(--background-deep);">
       <div class="mb-1 flex items-center gap-2">
-        <span class="text-[12px] text-[var(--muted-foreground)]">
+        {@render copyButton()}
+        <span class="min-w-0 flex-1 truncate text-[12px] text-[var(--muted-foreground)]">
           {#if previewMode === 'hex'}
             完整结果 · 共 {preview.totalBytes} 字节
           {:else}
             数据域文本 · {dataText?.totalBytes ?? 0} 字节（整帧 {preview.totalBytes} 字节）
           {/if}
         </span>
-        <button class="ml-auto px-1.5 py-0.5 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer" onclick={() => (expanded = false)}>返回设置</button>
+        {@render previewModeSwitch()}
+        <button class="shrink-0 px-1.5 py-0.5 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer" onclick={() => (expanded = false)}>返回设置</button>
       </div>
       <div class="min-h-0 flex-1 overflow-y-auto break-all font-mono text-[13px] leading-relaxed select-text {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
         {#if previewMode === 'hex'}
@@ -541,38 +570,19 @@
     </div>
   {/if}
 
-  <div class="border-t border-[var(--border)] px-4 py-2.5 relative z-0 {expanded && preview ? 'hidden' : ''}" style="background: var(--background-deep);">
-    <div class="mb-1 flex items-center gap-2">
-      <button
-        class="btn btn-primary generate-button"
-        disabled={building}
-        title="按当前设置生成一帧(随机模式每次生成新样本)"
-        onclick={() => doBuild()}
-      ><span>{building ? '生成中…' : '生成'}</span></button>
+  <div class="border-t border-[var(--border)] px-4 pt-1 pb-1.5 relative z-0 {expanded && preview ? 'hidden' : ''}" style="background: var(--background-deep);">
+    <div class="mb-0.5 flex items-center gap-2">
+      {@render copyButton()}
       {#if isStale}
-        <span class="text-[12px] text-[var(--warning)]">已过期 · 配置已改,请重新生成</span>
-      {:else if sending}
-        <span class="text-[12px] text-[var(--muted-foreground)]">发送中…</span>
+        <span class="min-w-0 truncate text-[12px] text-[var(--warning)]" title="已过期 · 配置已改,请重新生成">已过期 · 配置已改,请重新生成</span>
+      {/if}
+      {#if previewMode === 'hex' && preview?.truncated}
+        <button class="min-w-0 truncate text-[12px] text-[var(--primary)] hover:underline cursor-pointer" title="展开整帧共 {preview.totalBytes} 字节" onclick={() => (expanded = true)}>… 展开全部（整帧共 {preview.totalBytes} 字节）</button>
+      {:else if previewMode === 'text' && dataText?.truncated}
+        <button class="min-w-0 truncate text-[12px] text-[var(--primary)] hover:underline cursor-pointer" title="展开数据域共 {dataText.totalBytes} 字节" onclick={() => (expanded = true)}>… 展开全部（数据域共 {dataText.totalBytes} 字节）</button>
       {/if}
       <!-- Hex 显示完整帧；数据文本只显示数据域字符，避免与二进制帧头/校验混排。 -->
-      {#if built}
-        <button
-          class="ml-auto px-1.5 py-0.5 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {copied ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
-          disabled={isStale}
-          title={isStale ? '帧已过期,请重新生成后再复制' : previewMode === 'text' ? '复制完整数据域文本到剪贴板' : '复制整帧 hex 到剪贴板'}
-          onclick={copyPreview}
-        ><CopyFeedback copied={copied && !isStale} /></button>
-      {/if}
-      <div class="{built ? '' : 'ml-auto '}flex items-center gap-1 text-[12px]">
-        <button
-          class="px-1.5 py-0.5 rounded cursor-pointer {previewMode === 'hex' ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
-          onclick={() => { previewMode = 'hex'; copied = false; }}
-        >Hex</button>
-        <button
-          class="px-1.5 py-0.5 rounded cursor-pointer {previewMode === 'text' ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
-          onclick={() => { previewMode = 'text'; copied = false; }}
-        >数据文本</button>
-      </div>
+      {@render previewModeSwitch()}
     </div>
     {#if buildErr}
       <div
@@ -584,18 +594,13 @@
       </div>
     {/if}
     {#if preview}
-      <div class="break-all font-mono text-[13px] leading-relaxed max-h-[120px] overflow-y-auto {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
+      <div class="frame-preview-content break-all font-mono text-[13px] leading-relaxed overflow-y-auto select-text {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
         {#if previewMode === 'hex'}
           {#each preview.spans as s, i (i)}
             <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{s.text}</span>{' '}
           {/each}
         {:else if dataText}
           <span title="数据域 {dataText.totalBytes} 字节">{dataText.text}</span>
-        {/if}
-        {#if previewMode === 'hex' && preview.truncated}
-          <button class="text-[var(--primary)] hover:underline cursor-pointer" onclick={() => (expanded = true)}>… 展开全部（整帧共 {preview.totalBytes} 字节）</button>
-        {:else if previewMode === 'text' && dataText?.truncated}
-          <button class="text-[var(--primary)] hover:underline cursor-pointer" onclick={() => (expanded = true)}>… 展开全部（数据域共 {dataText.totalBytes} 字节）</button>
         {/if}
       </div>
     {:else if !buildErr}
@@ -604,23 +609,23 @@
   </div>
 
 
-  <!-- 操作条:发送 / 填入 / 存模板 / 模板列表 -->
-  <div class="flex items-center gap-2 border-t border-[var(--border)] px-3 py-2" style="background: var(--background-elevated);">
+  <!-- 操作条:生成 / 填入 / 存模板 / 模板列表 -->
+  <div class="flex min-w-0 shrink-0 items-center gap-2 border-t border-[var(--border)] px-3 py-2" style="background: var(--background-elevated);">
     <button
-      class="btn btn-primary h-8 leading-none"
-      disabled={!canUseFrame || !connected.value || sending}
-      title={!connected.value ? '未连接串口' : '发送预览中的帧'}
-      onclick={handleSend}
-    >发送</button>
+      class="btn btn-primary generate-button"
+      disabled={building}
+      title="按当前设置生成一帧(随机模式每次生成新样本)"
+      onclick={() => doBuild()}
+    ><span>{building ? '生成中…' : '生成'}</span></button>
     <button
-      class="h-8 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
+      class="h-8 shrink-0 whitespace-nowrap px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors disabled:opacity-40 disabled:cursor-not-allowed disabled:pointer-events-none"
       disabled={!canUseFrame}
-      title="把整帧 hex 填入底部发送框(自动切 HEX 模式)"
+      title="将完整帧填入主发送框，自动选择文本或 HEX 模式"
       onclick={handleFill}
     >填入发送框</button>
-    <div class="relative">
+    <div class="relative shrink-0">
       <button
-        class="h-8 px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
+        class="h-8 whitespace-nowrap px-3 rounded text-[12px] font-medium border border-[var(--border-strong)] bg-[var(--background-input)] text-[var(--foreground-secondary)] hover:text-[var(--foreground)] hover:border-[var(--primary)] transition-colors"
         onclick={openSave}
       >存为模板</button>
       {#if saveOpen}
@@ -653,52 +658,59 @@
         </div>
       {/if}
     </div>
-    <!-- 模板列表:单击载入,悬停右上角显删除。
-         overflow-x-auto 会把纵向也计算成 auto 并裁剪,删除按钮 × 向项框外溢出 6px 会被切掉,
-         故留 6px padding 容纳溢出,再用负 margin 抵消,底栏高度不变。 -->
-    <div class="flex min-w-0 flex-1 items-center justify-end gap-1.5 overflow-x-auto px-1.5 py-1.5 -mx-1.5 -my-1.5">
-      {#if tool.templates.length === 0}
-        <span class="text-[12px] text-[var(--muted-foreground)]">暂无模板</span>
-      {/if}
-      {#each tool.templates as t (t.name)}
-        <div class="group relative shrink-0">
-          {#if armedTemplateDelete === t.name}
-            <button
-              class="max-w-32 truncate rounded border px-2 py-1 text-[12px] font-medium cursor-pointer"
-              style="background: var(--error); border-color: var(--error); color: white;"
-              title="再次点击确认删除「{t.name}」"
-              onclick={(event) => confirmTemplateDelete(event, t.name)}
-            >确认删除</button>
-          {:else}
-            <button
-              class="max-w-32 truncate rounded border border-[var(--border)] bg-[var(--overlay-hover)] px-2 py-1 text-[12px] text-[var(--foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] cursor-pointer"
-              title="载入模板「{t.name}」"
-              onclick={() => loadTemplate(tool, t.name)}
-            >{t.name}</button>
-            <button
-              class="absolute -right-1.5 -top-1.5 hidden h-4 w-4 items-center justify-center rounded-full border text-[10px] leading-none text-[var(--error)] group-hover:flex cursor-pointer"
-              style="background: var(--background-elevated); border-color: var(--error);"
-              title="删除模板「{t.name}」"
-              onclick={(event) => armTemplateDelete(event, t.name)}
-            >×</button>
-          {/if}
-        </div>
-      {/each}
+    <!-- 滚动容器只占剩余宽度；内层不足时右对齐，超宽时从左侧起完整滚动。
+         内层留 8px padding，容纳居中于标签右上角的删除按钮。 -->
+    <div use:templateWheel class="frame-template-strip min-w-0 flex-1 overflow-x-auto overflow-y-hidden -my-2">
+      <div class="flex w-max min-w-full items-center justify-end gap-2 p-2">
+        {#if tool.templates.length === 0}
+          <span class="text-[12px] text-[var(--muted-foreground)]">暂无模板</span>
+        {/if}
+        {#each tool.templates as t (t.name)}
+          <div class="group relative flex shrink-0">
+            {#if armedTemplateDelete === t.name}
+              <button
+                class="max-w-32 truncate rounded border px-2 py-1 text-[12px] font-medium cursor-pointer"
+                style="background: var(--error); border-color: var(--error); color: white;"
+                title="再次点击确认删除「{t.name}」"
+                onclick={(event) => confirmTemplateDelete(event, t.name)}
+              >确认删除</button>
+            {:else}
+              <button
+                class="max-w-32 truncate rounded border border-[var(--border)] bg-[var(--overlay-hover)] px-2 py-1 text-[12px] text-[var(--foreground)] transition-colors hover:border-[var(--primary)] hover:text-[var(--primary)] cursor-pointer"
+                title="载入模板「{t.name}」"
+                onclick={() => loadTemplate(tool, t.name)}
+              >{t.name}</button>
+              <button
+                class="absolute right-0 top-0 hidden h-4 w-4 -translate-y-1/2 translate-x-1/2 items-center justify-center rounded-full border border-[var(--error)] bg-[var(--background-elevated)] p-0 text-[var(--error)] transition-colors hover:bg-[var(--error)] hover:text-white group-hover:flex cursor-pointer"
+                title="删除模板「{t.name}」"
+                aria-label="删除模板「{t.name}」"
+                onclick={(event) => armTemplateDelete(event, t.name)}
+              ><X size={10} strokeWidth={1.5} aria-hidden="true" /></button>
+            {/if}
+          </div>
+        {/each}
+      </div>
     </div>
   </div>
 
 </div>
 
 <style>
+  .frame-preview-content {
+    height: calc(4.875em + 8px);
+  }
+  .frame-template-strip::-webkit-scrollbar {
+    height: 5px;
+  }
   .generate-button {
     display: inline-flex;
     align-items: center;
     justify-content: center;
     flex-shrink: 0;
-    width: 96px;
-    height: 36px;
-    padding: 0 16px;
-    font-size: 14px;
+    width: 64px;
+    height: 32px;
+    padding: 0;
+    font-size: 13px;
     line-height: 20px;
   }
   .data-input {
