@@ -61,8 +61,55 @@
   });
 
   let previousRendered: LogLine[] | null = null;
+  let hexLayoutVersion = $state(0);
+  let previousHexLayout = 0;
   let suppressScroll = false;
   let userGestureUntil = 0;
+
+  // 共享一个观察器，按各行扣除行号、时间戳、标记后的实际内容宽度排 HEX。
+  // 保留行追加/淘汰时不重新测量所有记录；字体探针覆盖设置页的即时预览。
+  type HexWidth = { width: number; apply: (columns: number) => void };
+  const hexWidths = new Map<Element, HexWidth>();
+  let hexCharacterWidth = 0;
+  let hexResizeObserver: ResizeObserver | undefined;
+
+  function fitHex(record: HexWidth) {
+    if (record.width <= 0 || hexCharacterWidth <= 0) return;
+    const columns = [16, 8, 4, 2, 1].find(count =>
+      (count * 4 + (count > 8 ? 2 : 1)) * hexCharacterWidth + 1 <= record.width
+    ) ?? 1;
+    record.apply(columns);
+  }
+
+  function measureHex(node: HTMLElement, apply: ((columns: number) => void) | undefined) {
+    const stop = () => { hexResizeObserver?.unobserve(node); hexWidths.delete(node); };
+    const update = (next: typeof apply) => {
+      if (hexWidths.get(node)?.apply === next) return;
+      stop();
+      if (!next) return;
+      hexWidths.set(node, { width: 0, apply: next });
+      hexResizeObserver ??= new ResizeObserver(entries => {
+        for (const entry of entries) {
+          const record = hexWidths.get(entry.target);
+          if (record) { record.width = entry.contentRect.width; fitHex(record); }
+        }
+      });
+      hexResizeObserver.observe(node);
+    };
+    update(apply);
+    return { update, destroy: stop };
+  }
+
+  function measureHexFont(node: HTMLElement) {
+    const observer = new ResizeObserver(([entry]) => {
+      const width = entry.contentRect.width / 8;
+      if (width <= 0 || width === hexCharacterWidth) return;
+      hexCharacterWidth = width;
+      for (const record of hexWidths.values()) fitHex(record);
+    });
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
 
   function visibleAnchor() {
     if (!scrollContainer) return null;
@@ -78,8 +125,10 @@
     const rows = renderedLines;
     const following = autoScroll.value;
     const changed = rows !== previousRendered;
+    const layoutChanged = hexLayoutVersion !== previousHexLayout;
     previousRendered = rows;
-    if (!scrollContainer || (!changed && !following)) return;
+    previousHexLayout = hexLayoutVersion;
+    if (!scrollContainer || (!changed && !following && !layoutChanged)) return;
     const anchor = following ? null : visibleAnchor();
     suppressScroll = true;
     let cancelled = false;
@@ -185,7 +234,7 @@
       settings: `波特率 ${connectionParams.baudRate} / 数据位 ${connectionParams.dataBits} / 校验 ${connectionParams.parity} / 停止位 ${connectionParams.stopBits} / 流控 ${connectionParams.flowControl}`,
       mode: `${displayMode.value} / ${textEncoding.value}`,
       scope: selectedLines.length ? '选中记录及前后上下文（含被筛选隐藏的记录）' : '当前筛选结果（无额外上下文）',
-      render: renderLine, markers: markerLookup,
+      render: line => cachedRecord(line).canonical(), markers: markerLookup,
     });
   }
 
@@ -432,7 +481,7 @@
     const { testRe } = matcher;
     const indices: number[] = [];
     for (let i = 0; i < lines.length; i++) {
-      const text = renderLine(lines[i]);
+      const text = cachedRecord(lines[i]).canonical();
       if (testRe.test(text)) {
         indices.push(i);
       }
@@ -477,6 +526,49 @@
     return renderedLines[matchIndices[currentMatch]] === line;
   }
 
+  function highlightLine(line: LogLine, regex: RegExp): { text: string; match: boolean }[] {
+    const cached = cachedRecord(line);
+    const segments = highlightSegments(cached.canonical(), regex);
+    if (displayMode.value !== 'hex' || line.omitted_bytes !== undefined || cached.hexColumns() === 16) return segments;
+
+    // 搜索始终针对固定的 16 字节格式；将命中字符映射到当前显示行，
+    // 关键词跨过 8 字节分行时仍保留完整匹配和两侧高亮。
+    const ranges: { start: number; end: number }[] = [];
+    let offset = 0;
+    for (const segment of segments) {
+      if (segment.match) ranges.push({ start: offset, end: offset + segment.text.length });
+      offset += segment.text.length;
+    }
+    const matched = (position: number) => {
+      let low = 0, high = ranges.length;
+      while (low < high) {
+        const mid = (low + high) >>> 1;
+        if (ranges[mid].end <= position) low = mid + 1; else high = mid;
+      }
+      return low < ranges.length && ranges[low].start <= position;
+    };
+    const displayed: { text: string; match: boolean }[] = [];
+    let length = 0;
+    const text = renderHex(line, cached.hexColumns(), (part, source) => {
+      length += part.length;
+      for (let i = 0; i < part.length; i++) {
+        const match = source >= 0 && matched(source + i);
+        const previous = displayed.at(-1);
+        if (previous?.match === match) previous.text += part[i];
+        else displayed.push({ text: part[i], match });
+      }
+    });
+    // 与普通 HEX 渲染一致，去掉末尾换行和空白。
+    while (length > text.length && displayed.length) {
+      const last = displayed.at(-1)!;
+      const remove = Math.min(length - text.length, last.text.length);
+      last.text = last.text.slice(0, last.text.length - remove);
+      length -= remove;
+      if (!last.text) displayed.pop();
+    }
+    return displayed;
+  }
+
   // ============ 渲染 ============
 
   /** 解码器缓存：按编码 label 复用 TextDecoder，避免每条日志都新建（开销小但没必要） */
@@ -496,8 +588,14 @@
    * - 'utf8'：UTF-8 解码，非法字节用 � 替换，过滤控制字符
    * - 'gbk'：GBK 解码（TextDecoder label 'gbk'，WebView2/Chromium 支持）
    */
-  const renderCache = new Map<LogLine, { read: () => string; matches: () => boolean; dispose: () => void }>();
+  const renderCache = new Map<LogLine, {
+    read: () => string; canonical: () => string; matches: () => boolean;
+    hexColumns: () => number;
+    setHexColumns: (columns: number) => void; dispose: () => void;
+  }>();
   onDestroy(() => {
+    hexResizeObserver?.disconnect();
+    hexWidths.clear();
     for (const cached of renderCache.values()) cached.dispose();
     renderCache.clear();
   });
@@ -505,15 +603,23 @@
   function cachedRecord(line: LogLine) {
     let cached = renderCache.get(line);
     if (!cached) {
+      let columns = $state(16);
       let read = () => renderUncachedLine(line);
+      let canonical = read;
       let matches = () => matchesLog(line, filter, read);
       const dispose = $effect.root(() => {
-        const text = $derived(renderUncachedLine(line));
-        const accepted = $derived(matchesLog(line, filter, () => text));
+        // 筛选和文件导出保留固定格式，窗口缩放只改变屏幕排版。
+        const canonicalText = $derived(renderUncachedLine(line));
+        const text = $derived(displayMode.value === 'hex' && line.omitted_bytes === undefined && columns !== 16
+          ? renderHex(line, columns) : canonicalText);
+        const accepted = $derived(matchesLog(line, filter, () => canonicalText));
         read = () => text;
+        canonical = () => canonicalText;
         matches = () => accepted;
       });
-      cached = { read, matches, dispose };
+      cached = { read, canonical, matches, dispose, hexColumns: () => columns, setHexColumns: next => {
+        if (columns !== next) { columns = next; hexLayoutVersion++; }
+      } };
       renderCache.set(line, cached);
     }
     return cached;
@@ -548,24 +654,33 @@
    * HEX 显示：hex dump + ASCII 解析列，让用户直观看到字节对应的字符。
    * 格式: "41 54 0D 0A  AT.."
    */
-  function renderHex(line: LogLine): string {
+  function renderHex(line: LogLine, columns = 16, map?: (text: string, sourceOffset: number) => void): string {
     if (line.raw.length === 0) return '';
     let out = '';
-    for (let i = 0; i < line.raw.length; i += 16) {
-      const chunk = line.raw.slice(i, i + 16);
+    for (let i = 0; i < line.raw.length; i += columns) {
+      const chunk = line.raw.slice(i, i + columns);
+      // 固定格式每行 67 字符：49 位 HEX（含分组空格）+ 分隔空格 + 16 位 ASCII + 换行。
+      const canonicalBase = Math.floor(i / 16) * 67;
       let hexPart = '';
-      for (let j = 0; j < 16; j++) {
-        if (j < chunk.length) {
-          hexPart += chunk[j].toString(16).toUpperCase().padStart(2, '0') + ' ';
-        } else {
-          hexPart += '   ';
+      for (let j = 0; j < columns; j++) {
+        const cell = j < chunk.length ? chunk[j].toString(16).toUpperCase().padStart(2, '0') + ' ' : '   ';
+        hexPart += cell;
+        if (map) {
+          const canonicalColumn = (i + j) % 16;
+          map(cell, canonicalBase + canonicalColumn * 3 + (canonicalColumn >= 8 ? 1 : 0));
         }
-        if (j === 7) hexPart += ' '; // 两组 8 字节间额外空格
+        if (j === 7 && columns > 8) {
+          hexPart += ' '; // 两组 8 字节间额外空格
+          map?.(' ', canonicalBase + 24);
+        }
       }
       const ascii = chunk
         .map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : '.'))
         .join('');
       out += `${hexPart} ${ascii}\n`;
+      map?.(' ', i % 16 === 0 ? canonicalBase + 49 : -1);
+      map?.(ascii, canonicalBase + 50 + i % 16);
+      map?.('\n', (i + chunk.length) % 16 === 0 ? canonicalBase + 66 : -1);
     }
     return out.trimEnd();
   }
@@ -587,6 +702,10 @@
 
 <!-- 数据显示区：最干净的纸白，视觉重心 -->
 <div class="relative h-full overflow-hidden flex flex-col" data-theme-target="background-data" style="background: var(--background-data);" oncontextmenu={handleContextMenu}>
+  {#if displayMode.value === 'hex'}
+    <span use:measureHexFont aria-hidden="true" class="absolute invisible pointer-events-none whitespace-pre"
+      style="font-family: var(--log-font-family); font-size: var(--log-font-size);">00000000</span>
+  {/if}
   {#if showLogTools}
     <div class="flex shrink-0 items-center gap-3 border-b border-[var(--border)] px-3 py-1 text-[12px] text-[var(--muted-foreground)]" style="background: var(--background-elevated);">
       <button data-log-tools-toggle aria-expanded={toolsOpen} class="cursor-pointer hover:text-[var(--foreground)]" onclick={() => toolsOpen = !toolsOpen}>{toolsOpen ? '收起工具' : '筛选 / 工具'}</button>
@@ -711,11 +830,13 @@
         {#if markerLookup.has(line)}
           <span data-log-field data-log-marker class="mr-2 max-w-[12em] shrink-0 truncate rounded px-1 text-[12px] font-medium text-[var(--primary)]" style="background: var(--background-elevated);" title={markerLookup.get(line)}>标记：{markerLookup.get(line)}</span>
         {/if}
-        <span data-log-field class="break-all whitespace-pre-wrap {line.is_error ? 'text-[var(--error)]' : ''}">
+        <span data-log-field
+          use:measureHex={displayMode.value === 'hex' && line.omitted_bytes === undefined ? cachedRecord(line).setHexColumns : undefined}
+          class="{displayMode.value === 'hex' && line.omitted_bytes === undefined ? 'flex-1 min-w-0 whitespace-pre' : 'break-all whitespace-pre-wrap'} {line.is_error ? 'text-[var(--error)]' : ''}">
           {#if searchQuery && matchSet.has(line) && searchMatcher}
-            {#each highlightSegments(renderLine(line), searchMatcher.globalRe) as seg}
+            {#each highlightLine(line, searchMatcher.globalRe) as seg}
               {#if seg.match}
-                <mark style="background: var(--search-mark); color: inherit; border-radius: 2px; padding: 0 1px;">{seg.text}</mark>
+                <mark style="background: var(--search-mark); color: inherit; border-radius: 2px; padding: {displayMode.value === 'hex' ? '0' : '0 1px'};">{seg.text}</mark>
               {:else}
                 {seg.text}
               {/if}
