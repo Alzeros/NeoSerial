@@ -277,18 +277,22 @@
     }
   }
 
-  // ---- 复制整帧 hex:项目通用 navigator.clipboard 写法,复制成功 1.5s 显「已复制」 ----
+  // ---- 跟随预览模式复制完整内容，不受折叠预览的 64 字节限制 ----
   let copied = $state(false);
   let copyTimer: ReturnType<typeof setTimeout> | undefined;
   onDestroy(() => { if (copyTimer) clearTimeout(copyTimer); });
-  async function copyHex() {
+  async function copyPreview() {
     if (!built || isStale) return;
     const copiedResult = built;
+    const copiedMode = previewMode;
+    const text = copiedMode === 'text'
+      ? dataTextPreview(copiedResult.hex, copiedResult.breakdown).text
+      : copiedResult.hex;
     copied = false;
     if (copyTimer) clearTimeout(copyTimer);
     try {
-      await navigator.clipboard.writeText(copiedResult.hex);
-      if (built !== copiedResult || isStale) return;
+      await navigator.clipboard.writeText(text);
+      if (built !== copiedResult || isStale || previewMode !== copiedMode) return;
       copied = true;
       copyTimer = setTimeout(() => (copied = false), 1500);
     } catch {
@@ -555,18 +559,18 @@
         <button
           class="ml-auto px-1.5 py-0.5 rounded cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed {copied ? 'text-[var(--primary)]' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
           disabled={isStale}
-          title={isStale ? '帧已过期,请重新生成后再复制' : '复制整帧 hex 到剪贴板'}
-          onclick={copyHex}
+          title={isStale ? '帧已过期,请重新生成后再复制' : previewMode === 'text' ? '复制完整数据域文本到剪贴板' : '复制整帧 hex 到剪贴板'}
+          onclick={copyPreview}
         ><CopyFeedback copied={copied && !isStale} /></button>
       {/if}
       <div class="{built ? '' : 'ml-auto '}flex items-center gap-1 text-[12px]">
         <button
           class="px-1.5 py-0.5 rounded cursor-pointer {previewMode === 'hex' ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
-          onclick={() => (previewMode = 'hex')}
+          onclick={() => { previewMode = 'hex'; copied = false; }}
         >Hex</button>
         <button
           class="px-1.5 py-0.5 rounded cursor-pointer {previewMode === 'text' ? 'text-[var(--primary)] font-medium' : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'}"
-          onclick={() => (previewMode = 'text')}
+          onclick={() => { previewMode = 'text'; copied = false; }}
         >数据文本</button>
       </div>
     </div>

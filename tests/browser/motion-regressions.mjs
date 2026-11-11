@@ -18,6 +18,7 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, call, delay })
   await evaluate(`${collapse}.click(); persistenceTest.tick()`);
   await until('!document.querySelector("[data-collapse-content]")');
   await fresh('main');
+  await evaluate('persistenceTest.stores.cachedSettings.value.ui.show_mcp_tab = true; persistenceTest.tick()');
   await until('Boolean(document.querySelector("[data-module-indicator]"))');
   await click('数据处理');
   await until('document.querySelector("[data-module-tab][aria-current=page]")?.textContent.trim() === "数据处理"');
@@ -49,13 +50,52 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, call, delay })
   await until('document.body.innerText.includes("复制失败")');
   assert.equal(await evaluate('Boolean(document.querySelector("[data-copy-feedback][data-copied=true]"))'), false);
   await evaluate(`navigator.clipboard.writeText = async text => { window.copiedPayload = text; };
-    persistenceTest.reply('build_frame', { hex: '4849', total_len: 2, breakdown: [{ kind: 'data', offset: 0, len: 2 }] });`);
+    persistenceTest.reply('build_frame', { hex: '48 49', total_len: 2, breakdown: [{ kind: 'data', offset: 0, len: 2 }] });`);
   await click('帧构造器');
   await click('生成');
   await until(`Boolean(document.querySelector('button[title="复制整帧 hex 到剪贴板"]'))`);
   await evaluate(`document.querySelector('button[title="复制整帧 hex 到剪贴板"]').click()`);
   await until(`Boolean(document.querySelector('button[title="复制整帧 hex 到剪贴板"] [data-copied=true]'))`);
-  assert.equal(await evaluate('window.copiedPayload'), '4849');
+  assert.equal(await evaluate('window.copiedPayload'), '48 49');
+  await click('数据文本');
+  assert.equal(await evaluate('document.querySelector("[data-copy-feedback]").dataset.copied'), 'false', 'mode switches clear previous copy feedback');
+  await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
+  assert.equal(await evaluate('window.copiedPayload'), 'HI', 'text mode copies data characters');
+  assert.equal(await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').title`), '复制完整数据域文本到剪贴板');
+
+  // The collapsed preview shows only 64 bytes; copying must retain the whole data field.
+  const randomText = 'aB3dE5fG7h'.repeat(8);
+  const randomHex = [...Buffer.from(randomText)].map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+  await click('随机字符串');
+  await evaluate(`persistenceTest.stores.scriptModules.find(module => module.type === 'data_processing').tools.find(tool => tool.kind === 'frame_builder').config.data.length = 80;
+    persistenceTest.reply('build_frame', ${JSON.stringify({ hex: randomHex, total_len: 80, breakdown: [{ kind: 'data', offset: 0, len: 80 }] })}); persistenceTest.tick()`);
+  await click('生成');
+  await until(`document.querySelector('span[title="数据域 80 字节"]')?.textContent === ${JSON.stringify(randomText.slice(0, 64))}`);
+  await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
+  assert.equal(await evaluate('window.copiedPayload'), randomText, 'random text copy is not truncated');
+  await click('填入发送框');
+  assert.deepEqual(await evaluate(`({ text: persistenceTest.stores.suggestFillRequest.text, hex: persistenceTest.stores.hexSend.value })`), { text: randomText, hex: false });
+  await click('Hex');
+  await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
+  assert.equal(await evaluate('window.copiedPayload'), randomHex, 'HEX mode copies the complete frame');
+
+  const framedHex = `00 FF ${randomHex} 99`;
+  await evaluate(`(() => {
+    const config = persistenceTest.stores.scriptModules.find(module => module.type === 'data_processing').tools.find(tool => tool.kind === 'frame_builder').config;
+    config.header_hex = '00 FF'; config.checksum.algo = 'sum8';
+    persistenceTest.reply('build_frame', ${JSON.stringify({ hex: framedHex, total_len: 83, breakdown: [{ kind: 'header', offset: 0, len: 2 }, { kind: 'data', offset: 2, len: 80 }, { kind: 'checksum', offset: 82, len: 1 }] })});
+    return persistenceTest.tick();
+  })()`);
+  assert.equal(await evaluate('document.querySelector("[data-copy-feedback]").closest("button").disabled'), true, 'stale frames cannot be copied');
+  await click('生成');
+  await until('!document.querySelector("[data-copy-feedback]").closest("button").disabled');
+  await click('数据文本');
+  await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
+  assert.equal(await evaluate('window.copiedPayload'), randomText, 'text copy excludes binary headers and checksums');
+  await click('Hex');
+  await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
+  assert.equal(await evaluate('window.copiedPayload'), framedHex, 'HEX copy includes headers and checksums');
+  console.log('PASS: frame copy follows the preview mode and copies complete data from collapsed previews');
   await click('短信');
   await evaluate(`[...document.querySelectorAll('.sms-panel button')].find(button=>button.textContent.trim()==='生成 PDU').click(); persistenceTest.tick()`);
   await evaluate(`for (const [selector, value] of [['#sms-recipient','13800138000'],['#sms-text-input','hello']]) {
