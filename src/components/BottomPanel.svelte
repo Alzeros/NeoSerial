@@ -173,9 +173,13 @@
   // 点路径框：选/换日志文件路径（仅设路径，不自动开始记录）
   async function handleSelectLogPath() {
     try {
+      const now = new Date();
+      const pad = (value: number) => String(value).padStart(2, '0');
+      const date = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+      const time = `${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
       const selectedPath = await saveFileDialog(
         '保存日志文件',
-        `neoserial_${Date.now()}.log`,
+        `neoserial_${date}_${time}.log`,
         [{ name: '日志文件', extensions: ['log'] }, { name: '文本文件', extensions: ['txt'] }]
       );
       if (!selectedPath) return;

@@ -69,8 +69,8 @@ test('snippet carries explicit snapshot metadata, direction, timestamp, omission
   assert.match(text, /窗口当前设置/);
   assert.match(text, /历史可能跨连接/);
   assert.match(text, /2026-10-28T08:00:00.000Z/);
-  assert.match(text, /12:00:00\.001.*Tx.*AT/);
-  assert.match(text, /12:00:00\.002.*Rx.*OK/);
+  assert.match(text, /#1 \[Tx\] 12:00:00\.001 \| AT/);
+  assert.match(text, /#2 \[Rx\] 12:00:00\.002 \| OK/);
   assert.match(text, /标记.*重启后 首次响应/);
   assert.match(text, /已省略 100 字节/);
   assert.match(text, /选中记录及前后上下文/);

@@ -157,6 +157,26 @@ mod tests {
     }
 
     #[test]
+    fn test_tx_line_with_crlf_writes_single_line() {
+        // 发送的 raw 自带行尾(AT\r\n);格式化去行尾 + 存盘补 \n,文件里必须仍是一行。
+        // 回归:旧实现在 raw 行尾之外再补 \n,每条发送记录后面多一个空行。
+        use crate::buffer::log_line::{Dir, LogLine};
+        use crate::util::log_format::{format_line_for_file, DirLabel, DisplayConfig};
+
+        let path = tmp("tx_crlf");
+        let logger = FileLogger::start(path.clone(), false, |_, _| {}).unwrap();
+        let line = LogLine::new("08:00:01.000".into(), Dir::Tx, b"AT\r\n".to_vec(), &[], 5);
+        let cfg = DisplayConfig { show_timestamp: true, log_send: true, dir_label: DirLabel::Full };
+        let _ = logger.line_sender().send(format_line_for_file(&line, &cfg, false));
+        logger.stop();
+
+        let content = std::fs::read_to_string(&path).unwrap();
+        assert_eq!(content, "#5 [发送] 08:00:01.000 | AT\n");
+        assert_eq!(content.lines().count(), 1, "不应出现空行");
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
     fn test_current_path_and_id_unique() {
         let path = tmp("path");
         let logger = FileLogger::start(path.clone(), false, |_, _| {}).unwrap();

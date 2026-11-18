@@ -71,6 +71,7 @@ NeoSerial 是**单实例**的：再次启动只会把已有窗口拉到前台，
 ### 日志显示
 
 - ASCII / HEX 切换、时间戳（`HH:MM:SS.mmm`）、行号、方向标签（`Tx/Rx` 或 `发送/接收`）、暂停、清空。
+- HEX 视图自适应列宽：按日志区可用宽度自动选择 16/8/4/2/1 字节列；筛选和导出保持固定 16 字节格式，窗口缩放只改变屏幕排版；搜索高亮支持跨显示行映射。
 - 文本解码可选 ASCII / UTF-8 / GBK（设置 → 日志 → 编码与跟随），只影响显示。
 - 错误关键词高亮：默认 `ERROR`、`FAIL`、`+CME ERROR`、`+CMS ERROR`，可增删。只匹配接收行，不区分大小写，改了不用重连。
 - 留存上限按行数（1000–10000，默认 5000）和原始字节数（1–16 MiB，默认 4 MiB）同时控制，超出时从最旧的行开始丢；单条超大记录会替换成占位提示。存盘文件不受影响。
@@ -118,7 +119,7 @@ NeoSerial 是**单实例**的：再次启动只会把已有窗口拉到前台，
   - 长度字段可选 无 / 1 字节 / 2 字节，支持大小端，覆盖范围可选数据 / 数据+校验 / 整帧。
   - 数据来源：手动输入、随机字符（可勾选字符类型并设最少数量）、随机字节、全 00、全 FF、递增、自定义循环。
   - 校验：CRC16（Modbus / CCITT-FALSE / XModem / ARC）、CRC32、SUM8、XOR8，可选是否把帧头、长度纳入计算。
-  - 实时预览，可以直接发送、填入发送框或存为模板。单帧上限 64 KiB。
+  - 实时预览（Hex/文本双模式），可复制（复制内容跟随预览模式）、填入发送框或存为模板。单帧上限 64 KiB。
 - **编解码**：文本 ⇄ Hex、Base64 编解码、转义文本 ⇄ Hex（`\r \n \t \0 \xHH` 等）。编码可选 UTF-8 / GBK / UTF-16LE / UTF-16BE，GBK 由原生层处理。
 - **短信**：
   - 解析 PDU：支持 `+CMGR` / `+CMT` / `+CMGL` 的返回内容，可粘贴多段长短信合并解析。
@@ -325,9 +326,12 @@ NEOSERIAL_KB_API_KEY=kb_xxxxxxxx
 cd src-tauri && cargo test     # Rust 单元测试
 npm run test:unit              # 前端纯函数与源码契约测试（node --test，Node ≥ 22.18）
 npm run check                  # svelte-check 类型检查
+npm run test:connection        # 连接回归：端口选择、自动重连勾选交互
+npm run test:settings          # 设置回归：损坏恢复、复用、快捷键、持久化
+npm run test:panels            # 面板显隐回归：主界面功能区按设置显隐
 npm run test:ui                # 界面回归：快捷指令表、发送区开关、窗口布局
 npm run test:persistence       # 持久化回归：面板自动保存、设置并发保存
-npm run test:logs              # 日志回归：跟随/暂停、诊断导出、复制、留存和性能
+npm run test:logs              # 日志回归：跟随/暂停、诊断导出、HEX 布局、复制、留存和性能
 npm run test:frontend-diagnostics # 前端诊断：未知控件/命令/事件、状态、脱敏、限流、导出及界面记录
 npm run test:notifications     # 失败提示：去重、复制详情、各操作错误与窗口隔离
 npm run test:activity          # MCP 活动：生命周期、端口隔离、快照竞态与日志导航
@@ -336,8 +340,8 @@ npm run test:activity          # MCP 活动：生命周期、端口隔离、快�
 - 上述前端浏览器回归不需要 Rust 和串口设备：它们会启动临时 Vite 服务和独立的无头 Chrome/Edge，使用模拟 IPC，不读写真实配置。找不到浏览器时，用 `BROWSER_BINARY` 指定可执行文件路径。
 - `npm run test:ui -- --screenshots <目录>` 会额外输出浅色、深色和最小窗口尺寸的截图（数据为模拟）。
 - `tests/browser/` 下还有按功能拆分的回归脚本：
-  - 用同一套无头环境、可以直接 `node tests/browser/<名称>.mjs` 运行的：`com-selection`、`log-diagnostics`、`log-regressions`、`notifications`、`mcp-setup`、`motion-regressions`、`settings-groups`、`settings-help`、`settings-reuse`、`settings-scrollbar`、`settings-shortcuts`、`titlebar-layout`、`update-reminder`。
-  - 其余脚本（`codec-*`、`log-*`、`mcp-settings`、`port-tip`、`settings-close`、`theme-window`）需要先手动起 Vite 和远程调试浏览器，或者需要一个**一次性**的原生实例（单独的 `NEOSERIAL_DATA_DIR` 并开启 WebView2 远程调试）。运行方式见各脚本头部注释，不要对着自己日常用的配置跑。
+  - 用同一套无头环境、可以直接 `node tests/browser/<名称>.mjs` 运行的：`auto-connect-selection`、`auto-reconnect-notifications`、`com-selection`、`flight-recorder`、`frontend-diagnostics`、`log-diagnostics`、`log-follow-settings`、`log-hex-layout`、`log-regressions`、`mcp-activity`、`mcp-setup`、`motion-regressions`、`notifications`、`panel-visibility`、`persistence-regressions`、`replay-backpressure`、`settings-groups`、`settings-help`、`settings-recovery`、`settings-reuse`、`settings-scrollbar`、`settings-shortcuts`、`titlebar-layout`、`ui-failure-diagnostics`、`ui-regressions`、`update-reminder`。
+  - 其余脚本（`codec-*`、`log-settings`、`mcp-settings`、`port-tip`、`settings-close`、`theme-window`）需要先手动起 Vite 和远程调试浏览器，或者需要一个**一次性**的原生实例（单独的 `NEOSERIAL_DATA_DIR` 并开启 WebView2 远程调试）。`log-copy`、`log-retention`、`log-performance` 不单独跑，由 `log-regressions` 在无头环境里调用。运行方式见各脚本头部注释，不要对着自己日常用的配置跑。
 
 ### 发布
 

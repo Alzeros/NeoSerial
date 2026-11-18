@@ -202,6 +202,7 @@ await withHeadlessBrowser(async ({ call, evaluate, until, click, fresh, delay, s
   assert.deepEqual(await evaluate(`persistenceTest.calls.filter(c=>c.cmd==='send_file').at(-1).args`), { port: 'COM3', path: '/isolated-test-only/payload.bin' });
   await evaluate(`(()=>{[...document.querySelectorAll('button')].find(b=>b.textContent.includes('点击选择日志保存路径')).click();})()`);
   await until(`persistenceTest.stores.loggingPath.value==='/isolated-test-only/session.log'`);
+  assert.match(await evaluate(`persistenceTest.calls.filter(c=>c.cmd==='plugin:dialog|save').at(-1).args.options.defaultPath`), /^neoserial_\d{8}_\d{6}\.log$/);
   await click('开始记录');
   await until('persistenceTest.stores.loggingActive.value');
   assert.equal(await evaluate(`persistenceTest.calls.filter(c=>c.cmd==='start_logging').at(-1).args.path`), '/isolated-test-only/session.log');

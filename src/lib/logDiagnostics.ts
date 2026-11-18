@@ -68,7 +68,9 @@ export function formatDiagnosticSnippet(options: SnippetOptions): string {
     if (marker) append(`--- 标记：${singleLine(marker)} ---`);
     const direction = line.dir === 'tx' ? 'Tx' : 'Rx';
     const timestamp = line.ts || '时间未知';
-    append(`${timestamp} [${direction}] #${line.line_index || '?'} ${options.render(line)}`);
+    const meta = `#${line.line_index || '?'} [${direction}] ${timestamp}`;
+    const content = options.render(line);
+    append(content ? `${meta} | ${content}` : meta);
   }
   return `${output.join('\n')}\n`;
 }

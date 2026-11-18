@@ -18,12 +18,12 @@ try {
   await evaluate(`window.root=document.querySelector('[role=log]');window.selectAll=()=>{const r=document.createRange();r.selectNodeContents(root);const s=getSelection();s.removeAllRanges();s.addRange(r);};window.copy=()=>{const data=new DataTransfer();const e=new ClipboardEvent('copy',{clipboardData:data,bubbles:true,cancelable:true});root.dispatchEvent(e);return e.defaultPrevented?data.getData('text/plain'):getSelection().toString();};selectAll();`);
   const copied=await evaluate('copy()');
   console.log('Full selection:',JSON.stringify(copied));
-  assert.equal(copied,'3 Rx 09:19:44.763 OK\n4 Tx 09:19:44.763 at\n5 Rx 09:19:44.763\n6 Rx 09:19:44.763 +CFUN: 1\n7 Rx 09:19:44.763   spaced  ');
+  assert.equal(copied,'3 Rx 09:19:44.763 | OK\n4 Tx 09:19:44.763 | at\n5 Rx 09:19:44.763\n6 Rx 09:19:44.763 | +CFUN: 1\n7 Rx 09:19:44.763 |   spaced  ');
   await evaluate(`window.content=i=>root.querySelectorAll('[data-log-row]')[i].lastElementChild;window.pick=(a,start,b,end,backward=false)=>{const s=getSelection();s.removeAllRanges();s.setBaseAndExtent(backward?b:a,backward?end:start,backward?a:b,backward?start:end);};`);
   await evaluate(`pick(content(3).firstChild,1,content(3).firstChild,5)`);
   assert.equal(await evaluate('copy()'),'CFUN','partial content');
   await evaluate(`pick(content(0).firstChild,1,content(3).firstChild,5,true)`);
-  assert.equal(await evaluate('copy()'),'K\n4 Tx 09:19:44.763 at\n5 Rx 09:19:44.763\n6 Rx 09:19:44.763 +CFUN','backward selection across rows');
+  assert.equal(await evaluate('copy()'),'K\n4 Tx 09:19:44.763 | at\n5 Rx 09:19:44.763\n6 Rx 09:19:44.763 | +CFUN','backward selection across rows');
   await evaluate(`pick(content(0).firstChild,0,content(1).firstChild,0)`);
   assert.equal(await evaluate('copy()'),'OK\n4 Tx 09:19:44.763','exclusive end at next content start');
   await evaluate(`logTest.stores.showLineIndex.value=false;logTest.stores.showTimestamp.value=false;logTest.stores.logSendContent.value=false;await logTest.tick();selectAll();`);

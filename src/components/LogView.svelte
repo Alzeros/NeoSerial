@@ -830,7 +830,7 @@
         {#if markerLookup.has(line)}
           <span data-log-field data-log-marker class="mr-2 max-w-[12em] shrink-0 truncate rounded px-1 text-[12px] font-medium text-[var(--primary)]" style="background: var(--background-elevated);" title={markerLookup.get(line)}>标记：{markerLookup.get(line)}</span>
         {/if}
-        <span data-log-field
+        <span data-log-field data-log-content
           use:measureHex={displayMode.value === 'hex' && line.omitted_bytes === undefined ? cachedRecord(line).setHexColumns : undefined}
           class="{displayMode.value === 'hex' && line.omitted_bytes === undefined ? 'flex-1 min-w-0 whitespace-pre' : 'break-all whitespace-pre-wrap'} {line.is_error ? 'text-[var(--error)]' : ''}">
           {#if searchQuery && matchSet.has(line) && searchMatcher}

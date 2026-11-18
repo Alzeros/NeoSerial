@@ -75,6 +75,7 @@ NeoSerial is **single-instance**: launching it again just brings the existing wi
 - **Main-window panels (主界面功能区)** under **Settings → General (通用)** independently show or hide the log diagnostic tools and the file-send / log-save area, including their collapsed headers, to reclaim vertical space. Log diagnostic tools are hidden by default, while the file-send / log-save area remains visible; saved preferences are preserved, and Apply / Save persists changes. Hiding diagnostic tools clears filters and record selection without changing receiving, search, pause, or following. Hiding the bottom area does not stop an in-flight file send or disk logging and does not disable the corresponding MCP capabilities.
 
 - ASCII / HEX toggle, timestamps (`HH:MM:SS.mmm`), line numbers, direction labels (`Tx/Rx` or `发送/接收`), pause, clear.
+- Adaptive HEX column width: the view automatically picks 16/8/4/2/1 bytes per row based on the available log width. Filtering and export keep the fixed 16-byte format, so resizing only changes the on-screen layout; search highlights map across wrapped display lines.
 - Text decoding: ASCII / UTF-8 / GBK (Settings → Logs → Encoding and following), display only.
 - Error keyword highlighting: `ERROR`, `FAIL`, `+CME ERROR`, `+CMS ERROR` by default, editable. Matches received lines only, case-insensitive, takes effect without reconnecting.
 - Retention is capped by both line count (1000–10000, default 5000) and raw bytes (1–16 MiB, default 4 MiB); the oldest lines are dropped first. A single oversized record is replaced with a placeholder. Log files on disk are unaffected.
@@ -110,7 +111,7 @@ The **Data processing (数据处理)** tab on the right holds three tools, each 
   - Length field: none / 1 byte / 2 bytes, little or big endian, covering data / data + checksum / whole frame.
   - Data source: manual input, random characters (pick character classes and minimum counts), random bytes, all 00, all FF, incrementing, custom repeating pattern.
   - Checksum: CRC16 (Modbus / CCITT-FALSE / XModem / ARC), CRC32, SUM8, XOR8, optionally covering the header and length.
-  - Live preview; send directly, fill into the input box, or save as a template. Max 64 KiB per frame.
+  - Live preview (Hex/text modes); copy (the copied content follows the preview mode), fill into the input box, or save as a template. Max 64 KiB per frame.
 - **Codec**: text ⇄ Hex, Base64 encode/decode, escaped text ⇄ Hex (`\r \n \t \0 \xHH`, etc.). Encodings: UTF-8 / GBK / UTF-16LE / UTF-16BE, with GBK handled natively.
 - **SMS**:
   - Decode PDU: accepts `+CMGR` / `+CMT` / `+CMGL` output; paste several parts of a concatenated SMS to decode them together.
@@ -261,6 +262,7 @@ Data lives in two places: the **config directory** (default `%APPDATA%\neoserial
 | `kb-credential.dat` | config | Knowledge base API key, encrypted with the current Windows user's DPAPI |
 | `command-index.json` | cache | Manual command cache, rebuildable by refreshing |
 | `logs\` | cache | Default log file location |
+| `diagnostics\` | cache | Automatically retained frontend diagnostic logs, independent of serial log files |
 | `mcp-registry.json` | **fixed** `%APPDATA%\neoserial` | MCP port and open ports, for agents to discover the instance |
 
 - **Portable mode**: put an empty file `neoserial.portable` next to the exe and config, cache and WebView2 data all go to `<exe folder>\data`. The `NEOSERIAL_DATA_DIR` environment variable does the same with higher priority. Both are read at startup only; existing data is not moved automatically.
@@ -316,9 +318,12 @@ NEOSERIAL_KB_API_KEY=kb_xxxxxxxx
 cd src-tauri && cargo test     # Rust unit tests
 npm run test:unit              # frontend pure-function and source contract tests (node --test, Node ≥ 22.18)
 npm run check                  # svelte-check type checking
+npm run test:connection        # connection regressions: port selection, auto-reconnect checkbox behavior
+npm run test:settings          # settings regressions: corruption recovery, reuse, shortcuts, persistence
+npm run test:panels            # panel visibility regressions: main-window panels shown/hidden per settings
 npm run test:ui                # UI regressions: quick command table, send area switches, window layout
 npm run test:persistence       # persistence regressions: panel autosave, concurrent settings saves
-npm run test:logs              # log follow/pause, diagnostics/export, copy, retention and performance
+npm run test:logs              # log follow/pause, diagnostics/export, HEX layout, copy, retention and performance
 npm run test:notifications     # failure feedback, deduplication, copy-details and window isolation
 npm run test:activity          # MCP activity lifecycle, port isolation, snapshot races and log navigation
 ```
@@ -326,8 +331,8 @@ npm run test:activity          # MCP activity lifecycle, port isolation, snapsho
 - The frontend browser regressions above need neither Rust nor a serial device: they start a temporary Vite server and an isolated headless Chrome/Edge with mocked IPC, and never touch your real config. If the browser is not found, point `BROWSER_BINARY` at its executable.
 - `npm run test:ui -- --screenshots <dir>` also writes light, dark and minimum-size screenshots (simulated data).
 - `tests/browser/` contains more per-feature regression scripts:
-  - Using the same headless setup, runnable directly with `node tests/browser/<name>.mjs`: `com-selection`, `log-diagnostics`, `log-regressions`, `notifications`, `mcp-setup`, `motion-regressions`, `settings-groups`, `settings-help`, `settings-reuse`, `settings-scrollbar`, `settings-shortcuts`, `titlebar-layout`, `update-reminder`.
-  - The rest (`codec-*`, `log-*`, `mcp-settings`, `port-tip`, `settings-close`, `theme-window`) need Vite and a remote-debugging browser started by hand, or a **disposable** native instance (its own `NEOSERIAL_DATA_DIR`, with WebView2 remote debugging on). See each script's header comment, and never run them against your everyday profile.
+  - Using the same headless setup, runnable directly with `node tests/browser/<name>.mjs`: `auto-connect-selection`, `auto-reconnect-notifications`, `com-selection`, `flight-recorder`, `frontend-diagnostics`, `log-diagnostics`, `log-follow-settings`, `log-hex-layout`, `log-regressions`, `mcp-activity`, `mcp-setup`, `motion-regressions`, `notifications`, `panel-visibility`, `persistence-regressions`, `replay-backpressure`, `settings-groups`, `settings-help`, `settings-recovery`, `settings-reuse`, `settings-scrollbar`, `settings-shortcuts`, `titlebar-layout`, `ui-failure-diagnostics`, `ui-regressions`, `update-reminder`.
+  - The rest (`codec-*`, `log-settings`, `mcp-settings`, `port-tip`, `settings-close`, `theme-window`) need Vite and a remote-debugging browser started by hand, or a **disposable** native instance (its own `NEOSERIAL_DATA_DIR`, with WebView2 remote debugging on). `log-copy`, `log-retention` and `log-performance` are not run standalone; `log-regressions` invokes them in the headless setup. See each script's header comment, and never run them against your everyday profile.
 
 ### Releasing
 
