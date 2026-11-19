@@ -2,12 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
-test('expanded frame result body opts into text selection', () => {
+test('frame preview shares one result body and toolbar across both sizes', () => {
   const source = readFileSync('src/components/FrameBuilder.svelte', 'utf8');
-  const start = source.indexOf('{#if expanded && preview}');
-  const expanded = source.slice(start, source.indexOf('  <div class="border-t', start));
-
-  assert.match(expanded, /overflow-y-auto[^\"]*select-text/);
+  assert.equal([...source.matchAll(/overflow-y-auto[^\"]*select-text/g)].length, 1);
+  assert.equal([...source.matchAll(/\{@render previewModeSwitch\(\)\}/g)].length, 1);
+  assert.match(source, /aria-expanded=\{expanded\}/);
 });
 
 test('data text mode renders only the extracted data field', () => {

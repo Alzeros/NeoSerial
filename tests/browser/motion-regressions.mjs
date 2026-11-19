@@ -68,6 +68,7 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, call, delay })
   await until(`Boolean(document.querySelector('button[title="复制整帧 hex 到剪贴板"] [data-copied=true]'))`);
   assert.equal(await evaluate('window.copiedPayload'), '48 49');
   await click('数据文本');
+  assert.equal(await evaluate('Boolean(document.querySelector("[data-frame-preview-ellipsis]"))'), false, 'short results have no truncation marker');
   assert.equal(await evaluate('document.querySelector("[data-copy-feedback]").dataset.copied'), 'false', 'mode switches clear previous copy feedback');
   await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
   assert.equal(await evaluate('window.copiedPayload'), 'HI', 'text mode copies data characters');
@@ -81,6 +82,9 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, call, delay })
     persistenceTest.reply('build_frame', ${JSON.stringify({ hex: randomHex, total_len: 160, breakdown: [{ kind: 'data', offset: 0, len: 160 }] })}); persistenceTest.tick()`);
   await click('生成');
   await until(`document.querySelector('span[title="数据域 160 字节"]')?.textContent === ${JSON.stringify(randomText.slice(0, 128))}`);
+  const previewEllipsis = `document.querySelector('[data-frame-preview-ellipsis]')`;
+  assert.equal(await evaluate(`${previewEllipsis}?.textContent`), '…', 'collapsed text marks the omitted bytes');
+  assert.ok(await evaluate(`document.body.innerText.includes('仅预览 128 / 160 字节')`));
   const previewLayout = await evaluate(`(() => {
     const content = document.querySelector('span[title="数据域 160 字节"]').parentElement;
     const copy = document.querySelector('[data-copy-feedback]').closest('button');
@@ -99,9 +103,21 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, call, delay })
   const textPreviewGeometry = await previewGeometry();
   await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
   assert.equal(await evaluate('window.copiedPayload'), randomText, 'random text copy is not truncated');
+  const previewControls = () => evaluate(`(() => {
+    const bounds = element => {
+      const { left, top, width, height } = element.getBoundingClientRect();
+      return { left, top, width, height };
+    };
+    const modes = document.querySelector('[aria-label="预览显示模式"]');
+    const toggle = modes.parentElement.querySelector('button[aria-expanded]');
+    const copy = modes.parentElement.querySelector('[data-copy-feedback]').closest('button');
+    return { toggle: bounds(toggle), mode: bounds(modes), copy: bounds(copy) };
+  })()`);
   const checkExpandedCopy = async (expected, otherMode, otherExpected) => {
-    await click('… 展开全部');
-    await until('Boolean(persistenceTest.button("返回设置"))');
+    const collapsedControls = await previewControls();
+    await click('展开全部');
+    assert.equal(await evaluate(`Boolean(${previewEllipsis})`), false, 'full preview has no truncation marker');
+    assert.deepEqual(await previewControls(), collapsedControls, 'expanding keeps the preview toggle and mode switch in place');
     assert.ok(await evaluate(`document.querySelector('[aria-label="预览显示模式"]').getClientRects().length > 0`), 'expanded results expose the preview mode switch');
     const originalMode = await evaluate(`document.querySelector('[aria-label="预览显示模式"] [aria-pressed="true"]').textContent.trim()`);
     const visibleCopy = `[...document.querySelectorAll('[data-copy-feedback]')].map(label => label.closest('button')).find(button => button.getClientRects().length > 0)`;
@@ -110,18 +126,23 @@ await withHeadlessBrowser(async ({ evaluate, until, click, fresh, call, delay })
     await until('window.copiedPayload !== null');
     assert.equal(await evaluate('window.copiedPayload'), expected, 'expanded copy preserves the complete current preview mode');
     await click(otherMode);
-    assert.ok(await evaluate('persistenceTest.button("返回设置").getClientRects().length > 0'), 'mode switches keep the results expanded');
+    assert.equal(await evaluate('persistenceTest.button("收起预览").getAttribute("aria-expanded")'), 'true', 'mode switches keep the results expanded');
+    assert.deepEqual(await previewControls(), collapsedControls, 'switching modes keeps the preview controls in place');
     assert.equal(await evaluate(`document.querySelector('[aria-label="预览显示模式"] [aria-pressed="true"]').textContent.trim()`), otherMode);
     await evaluate(`window.copiedPayload = null; ${visibleCopy}.click()`);
     await until('window.copiedPayload !== null');
     assert.equal(await evaluate('window.copiedPayload'), otherExpected, 'expanded copy follows the selected mode');
     await click(originalMode);
-    await click('返回设置');
+    await click('收起预览');
+    assert.equal(await evaluate(`${previewEllipsis}?.textContent`), '…', 'collapsing restores the truncation marker');
+    assert.deepEqual(await previewControls(), collapsedControls, 'collapsing keeps the preview controls in place');
   };
   await checkExpandedCopy(randomText, 'Hex', randomHex);
   await click('填入发送框');
   assert.deepEqual(await evaluate(`({ text: persistenceTest.stores.suggestFillRequest.text, hex: persistenceTest.stores.hexSend.value })`), { text: randomText, hex: false });
   await click('Hex');
+  assert.equal(await evaluate(`${previewEllipsis}?.textContent`), '…', 'collapsed Hex also marks the omitted bytes');
+  assert.ok(await evaluate(`document.body.innerText.includes('仅预览 64 / 160 字节')`));
   assert.deepEqual(await previewGeometry(), textPreviewGeometry, 'Hex and text preview keep identical heights and position');
   await evaluate(`document.querySelector('[data-copy-feedback]').closest('button').click()`);
   assert.equal(await evaluate('window.copiedPayload'), randomHex, 'HEX mode copies the complete frame');

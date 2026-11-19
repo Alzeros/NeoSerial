@@ -218,6 +218,7 @@
   // 结果模式:hex 显完整原始帧;text 只显示数据域字符(不可显字节显 ·)
   // 默认跟随数据域模式:文本内容/随机字符 → text,其他 → hex
   let previewMode = $state<'hex' | 'text'>('hex');
+  const previewTruncated = $derived(previewMode === 'hex' ? preview?.truncated : dataText?.truncated);
   $effect(() => {
     const d = tool.config.data;
     const isTexty = (d.mode === 'content' && d.format === 'text') || (d.mode === 'fill' && d.pattern === 'random_text');
@@ -357,13 +358,13 @@
     <button
       type="button"
       aria-pressed={previewMode === 'hex'}
-      class="inline-flex h-full items-center justify-center rounded border px-2 leading-none transition-colors cursor-pointer {previewMode === 'hex' ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] font-medium shadow-sm' : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+      class="inline-flex h-full w-10 items-center justify-center rounded border leading-none transition-colors cursor-pointer {previewMode === 'hex' ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] font-medium shadow-sm' : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
       onclick={() => { previewMode = 'hex'; copied = false; }}
     >Hex</button>
     <button
       type="button"
       aria-pressed={previewMode === 'text'}
-      class="inline-flex h-full items-center justify-center rounded border px-2 leading-none transition-colors cursor-pointer {previewMode === 'text' ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] font-medium shadow-sm' : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
+      class="inline-flex h-full w-16 items-center justify-center rounded border leading-none transition-colors cursor-pointer {previewMode === 'text' ? 'border-[var(--primary)] bg-[var(--background-input)] text-[var(--primary)] font-medium shadow-sm' : 'border-transparent text-[var(--muted-foreground)] hover:bg-[var(--overlay-hover)] hover:text-[var(--foreground)]'}"
       onclick={() => { previewMode = 'text'; copied = false; }}
     >数据文本</button>
   </div>
@@ -544,46 +545,7 @@
   </div>
 
   <!-- 生成结果:只渲染算好的 preview,不在模板里现算切片(>64 字节时末段会越界) -->
-  {#if expanded && preview}
-    <div class="flex min-h-0 flex-1 flex-col border-t border-[var(--border)] px-4 py-2.5" style="background: var(--background-deep);">
-      <div class="mb-1 flex items-center gap-2">
-        {@render copyButton()}
-        <span class="min-w-0 flex-1 truncate text-[12px] text-[var(--muted-foreground)]">
-          {#if previewMode === 'hex'}
-            完整结果 · 共 {preview.totalBytes} 字节
-          {:else}
-            数据域文本 · {dataText?.totalBytes ?? 0} 字节（整帧 {preview.totalBytes} 字节）
-          {/if}
-        </span>
-        {@render previewModeSwitch()}
-        <button class="shrink-0 px-1.5 py-0.5 rounded text-[12px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] cursor-pointer" onclick={() => (expanded = false)}>返回设置</button>
-      </div>
-      <div class="min-h-0 flex-1 overflow-y-auto break-all font-mono text-[13px] leading-relaxed select-text {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
-        {#if previewMode === 'hex'}
-          {#each preview.spans as s, i (i)}
-            <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{s.text}</span>{' '}
-          {/each}
-        {:else if dataText}
-          <span title="数据域 {dataText.totalBytes} 字节">{dataText.text}</span>
-        {/if}
-      </div>
-    </div>
-  {/if}
-
-  <div class="border-t border-[var(--border)] px-4 pt-1 pb-1.5 relative z-0 {expanded && preview ? 'hidden' : ''}" style="background: var(--background-deep);">
-    <div class="mb-0.5 flex items-center gap-2">
-      {@render copyButton()}
-      {#if isStale}
-        <span class="min-w-0 truncate text-[12px] text-[var(--warning)]" title="已过期 · 配置已改,请重新生成">已过期 · 配置已改,请重新生成</span>
-      {/if}
-      {#if previewMode === 'hex' && preview?.truncated}
-        <button class="min-w-0 truncate text-[12px] text-[var(--primary)] hover:underline cursor-pointer" title="展开整帧共 {preview.totalBytes} 字节" onclick={() => (expanded = true)}>… 展开全部（整帧共 {preview.totalBytes} 字节）</button>
-      {:else if previewMode === 'text' && dataText?.truncated}
-        <button class="min-w-0 truncate text-[12px] text-[var(--primary)] hover:underline cursor-pointer" title="展开数据域共 {dataText.totalBytes} 字节" onclick={() => (expanded = true)}>… 展开全部（数据域共 {dataText.totalBytes} 字节）</button>
-      {/if}
-      <!-- Hex 显示完整帧；数据文本只显示数据域字符，避免与二进制帧头/校验混排。 -->
-      {@render previewModeSwitch()}
-    </div>
+  <div class="flex min-h-0 flex-col border-t border-[var(--border)] px-4 pt-1 pb-1.5 {expanded ? 'flex-1' : 'shrink-0'}" style="background: var(--background-deep);">
     {#if buildErr}
       <div
         class="flex items-start gap-1.5 rounded border border-[var(--error)]/40 bg-[var(--error)]/10 px-2 py-1 text-[12px] text-[var(--error)]"
@@ -594,7 +556,7 @@
       </div>
     {/if}
     {#if preview}
-      <div class="frame-preview-content break-all font-mono text-[13px] leading-relaxed overflow-y-auto select-text {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
+      <div class="break-all font-mono text-[13px] leading-relaxed overflow-y-auto select-text {expanded ? 'min-h-0 flex-1' : 'frame-preview-content'} {(isStale || buildErr) ? 'opacity-40' : ''}" title={(isStale || buildErr) ? '该帧不对应当前设置' : ''}>
         {#if previewMode === 'hex'}
           {#each preview.spans as s, i (i)}
             <span title="{KIND_NAME[s.kind] ?? s.kind} {s.bytes} 字节" style="color: {KIND_COLOR[s.kind] ?? 'var(--foreground)'}">{s.text}</span>{' '}
@@ -602,10 +564,33 @@
         {:else if dataText}
           <span title="数据域 {dataText.totalBytes} 字节">{dataText.text}</span>
         {/if}
+        {#if previewTruncated}
+          <span data-frame-preview-ellipsis aria-hidden="true" class="ml-1 select-none font-semibold text-[var(--primary)]">…</span>
+        {/if}
       </div>
     {:else if !buildErr}
       <div class="text-[12px] text-[var(--muted-foreground)]">调好设置后点「生成」,这里显示构好的帧</div>
     {/if}
+    <div class="mt-0.5 flex shrink-0 items-center gap-2">
+      {@render copyButton()}
+      {#if expanded || previewTruncated}
+        <button
+          type="button"
+          class="h-6 w-14 shrink-0 whitespace-nowrap rounded text-[12px] text-[var(--primary)] hover:underline cursor-pointer"
+          aria-expanded={expanded}
+          onclick={() => (expanded = !expanded)}
+        >{expanded ? '收起预览' : '展开全部'}</button>
+      {/if}
+      {#if isStale}
+        <span class="min-w-0 flex-1 truncate text-[12px] text-[var(--warning)]" title="已过期 · 配置已改,请重新生成">已过期 · 配置已改,请重新生成</span>
+      {:else if preview}
+        {@const totalBytes = previewMode === 'hex' ? preview.totalBytes : (dataText?.totalBytes ?? 0)}
+        {@const summary = previewMode === 'hex' ? `整帧 ${totalBytes} 字节` : `数据域 ${totalBytes} 字节（整帧 ${preview.totalBytes} 字节）`}
+        {@const label = previewTruncated ? `仅预览 ${previewMode === 'hex' ? COLLAPSED_BYTES : COLLAPSED_TEXT_BYTES} / ${totalBytes} 字节` : summary}
+        <span class="min-w-0 flex-1 truncate text-[12px] text-[var(--muted-foreground)]" title={previewTruncated ? `${label} · ${summary}` : summary}>{label}</span>
+      {/if}
+      {@render previewModeSwitch()}
+    </div>
   </div>
 
 
